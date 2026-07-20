@@ -1,0 +1,192 @@
+/* Sprint 07 — Design System da nova identidade visual própria (v2.0),
+ * substituindo a identidade institucional (MPPE) das Sprints anteriores.
+ *
+ * Fonte única de verdade para cor, raio, sombra e animação. Nenhum
+ * componente deve usar hex/rgb soltos ou reinventar estes valores — todo
+ * utilitário Tailwind (`bg-blue-600`, `rounded-card`, `shadow-card`,
+ * `font-sans`, ...) já lê direto daqui. Para mudar a identidade visual
+ * inteira do app, basta editar os valores abaixo.
+ */
+@theme {
+  /* ---- Fundo base -------------------------------------------------------
+   * Sprint 09 — degradê profundo de 4 paradas (identidade "Neon Tech UI"),
+   * substituindo o `slate-900` chapado da Sprint 07. Os quatro tons vivem
+   * aqui como fonte única de verdade; `.fundo-app` em `index.css` é quem
+   * monta o `background-image` real a partir deles (mistura degradê +
+   * glows radiais), então qualquer ajuste de tom do fundo do app inteiro é
+   * só aqui. */
+  --color-bg-1: #060818;
+  --color-bg-2: #0b1120;
+  --color-bg-3: #111827;
+  --color-bg-4: #141b2d;
+  /* Mantido como alias do primeiro tom — alguns componentes (ex.:
+   * `LimiteDeErro`, offset do anel de foco) ainda precisam de um único tom
+   * sólido de "fundo do app" fora do degradê. */
+  --color-bg-base: var(--color-bg-1);
+
+  /* ---- Gradiente de marca -------------------------------------------------
+   * Os três tons oficiais pedidos pela Sprint — #2563EB / #06B6D4 / #8B5CF6
+   * — coincidem exatamente com `blue-600` / `cyan-500` / `violet-500` do
+   * Tailwind, então o app usa essas classes stock diretamente em vez de
+   * recriar a escala. Este token cobre só os lugares que precisam do
+   * degradê como `background-image` bruto, fora do sistema `bg-gradient-*`
+   * (barra de progresso, divisor do cabeçalho, glow de fundo, pílula de
+   * drag-and-drop) — mudar a marca inteira é uma linha só, aqui. */
+  --gradient-marca: linear-gradient(90deg, #2563eb 0%, #06b6d4 50%, #8b5cf6 100%);
+
+  /* ---- Raio de borda -------------------------------------------------------
+   * Dois padrões, não um: `--radius-lg` para controles — botões, inputs,
+   * badges — onde um raio muito grande atrapalha a leitura da altura do
+   * elemento; `--radius-card` para cards/painéis/modal. Sprint 09 — ambos
+   * recalibrados para a identidade "Neon Tech UI": `--radius-lg` sobe de
+   * 12px para 14px (botões maiores/mais premium pedidos pela Sprint) e
+   * `--radius-card` desce de 24px para 20px, dentro da faixa 18–22px
+   * pedida explicitamente pelo item "Cards". Gera as utilities `rounded-lg`
+   * e `rounded-card`. */
+  --radius-lg: 0.875rem; /* 14px */
+  --radius-card: 1.25rem; /* 20px */
+
+  /* ---- Escala de sombra ----------------------------------------------------
+   * Sprint 09.1 — escala única e nomeada (item "Sombras" do Design System),
+   * quatro degraus de presença crescente: `sm` (elementos pequenos/aninhados,
+   * ex. painel interno da fila de PDFs), `card` (repouso de qualquer
+   * painel), `floating` (elevação/hover — era `--shadow-card-hover`, só
+   * renomeado para bater com o nome pedido, mesmo valor), `dialog` (um
+   * degrau acima de `floating`, reservado ao modal, que precisa se destacar
+   * por cima de todo o resto da interface). Nenhum componente deve escrever
+   * um `box-shadow` cru fora desta escala. */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.25);
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.3), 0 1px 3px 0 rgb(0 0 0 / 0.2);
+  --shadow-floating: 0 12px 28px -6px rgb(0 0 0 / 0.45), 0 4px 10px -2px rgb(0 0 0 / 0.3);
+  --shadow-dialog: 0 24px 48px -12px rgb(0 0 0 / 0.55), 0 8px 16px -4px rgb(0 0 0 / 0.35);
+
+  /* ---- Glow neon dos painéis -------------------------------------------------
+   * Sprint 09.1 — o refinamento central desta Sprint: painéis deixam de ter
+   * só sombra e passam a ter glow "aceso". Os 6 tokens abaixo são a
+   * identidade por grupo pedida (Processamento/PDFs/Estatísticas), e TODOS
+   * compartilham exatamente a mesma fórmula de duas camadas — mesmo par de
+   * raio de blur, mesmo par de alfa (`0 0 16px /.22`, `0 0 38px /.16`); só o
+   * matiz muda por token. Isso é o que garante que nenhum componente pareça
+   * "mais forte" ou "mais fraco" só por usar valores diferentes — a
+   * intensidade percebida vem de COMO cada token é combinado no ponto de
+   * uso (um token só = "painel", dois empilhados = "hover de botão", um
+   * token dentro de um wrapper com opacidade baixa = "glow de fundo"),
+   * nunca de um número novo por componente. Nenhum componente deve escrever
+   * um glow com blur/alfa próprios — sempre um destes 6, sozinho ou
+   * combinado via `shadow-[var(--shadow-glow-x),var(--shadow-glow-y)]`. */
+  --shadow-glow-purple: 0 0 16px rgb(139 92 246 / 0.22), 0 0 38px rgb(139 92 246 / 0.16); /* Processamento */
+  --shadow-glow-blue: 0 0 16px rgb(21 94 117 / 0.28), 0 0 38px rgb(21 94 117 / 0.2); /* PDFs — azul petróleo */
+  --shadow-glow-cyan: 0 0 16px rgb(34 211 238 / 0.22), 0 0 38px rgb(34 211 238 / 0.16); /* Estatísticas — padrão/info */
+  --shadow-glow-green: 0 0 16px rgb(52 211 153 / 0.22), 0 0 38px rgb(52 211 153 / 0.16); /* Estatísticas — sucesso */
+  --shadow-glow-amber: 0 0 16px rgb(251 191 36 / 0.24), 0 0 38px rgb(251 191 36 / 0.16); /* Estatísticas — revisão/duplicidade */
+  --shadow-glow-orange: 0 0 16px rgb(249 115 22 / 0.24), 0 0 38px rgb(249 115 22 / 0.16); /* Estatísticas — erro */
+
+  /* ---- Tipografia ---------------------------------------------------------
+   * Inter continua a família única do app (título, corpo, tudo),
+   * auto-hospedada via `@fontsource/inter` (ver import em `index.css`) para
+   * funcionar offline dentro do Electron. Source Sans 3 entra só como
+   * fallback textual, caso a fonte não carregue por algum motivo; o resto
+   * da pilha é o fallback de sistema de sempre. */
+  --font-sans:
+    "Inter", "Source Sans 3", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* ---- Duração/curva de transição ----------------------------------------
+   * Uma única duração (220ms) para hover/foco/pressão em todo o app —
+   * dentro da janela "suave, nada exagerado" pedida pela Sprint. */
+  --default-transition-duration: 220ms;
+  --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ---- Animações de entrada -----------------------------------------------
+   * Discretas: leve fade + leve deslocamento/escala, nada chamativo.
+   * `entrada-painel` é para modais/diálogos; `entrada-conteudo` é para a
+   * abertura da tela e o surgimento de relatório/mensagens. */
+  --animate-entrada-painel: entrada-painel 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --animate-entrada-conteudo: entrada-conteudo 360ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ---- Brilho da barra de progresso ----------------------------------------
+   * Único uso: o preenchimento gradiente da `BarraProgresso` — um brilho
+   * translúcido que percorre a barra da esquerda para a direita, em loop
+   * lento, para transmitir "processo em andamento" sem ser chamativo. */
+  --animate-progresso-brilho: progresso-brilho 1.8s linear infinite;
+
+  /* ---- Sprint 09 — micro-animações da identidade "Neon Tech UI" ----------
+   * `glow-pulse`: respiração muito sutil do glow do painel de processamento
+   * — é o que diferencia a barra de progresso ("intermediária, viva") do
+   * glow estático "painel" usado em PDFs/Estatísticas, sem precisar de um
+   * valor de sombra próprio (ver tokens `--shadow-glow-*` acima). `ripple`:
+   * expansão translúcida a partir do clique nos botões — Sprint 09.1 reduz
+   * de 600ms para 200ms, dentro da janela 150–220ms pedida para toda
+   * microinteração do app. */
+  --animate-glow-pulse: glow-pulse 3.2s ease-in-out infinite;
+  --animate-ripple: ripple 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Sprint 09.3 — "campo estelar tecnológico" do fundo decorativo
+ * (`FundoDecorativo`): cintilar de opacidade de uma estrela, nunca de
+ * escala/posição — pisca abrupta foi explicitamente descartada. Duração
+ * (6–12s) e atraso variam por estrela via inline style em
+ * `FundoDecorativo.tsx`; este keyframe só define a curva, lendo os extremos
+ * de `--estrela-opacidade-min/max` (uma custom property por estrela) para
+ * não precisar de um keyframe por combinação de opacidade. */
+@keyframes estrela-cintilar {
+  0%,
+  100% {
+    opacity: var(--estrela-opacidade-min);
+  }
+  50% {
+    opacity: var(--estrela-opacidade-max);
+  }
+}
+
+@keyframes entrada-painel {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes entrada-conteudo {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes progresso-brilho {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes glow-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes ripple {
+  from {
+    opacity: 0.5;
+    transform: scale(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1);
+  }
+}

@@ -1,0 +1,4 @@
+# Sprint 08 — dependências só do empacotamento (PyInstaller), separadas de
+# requirements.txt (runtime) para não misturar o que o app usa com o que só
+# a build precisa.
+pyinstaller==6.11.1

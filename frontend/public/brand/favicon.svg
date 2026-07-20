@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Extrator de Diárias">
+  <!-- Sprint 07.1 — favicon = mesma versão colorida do monograma, fundo
+       transparente (funciona sobre qualquer cor de aba do navegador). -->
+  <defs>
+    <linearGradient id="marca" x1="50" y1="16" x2="50" y2="84" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="50%" stop-color="#06B6D4" />
+      <stop offset="100%" stop-color="#8B5CF6" />
+    </linearGradient>
+  </defs>
+  <path
+    fill-rule="evenodd"
+    fill="url(#marca)"
+    d="M 23 22 A 6 6 0 0 1 29 16 H 43 A 34 34 0 0 1 43 84 H 29 A 6 6 0 0 1 23 78 Z
+       M 47 39 A 10 10 0 0 1 67 39 L 67 61 A 10 10 0 0 1 47 61 Z
+       M 47 39 H 56 A 4 4 0 0 1 56 47 H 47 Z
+       M 47 53 H 56 A 4 4 0 0 1 56 61 H 47 Z"
+  />
+</svg>

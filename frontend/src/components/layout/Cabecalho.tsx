@@ -1,0 +1,130 @@
+import type { StatusBackend } from "../../hooks/useBackendStatus";
+import { CORES_STATUS, type VarianteStatus } from "../../theme/cores";
+import { GLOW_PERIGO } from "../../theme/estilos";
+import { TIPOGRAFIA } from "../../theme/tipografia";
+import Logo from "./Logo";
+
+/** Sprint 09.2 — em que etapa do fluxo o app está, independente do backend
+ * já estar de pé ou não. Deliberadamente só estas 4 (as únicas pedidas):
+ * o pequeno intervalo entre "processamento concluído" e "planilha
+ * selecionada" (revisão da pré-visualização) ainda lê como `pronto`, não
+ * ganhou um 5º estado. Quem calcula isso a partir do estado real da tela é
+ * `SelecionarProcessar` (`aoMudarEstado`) — este componente só sabe
+ * exibir. */
+export type EstadoApp = "pronto" | "processando" | "preenchendo" | "concluido";
+
+interface Props {
+  status: StatusBackend;
+  estadoApp: EstadoApp;
+}
+
+interface Descritor {
+  rotulo: string;
+  subtitulo: string;
+  variante: VarianteStatus;
+}
+
+// Sprint 09.2 — o indicador deixa de expor "backend" (jargão técnico que o
+// usuário final não precisa conhecer) e passa a contar em que etapa do
+// fluxo o app está, em linguagem de produto. Só usado quando o backend
+// ainda não está pronto — nesses dois casos `estadoApp` não importa (não há
+// "processando"/"preenchendo" possível sem backend).
+const DESCRITOR_BACKEND: Record<Exclude<StatusBackend, "conectado">, Descritor> = {
+  verificando: { rotulo: "Iniciando sistema", subtitulo: "Só um instante...", variante: "aviso" },
+  offline: { rotulo: "Sistema indisponível", subtitulo: "Tentando reconectar...", variante: "erro" },
+};
+
+// Com o backend pronto, o indicador passa a contar a etapa do fluxo —
+// exatamente os 4 estados pedidos pela Sprint.
+const DESCRITOR_ESTADO: Record<EstadoApp, Descritor> = {
+  pronto: { rotulo: "Pronto para processar", subtitulo: "Aguardando arquivos PDF", variante: "sucesso" },
+  processando: {
+    rotulo: "Processando",
+    subtitulo: "Extraindo informações dos processos...",
+    variante: "info",
+  },
+  preenchendo: { rotulo: "Preenchendo planilha", subtitulo: "Registrando diárias...", variante: "info" },
+  concluido: {
+    rotulo: "Processamento concluído",
+    subtitulo: "Pronto para um novo lote.",
+    variante: "sucesso",
+  },
+};
+
+// Sprint 09.2 — glow "extremamente discreto" pedido para este indicador:
+// nenhum valor novo, reaproveita os mesmos tokens de 6 cores do Design
+// System (`sucesso`→verde, `info`→ciano, `aviso`→âmbar — os 3 que já
+// existem como token `shadow-glow-*`) mais a constante `GLOW_PERIGO`
+// (mesma fórmula, sem token próprio) para `erro`, a mesma usada no botão de
+// perigo/diálogo/painel de erro — nunca um brilho "inventado" só para este
+// componente.
+const GLOW_POR_VARIANTE: Record<Exclude<VarianteStatus, "erro" | "neutro">, string> = {
+  sucesso: "shadow-glow-green",
+  info: "shadow-glow-cyan",
+  aviso: "shadow-glow-amber",
+};
+
+function glowDaVariante(variante: VarianteStatus): string {
+  return variante === "erro" ? GLOW_PERIGO : GLOW_POR_VARIANTE[variante as "sucesso" | "info" | "aviso"];
+}
+
+// Sprint 07 — cabeçalho da nova identidade visual: nenhuma referência
+// institucional (MPPE/Coordenadoria/CMFC), só o nome do produto e a
+// tagline. Logo + bloco de texto formam um único grupo flex centralizado —
+// não é o texto centralizado na página com o logo solto ao lado, é o
+// CONJUNTO que fica centralizado, com o texto alinhado à esquerda dentro do
+// conjunto e `items-center` garantindo o alinhamento vertical entre logo e
+// título.
+//
+// Sprint 09.1 — monograma maior (80px, era 64px) com um glow atrás dele
+// "extremamente sutil" (item "Header" do refinamento): nenhum token novo —
+// é a mesma composição roxo+azul usada no hover do botão primário
+// (`--shadow-glow-purple` + `--shadow-glow-blue`, ver `theme.css`), só
+// dentro de um elemento com opacidade bem mais baixa (`opacity-10`), a
+// forma pedida na Sprint para diferenciar "iluminação de fundo" de um glow
+// de painel sem inventar um valor de sombra próprio. Divisor inferior mais
+// espesso/luminoso. Estrutura e conteúdo (monograma + título + tagline,
+// nenhuma referência institucional) não mudam.
+export default function Cabecalho({ status, estadoApp }: Props) {
+  const descritor = status === "conectado" ? DESCRITOR_ESTADO[estadoApp] : DESCRITOR_BACKEND[status];
+  const glow = glowDaVariante(descritor.variante);
+
+  return (
+    <header className="relative animate-entrada-conteudo px-6 pt-9 pb-7">
+      <div
+        className={`absolute right-6 top-7 max-w-[230px] rounded-2xl border px-4 py-2.5 backdrop-blur-sm transition-shadow ${CORES_STATUS[descritor.variante].alerta} ${glow}`}
+      >
+        <div className="flex items-center gap-2">
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${CORES_STATUS[descritor.variante].ponto}`}
+          />
+          <span className="text-xs font-semibold">{descritor.rotulo}</span>
+        </div>
+        <p className="mt-0.5 pl-3.5 text-[11px] leading-snug text-slate-400">{descritor.subtitulo}</p>
+      </div>
+
+      <div className="flex items-center justify-center gap-5">
+        <span className="relative shrink-0">
+          <span
+            aria-hidden="true"
+            className="absolute inset-2 -z-10 rounded-full opacity-10 shadow-[var(--shadow-glow-purple),var(--shadow-glow-blue)]"
+          />
+          <Logo variante="cor" className="h-20 w-20" />
+        </span>
+        <div className="text-left leading-tight">
+          <h1 className={TIPOGRAFIA.tituloApp}>Extrator de Diárias</h1>
+          <p className={`mt-1.5 ${TIPOGRAFIA.subtituloApp}`}>Automação Inteligente de Processos</p>
+        </div>
+      </div>
+
+      <div
+        aria-hidden="true"
+        className="mx-auto mt-7 h-px w-[60%] shadow-[0_0_10px_1px_rgb(37_99_235_/_0.4)]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, transparent 0%, #2563EB 18%, #06B6D4 50%, #8B5CF6 82%, transparent 100%)",
+        }}
+      />
+    </header>
+  );
+}

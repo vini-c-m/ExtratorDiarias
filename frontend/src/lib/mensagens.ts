@@ -1,0 +1,71 @@
+/** Mensagens amigáveis para o usuário final — trocam jargão técnico
+ * (exceptions do JS, erros de rede, códigos de erro do sistema de
+ * arquivos) por frases compreensíveis. Mensagens que já vêm curadas do
+ * backend (ex.: "Não foi possível gravar a planilha — feche o arquivo no
+ * Excel e tente novamente", devolvida pela API de preenchimento) já são
+ * amigáveis por natureza e passam direto, sem reescrita. */
+
+export const MENSAGENS = {
+  nenhumPdfSelecionado: "Nenhum PDF selecionado.",
+  processandoAguarde: "Processando... aguarde a conclusão antes de iniciar outra ação.",
+  processamentoConcluido: "Processamento concluído com sucesso.",
+  aguardandoAplicativo: "Aguardando o aplicativo terminar de iniciar...",
+  arquivoInvalido: "Arquivo PDF inválido.",
+  falhaProcessarDocumento: "Não foi possível processar este documento.",
+  nenhumaPlanilhaSelecionada: "Selecione a planilha antes de continuar.",
+  interromperProcessamento: "⏹ Interromper Processamento",
+  tituloConfirmarInterrupcao: "Interromper processamento?",
+  mensagemConfirmarInterrupcao:
+    "Todo o processamento realizado até este momento será descartado.\n\n" +
+    "Nenhum dado será gravado na planilha.\n\n" +
+    "Nenhum relatório será gerado.\n\n" +
+    "Os PDFs permanecerão selecionados para que você possa iniciar novamente quando desejar.",
+  continuarProcessando: "Continuar Processando",
+  interromper: "Interromper",
+  processamentoCancelado: "Processamento cancelado pelo usuário. Nenhuma informação foi salva.",
+  relatorioSalvoComSucesso: "✔ Relatório salvo com sucesso.",
+} as const;
+
+interface PadraoMensagem {
+  teste: RegExp;
+  mensagem: string;
+}
+
+// Assinaturas técnicas conhecidas (erros de rede do fetch, códigos de erro
+// do sistema de arquivos do Node/Electron, respostas HTTP sem detalhe de
+// negócio) — só estas são reescritas; qualquer outra mensagem de erro é
+// exibida como veio, por já ser presumivelmente uma mensagem de negócio
+// curada pelo backend.
+const PADROES_TECNICOS: PadraoMensagem[] = [
+  {
+    teste: /failed to fetch|networkerror|econnrefused|fetch failed/i,
+    mensagem: "Não foi possível conectar ao aplicativo. Verifique se ele está aberto e tente novamente.",
+  },
+  {
+    teste: /ebusy|eperm|permission denied/i,
+    mensagem:
+      "Não foi possível concluir a operação porque o arquivo está aberto em outro programa (ex.: Excel). Feche-o e tente novamente.",
+  },
+  {
+    teste: /enoent|no such file/i,
+    mensagem: "O arquivo não foi encontrado. Ele pode ter sido movido ou excluído.",
+  },
+  {
+    teste: /backend respondeu 5\d\d/i,
+    mensagem: "Ocorreu um erro inesperado. Tente novamente em instantes.",
+  },
+  {
+    teste: /backend respondeu \d+/i,
+    mensagem: "Não foi possível concluir a operação. Tente novamente.",
+  },
+];
+
+export function mensagemAmigavel(
+  erro: unknown,
+  reserva: string = "Não foi possível concluir a operação. Tente novamente.",
+): string {
+  const bruta = erro instanceof Error ? erro.message : erro ? String(erro) : "";
+  const padrao = PADROES_TECNICOS.find((p) => p.teste.test(bruta));
+  if (padrao) return padrao.mensagem;
+  return bruta || reserva;
+}

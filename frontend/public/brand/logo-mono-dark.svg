@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Extrator de Diárias">
+  <!-- Sprint 07.1 — versão monocromática escura (preta/#0F172A, a própria
+       cor de fundo da marca), para uso sobre fundos claros. Mesmo caminho
+       de logo-color.svg. -->
+  <path
+    fill-rule="evenodd"
+    fill="#0F172A"
+    d="M 23 22 A 6 6 0 0 1 29 16 H 43 A 34 34 0 0 1 43 84 H 29 A 6 6 0 0 1 23 78 Z
+       M 47 39 A 10 10 0 0 1 67 39 L 67 61 A 10 10 0 0 1 47 61 Z
+       M 47 39 H 56 A 4 4 0 0 1 56 47 H 47 Z
+       M 47 53 H 56 A 4 4 0 0 1 56 61 H 47 Z"
+  />
+</svg>

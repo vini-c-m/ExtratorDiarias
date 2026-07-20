@@ -1,0 +1,117 @@
+@import "tailwindcss";
+
+/* Inter auto-hospedada (sem chamada de rede em runtime, essencial para o
+ * app Electron funcionar offline). Pesos usados na hierarquia tipográfica
+ * do app: 400/500 (corpo), 600 (semibold — subtítulos/botões), 700 (bold) e
+ * 800 (extrabold — título principal). */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/inter/800.css";
+
+@import "./theme/theme.css";
+
+/* Base da marca — pilha de fonte Inter e uma seleção de texto na cor da
+ * marca (azul), em vez do azul padrão do navegador ou do dourado
+ * institucional anterior. Tudo o resto do Design System vive em `theme/` e
+ * é consumido via utilitários Tailwind (`bg-blue-600`, `rounded-card`,
+ * `shadow-card`, `font-sans`, ...). */
+/* Sprint 09.1 — `html`/`body` já nascem na primeira parada do degradê
+ * (`--color-bg-1`), em vez do branco padrão do navegador/Chromium. Sem
+ * isso, há um flash branco visível entre a janela do Electron abrir e o
+ * React montar `.fundo-app` — a causa mais provável da "sensação de
+ * moldura" reportada: por uma fração de segundo a aplicação parecia uma
+ * janela comum, não o produto. `height: 100%` garante que esse fundo cubra
+ * a janela inteira mesmo antes/durante o primeiro paint, não só a altura do
+ * conteúdo. */
+html,
+body {
+  height: 100%;
+  background-color: var(--color-bg-1);
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+  }
+
+  ::selection {
+    background-color: rgb(59 130 246 / 0.35); /* blue-500/35 */
+    color: white;
+  }
+}
+
+/* Sprint 09 — fundo da identidade "Neon Tech UI": degradê diagonal vivo de
+ * quatro paradas (`--color-bg-1` a `--color-bg-4`, definidas em
+ * `theme/theme.css`). Por cima do degradê, três glows radiais (azul, roxo,
+ * ciano — as paradas do gradiente da marca) dão profundidade "premium" no
+ * estilo Stripe/Linear/Vercel. Sprint 09.1 — opacidades dos glows radiais
+ * reforçadas (eram 0.22/0.18/0.12): o pedido foi explícito em "não quero
+ * fundo preto, quero profundidade perceptível" — o degradê sozinho, mais os
+ * monogramas de marca d'água por cima, estava lendo como quase-preto
+ * uniforme sem essa luz extra. Fica fixo em relação à viewport
+ * (`background-attachment: fixed`) para não repetir/deslocar o degradê ao
+ * rolar a tela de resultado. Classe simples (fora do sistema de utilitários
+ * `bg-*`) porque é uma composição de várias camadas, não uma cor única. */
+.fundo-app {
+  background-color: var(--color-bg-1);
+  background-image:
+    radial-gradient(circle at 12% 8%, rgb(37 99 235 / 0.3), transparent 44%),
+    radial-gradient(circle at 88% 4%, rgb(139 92 246 / 0.24), transparent 48%),
+    radial-gradient(circle at 50% 100%, rgb(6 182 212 / 0.16), transparent 58%),
+    linear-gradient(
+      160deg,
+      var(--color-bg-1) 0%,
+      var(--color-bg-2) 38%,
+      var(--color-bg-3) 68%,
+      var(--color-bg-4) 100%
+    );
+  background-attachment: fixed;
+}
+
+/* Scrollbar fina e discreta (item "Scrollbars" da Sprint) — aplicada
+ * globalmente (Electron/Chromium suporta `::-webkit-scrollbar`) e reforçada
+ * via `.scroll-fino` (ver `theme/estilos.ts`) nos três contêineres roláveis
+ * do app, para o caso de algum estilo de scrollbar do SO tentar prevalecer. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(255 255 255 / 0.15);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(255 255 255 / 0.25);
+}
+
+.scroll-fino::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+/* Sprint 09 — salvaguarda de acessibilidade/performance para toda animação
+ * decorativa (respiração de glow, brilho da barra de progresso, ripple de
+ * clique): quem pede `prefers-reduced-motion` no SO não vê nenhuma delas
+ * rodar. As animações de entrada (`entrada-conteudo`/`entrada-painel`) e o
+ * parallax do fundo (desligado via JS em `FundoDecorativo`) já respeitam
+ * essa mesma preferência. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-glow-pulse,
+  .animate-progresso-brilho,
+  .estrela-cintilante {
+    animation: none !important;
+  }
+}

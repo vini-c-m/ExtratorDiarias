@@ -1,0 +1,96 @@
+{
+  "name": "extrator-diarias-frontend",
+  "productName": "Extrator de Diárias",
+  "private": true,
+  "version": "1.0.0-RC1",
+  "description": "Automação Inteligente de Processos",
+  "author": "Vinicius Mendes",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev:vite": "vite",
+    "dev:electron:build": "tsc -p electron/tsconfig.json -w",
+    "dev:electron:start": "wait-on tcp:5173 dist-electron/main.js && electron .",
+    "dev": "concurrently -k -n vite,electron-build,electron \"npm:dev:vite\" \"npm:dev:electron:build\" \"npm:dev:electron:start\"",
+    "build:vite": "vite build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build": "npm run build:vite && npm run build:electron",
+    "build:icon": "node scripts/gerar-icone.mjs",
+    "build:backend": "cd ../backend && .venv\\Scripts\\python.exe -m PyInstaller extrator_diarias_backend.spec --noconfirm --distpath dist --workpath build",
+    "release": "npm run build && npm run build:backend && electron-builder --win --x64 --publish=never",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "screenshots": "node scripts/capturar-screenshots.mjs"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "lucide-react": "^1.25.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "jsdom": "^25.0.1",
+    "playwright": "^1.61.1",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vitest": "^4.1.10",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.viniciusmendes.extratordiarias",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/extrator_diarias_backend",
+        "to": "backend"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "build/icon.ico"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "shortcutName": "Extrator de Diárias",
+      "include": "build/installer.nsh"
+    }
+  }
+}

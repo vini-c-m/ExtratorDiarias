@@ -1,0 +1,43 @@
+# Node / frontend
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+
+# Python / backend
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+backend/build/
+backend/dist/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.tsbuildinfo
+
+# Segredos e configuração local — nunca versionar
+.env
+.env.*
+
+# Cópias de teste da planilha oficial e pastas de resultados geradas a
+# partir dela (contêm dados reais — nunca versionar)
+tests/e2e/fixtures/*.xlsx
+tests/e2e/fixtures/relatorio_*.txt
+tests/e2e/fixtures/resultado_*/
+
+# Política permanente (Sprint 10): nenhum documento/processo/planilha real
+# pode ser versionado, mesmo em pastas de fixtures futuras — ver
+# CONTRIBUTING.md e backend/tests/fixtures/gerar_fixtures_sinteticas.py.
+**/fixtures/**/*_real*
+**/fixtures/**/*_producao*
+
+# Saída gerada ao rodar scripts/demo (planilha preenchida, relatório, log
+# desta execução local) — só os PDFs/planilha de entrada em scripts/demo/
+# são versionados, nunca o resultado de rodar o app sobre eles.
+scripts/demo/resultado_*/
