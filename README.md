@@ -6,6 +6,10 @@
 <p align="center"><strong>Automação Inteligente de Processos</strong></p>
 
 <p align="center">
+  <img src="docs/screenshots/demo.gif" width="680" alt="Demonstração do Extrator de Diárias" />
+</p>
+
+<p align="center">
   <img alt="Licença" src="https://img.shields.io/badge/licença-MIT-blue.svg" />
   <img alt="Plataforma" src="https://img.shields.io/badge/plataforma-Windows-0078D6.svg" />
   <img alt="Backend" src="https://img.shields.io/badge/backend-Python%203.12%20%2B%20FastAPI-009688.svg" />
