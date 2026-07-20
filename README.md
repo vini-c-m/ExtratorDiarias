@@ -20,7 +20,7 @@
 
 Processos de diária no SEI (Sistema Eletrônico de Informações) trazem os mesmos campos — número do processo, CPF, período, cidades de origem e destino, Documento Hábil, valor autorizado — espalhados dentro de um PDF de várias páginas, muitas vezes com documentos repetidos (um requerimento corrigido, uma validação refeita) e pequenas inconsistências de digitação e formatação do próprio SEI.
 
-**O processo manual** era abrir cada PDF, localizar cada campo visualmente e copiá-lo, um por um, para a planilha oficial de controle — repetido para cada processo de um lote, com o risco de erro de transcrição inerente a qualquer tarefa repetitiva feita à mão.
+**O processo manual** era abrir cada processo, localizar cada campo visualmente e copiá-lo, um por um, para a planilha oficial de controle — repetido para cada processo de um lote, com o risco de erro de transcrição inerente a qualquer tarefa repetitiva feita à mão.
 
 **O Extrator de Diárias automatiza esse fluxo inteiro**: você seleciona os PDFs, o aplicativo extrai e valida os campos automaticamente — inclusive resolvendo os casos difíceis (documento substituído por uma versão mais recente, campo partido por quebra de página, erro de digitação no nome do município) — e preenche a planilha oficial existente, sinalizando com clareza o que foi inserido com segurança e o que precisa de revisão manual. Um relatório HTML autossuficiente fecha cada execução com o resumo do lote.
 
