@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import * as path from "path";
+import { registrarIpcConferencia } from "./ipc/conferencia";
 import { registrarIpcPlanilha } from "./ipc/planilha";
 import { registrarIpcRelatorio } from "./ipc/relatorio";
 
@@ -39,7 +40,21 @@ function subirBackend(): void {
     cwd = BACKEND_DIR;
   }
 
-  backendProcess = spawn(comando, argumentos, { cwd, windowsHide: true });
+  // Sprint 13 — a Central Inteligente de Conferência precisa de uma pasta
+  // de dados fixa para a Base Local de Consulta (doc arquitetural § 4.2,
+  // § 0 item 6: "AppData", 100% transparente ao usuário). `app.getPath`
+  // já sabe onde fica essa pasta para esta instalação — repassada ao
+  // backend Python por variável de ambiente, para as duas partes do app
+  // concordarem sobre o mesmo diretório sem duplicar a lógica de resolução
+  // de caminho (ver `app/consulta/base_local.py`, que cai para
+  // `%APPDATA%/ExtratorDiarias` quando esta variável não está definida —
+  // ex.: backend rodando standalone em desenvolvimento/testes).
+  const variaveisAmbiente = {
+    ...process.env,
+    EXTRATOR_DIARIAS_USER_DATA: app.getPath("userData"),
+  };
+
+  backendProcess = spawn(comando, argumentos, { cwd, windowsHide: true, env: variaveisAmbiente });
 
   backendProcess.stdout.on("data", (dado) => console.log(`[backend] ${dado}`));
   backendProcess.stderr.on("data", (dado) => console.error(`[backend] ${dado}`));
@@ -88,6 +103,7 @@ app.whenReady().then(() => {
 
   registrarIpcPlanilha();
   registrarIpcRelatorio();
+  registrarIpcConferencia();
   subirBackend();
   criarJanela();
 

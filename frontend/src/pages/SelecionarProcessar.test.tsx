@@ -48,6 +48,7 @@ beforeEach(() => {
     abrirArquivo: vi.fn(),
     salvarComo: vi.fn(),
     salvarRelatorio: vi.fn(),
+    copiarHistorico: vi.fn(),
   };
 });
 

@@ -10,6 +10,7 @@ declare global {
         caminhoOrigem: string,
         pastaResultados: string,
       ) => Promise<{ caminhoArquivo: string; pastaArquivo: string } | null>;
+      copiarHistorico: (texto: string) => Promise<void>;
     };
   }
 }

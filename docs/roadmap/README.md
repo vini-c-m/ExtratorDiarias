@@ -27,10 +27,11 @@ Histórico de sprints do Extrator de Diárias, reconstruído a partir dos coment
 | **09.3** | "Campo estelar" do fundo decorativo — efeito de cintilação sutil, puramente visual. |
 | **10** | **Publicação pública** — auditoria de privacidade completa, substituição de todas as fixtures de teste por dados 100% sintéticos, documentação profissional (README, arquitetura, branding, changelog, políticas de contribuição/segurança) e primeira release pública (v1.0.0). Ver [`docs/branding/`](../branding/) e [`docs/architecture/`](../architecture/). |
 | — *(sem número, "Sprint de Correção Crítica")* | Correção de um bug de produção: um CPF truncado por quebra de linha/página no PDF conseguia passar como válido e ser gravado incorretamente na planilha. Corrigido na camada de validação (`validacao_diaria._cpf_valido`), não na escrita — a barreira certa é impedir o dado ruim de chegar lá, não mudar o formato de gravação já homologado. |
+| **11** | **Engenharia reversa das regras de negócio da planilha oficial** (sem código de produção alterado) — mapeamento completo das três abas (`Controle de Diárias`, `Dados`, `Tabela Valores`), tradução de todas as fórmulas relevantes para linguagem de negócio e proposta arquitetural da futura **Central Inteligente de Conferência**. Ver [`docs/central-conferencia/`](../central-conferencia/README.md) e [`docs/backlog/`](../backlog/README.md). |
 
 ## Em desenvolvimento
 
-Nenhum item em desenvolvimento ativo identificável no código no momento desta publicação.
+Nenhum item em desenvolvimento ativo identificável no código no momento desta publicação. A Sprint 12 (implementação da Central Inteligente de Conferência) depende da validação das perguntas em aberto listadas em [`docs/central-conferencia/README.md`](../central-conferencia/README.md#6-perguntas-em-aberto-antes-da-sprint-12).
 
 ## Planejado (não implementado)
 

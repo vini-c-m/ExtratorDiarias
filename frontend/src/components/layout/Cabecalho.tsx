@@ -1,6 +1,7 @@
+import { ArrowLeft } from "lucide-react";
 import type { StatusBackend } from "../../hooks/useBackendStatus";
 import { CORES_STATUS, type VarianteStatus } from "../../theme/cores";
-import { GLOW_PERIGO } from "../../theme/estilos";
+import { GLOW_LOGO_NEON, GLOW_PERIGO } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import Logo from "./Logo";
 
@@ -16,6 +17,12 @@ export type EstadoApp = "pronto" | "processando" | "preenchendo" | "concluido";
 interface Props {
   status: StatusBackend;
   estadoApp: EstadoApp;
+  /** Sprint 14 — presente só nas telas de funcionalidade (Processamento,
+   * Central de Conferência), nunca no Hub: é o caminho de volta na
+   * hierarquia Boas-vindas → Hub → Funcionalidade (item "Navegação" da
+   * Sprint). `SelecionarProcessar`/`Conferencia` continuam sem saber que
+   * isso existe — o retorno é chrome do `Cabecalho`, não de cada página. */
+  aoVoltarAoHub?: () => void;
 }
 
 interface Descritor {
@@ -76,21 +83,35 @@ function glowDaVariante(variante: VarianteStatus): string {
 // conjunto e `items-center` garantindo o alinhamento vertical entre logo e
 // título.
 //
-// Sprint 09.1 — monograma maior (80px, era 64px) com um glow atrás dele
-// "extremamente sutil" (item "Header" do refinamento): nenhum token novo —
-// é a mesma composição roxo+azul usada no hover do botão primário
-// (`--shadow-glow-purple` + `--shadow-glow-blue`, ver `theme.css`), só
-// dentro de um elemento com opacidade bem mais baixa (`opacity-10`), a
-// forma pedida na Sprint para diferenciar "iluminação de fundo" de um glow
-// de painel sem inventar um valor de sombra próprio. Divisor inferior mais
-// espesso/luminoso. Estrutura e conteúdo (monograma + título + tagline,
-// nenhuma referência institucional) não mudam.
-export default function Cabecalho({ status, estadoApp }: Props) {
+// Sprint 09.1 — monograma maior (80px, era 64px), com glow atrás. Divisor
+// inferior mais espesso/luminoso. Estrutura e conteúdo (monograma + título
+// + tagline, nenhuma referência institucional) não mudam.
+//
+// Sprint 14 — o halo largo e difuso da Sprint 09.1 (`opacity-10` sobre um
+// círculo grande) lia como névoa ao redor de um ícone nítido, não como
+// "painel aceso" — trocado por `GLOW_LOGO_NEON` (`theme/estilos.ts`): um
+// aro de 1px justo à silhueta do logo, seguido das mesmas duas camadas
+// oficiais de glow (ciano + roxo), sem inventar um valor de sombra novo —
+// só uma composição diferente dos mesmos tokens. Mesmo tratamento na tela
+// de Boas-vindas (`pages/BoasVindas.tsx`), única outra tela com o logo em
+// destaque.
+export default function Cabecalho({ status, estadoApp, aoVoltarAoHub }: Props) {
   const descritor = status === "conectado" ? DESCRITOR_ESTADO[estadoApp] : DESCRITOR_BACKEND[status];
   const glow = glowDaVariante(descritor.variante);
 
   return (
     <header className="relative animate-entrada-conteudo px-6 pt-9 pb-7">
+      {aoVoltarAoHub && (
+        <button
+          type="button"
+          onClick={aoVoltarAoHub}
+          className="absolute left-6 top-7 flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-slate-100"
+        >
+          <ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" />
+          Hub
+        </button>
+      )}
+
       <div
         className={`absolute right-6 top-7 max-w-[230px] rounded-2xl border px-4 py-2.5 backdrop-blur-sm transition-shadow ${CORES_STATUS[descritor.variante].alerta} ${glow}`}
       >
@@ -105,10 +126,7 @@ export default function Cabecalho({ status, estadoApp }: Props) {
 
       <div className="flex items-center justify-center gap-5">
         <span className="relative shrink-0">
-          <span
-            aria-hidden="true"
-            className="absolute inset-2 -z-10 rounded-full opacity-10 shadow-[var(--shadow-glow-purple),var(--shadow-glow-blue)]"
-          />
+          <span aria-hidden="true" className={`absolute -inset-1.5 -z-10 rounded-2xl ${GLOW_LOGO_NEON}`} />
           <Logo variante="cor" className="h-20 w-20" />
         </span>
         <div className="text-left leading-tight">

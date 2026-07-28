@@ -1,4 +1,5 @@
 import { mensagemAmigavel } from "../lib/mensagens";
+import type { ResultadoConferencia } from "../types/conferencia";
 import type {
   LoteProcessamento,
   Processo,
@@ -164,6 +165,100 @@ export async function preencherPlanilha(
   }
 
   return resposta.json();
+}
+
+/** Sprint 13.1 — as rotas de conferência têm validação própria no schema
+ * (`app/schemas/conferencia.py`, ex.: período final antes do inicial, SEI
+ * vazio, origem igual a destino) que o FastAPI devolve como HTTP 422 com
+ * `detail` sendo uma LISTA de objetos `{msg, loc, type, ...}` — formato
+ * diferente do `detail` como string simples usado pelas outras rotas do
+ * app (ex.: os 503/404 desta mesma API). `corpo?.detail` sozinho não cobre
+ * essa forma: virava `new Error([objeto])`, que o JS serializa como
+ * "[object Object]" — mensagem ilegível na tela em vez do texto de
+ * validação já amigável vindo do backend (ex.: "Período final não pode ser
+ * anterior ao período inicial."). */
+function mensagemDoErro422(corpo: unknown, status: number): string {
+  const detail = (corpo as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const primeiro = detail[0] as { msg?: unknown } | undefined;
+    if (typeof primeiro?.msg === "string") {
+      return primeiro.msg.replace(/^Value error,\s*/, "");
+    }
+  }
+  return `Backend respondeu ${status}`;
+}
+
+/** Sprint 13 — falha técnica da própria Central (RN-11: nunca um resultado
+ * de negócio), sempre HTTP 503 — distinta de `Error` genérico para a tela
+ * poder mostrar a mensagem operacional certa sem depender do texto vindo do
+ * backend. */
+export class ErroConferenciaIndisponivel extends Error {
+  constructor() {
+    super(
+      "Não foi possível acessar os registros administrativos agora. Tente novamente em instantes.",
+    );
+    this.name = "ErroConferenciaIndisponivel";
+  }
+}
+
+export async function conferir(
+  cpf: string,
+  periodoInicial: string,
+  periodoFinal: string,
+): Promise<ResultadoConferencia> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cpf,
+      periodo_inicial: periodoInicial,
+      periodo_final: periodoFinal,
+    }),
+  });
+
+  if (resposta.status === 503) {
+    throw new ErroConferenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+export async function gerarHistorico(
+  cpf: string,
+  periodoInicial: string,
+  periodoFinal: string,
+  sei: string,
+  origem: string,
+  destino: string,
+): Promise<string> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/historico`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cpf,
+      periodo_inicial: periodoInicial,
+      periodo_final: periodoFinal,
+      sei,
+      origem,
+      destino,
+    }),
+  });
+
+  if (resposta.status === 503) {
+    throw new ErroConferenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  const dados: { texto: string } = await resposta.json();
+  return dados.texto;
 }
 
 export async function checarSaudeBackend(): Promise<boolean> {

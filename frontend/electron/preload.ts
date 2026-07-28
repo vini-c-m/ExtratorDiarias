@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld("api", {
     pastaResultados: string,
   ): Promise<{ caminhoArquivo: string; pastaArquivo: string } | null> =>
     ipcRenderer.invoke("relatorio:salvar-como", caminhoOrigem, pastaResultados),
+  copiarHistorico: (texto: string): Promise<void> =>
+    ipcRenderer.invoke("conferencia:copiar-historico", texto),
 });

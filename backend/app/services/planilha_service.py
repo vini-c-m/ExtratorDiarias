@@ -1,5 +1,6 @@
 import os
 
+from app.consulta import base_local
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
 from app.domain.entities.processo import Processo
 from app.planilha.escritor_planilha import NOME_ABA, ResultadoPreenchimento, preencher
@@ -63,4 +64,20 @@ def preencher_planilha(
         avisos_completos,
         tempo_processamento_ms=tempo_processamento_ms,
     )
+
+    # Sprint 13 — hook aditivo para a Central Inteligente de Conferência
+    # (doc arquitetural § 4.2): ao lado da cópia com timestamp que já existe
+    # acima, sobrescreve a Base Local de Consulta com a planilha recém
+    # preenchida. Só quando algo foi de fato gravado — uma requisição que só
+    # encontrou duplicidade não paga o custo de copiar ~3 mil linhas. Nunca
+    # pode quebrar o fluxo de preenchimento já homologado: qualquer falha
+    # aqui é engolida em silêncio (risco aceito nesta Sprint, sem
+    # infraestrutura de logging no projeto — ver TODO em
+    # `app/consulta/base_local.py`).
+    if resultado.total_gravado > 0:
+        try:
+            base_local.sincronizar(caminho_planilha)
+        except Exception:
+            pass
+
     return resultado, arquivos_gerados

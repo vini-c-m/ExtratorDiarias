@@ -55,6 +55,19 @@ export const GLOW_PROCESSAMENTO = "border-violet-400/20 shadow-glow-purple";
  * (`--shadow-glow-blue`), sempre visível, nunca só no hover. */
 export const GLOW_PDFS = "border-blue-800/30 shadow-glow-blue";
 
+/** Sprint 14 — "painel de LED" do logo principal (monograma "ED"): usado no
+ * cabeçalho compacto e na tela de Boas-vindas (hero, maior). Substitui o
+ * halo largo e difuso da Sprint 09.1 (`opacity-10` + `shadow-glow-purple`/
+ * `shadow-glow-blue` empilhados atrás do ícone, sem nenhum contorno) por um
+ * anel justo à silhueta do logo — um aro nítido de 1px seguido das duas
+ * camadas oficiais de glow (mesmos tokens de sempre, só compostas como
+ * "aro" em vez de "névoa solta"). É isso que lê como painel iluminado por
+ * trás em vez de mancha ao redor de um ícone nítido. Um único token — quem
+ * usa só aplica no elemento posicionado exatamente sobre os limites do
+ * logo (mesma proporção/raio), nunca um valor de sombra próprio. */
+export const GLOW_LOGO_NEON =
+  "shadow-[0_0_0_1px_rgb(255_255_255_/_0.28),var(--shadow-glow-cyan),var(--shadow-glow-purple)]";
+
 /** Sprint 09.1 — glow vermelho de "perigo/erro" fora do sistema de 6 tokens
  * (não é um dos 5 grupos de Processamento/PDFs/Estatísticas), mas segue
  * exatamente a mesma fórmula de duas camadas dos tokens oficiais (16px/38px,

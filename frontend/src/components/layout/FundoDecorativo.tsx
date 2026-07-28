@@ -2,22 +2,29 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import { CAMINHO_MONOGRAMA } from "./Logo";
 
 // Sprint 09.1/09.2/09.3 — camada puramente decorativa da identidade "Neon
-// Tech UI": a marca d'água institucional (monograma "ED") continua sendo o
-// elemento principal do fundo, com um leve parallax ao mover o mouse. A
-// Sprint 09 tinha partículas "estrela" nesta camada e foram removidas por
-// completo na 09.1 (pareciam céu estrelado, competiam com a marca); a
-// Sprint 09.2 trouxe a ideia de volta, mas só como "detalhe de
-// profundidade" quase invisível (8 pontos, 2–6% de opacidade). A Sprint
-// 09.3 muda o conceito de "partículas" para um "campo estelar tecnológico"
-// deliberado: ~100–120 estrelas em quatro categorias (ver `gerarCampoEstelar`
-// abaixo), agora espalhadas por toda a viewport — não só na periferia como
-// os monogramas — para lembrar um céu tecnológico sofisticado, sem roubar a
-// cena do monograma nem do conteúdo real do app. Continua vivendo na mesma
-// camada de parallax dos monogramas. Fixa atrás de todo o conteúdo
-// (`App.tsx` empilha o resto da UI num wrapper `relative z-10`),
-// `pointer-events-none` de ponta a ponta — nunca intercepta clique/arraste
-// de arquivo, nunca participa da leitura de tela (`aria-hidden`), nunca
-// guarda estado de negócio algum.
+// Tech UI", com leve parallax ao mover o mouse (`camadaParallaxRef`).
+//
+// Sprint 14 — decisão oficial (ver `docs/branding/README.md` § "Fundo
+// decorativo"): os monogramas deixam de ser um detalhe descartável e
+// passam a fazer parte permanente da identidade visual. O fundo agora é
+// **uma cena com três camadas integradas**, sempre nesta ordem de
+// prioridade visual (a maior por último no DOM, para nunca ficar coberta
+// por uma camada de menor prioridade num overlap raro):
+//
+//   1. Campo estrelado (`CAMPO_ESTELAR`, Sprint 09.3, mantido) — a camada
+//      mais discreta, textura de fundo.
+//   2. Partículas luminosas (`PARTICULAS_LUMINOSAS`, nova) — poucos brilhos
+//      difusos, camada intermediária de atmosfera/profundidade.
+//   3. Logos holográficos (`MONOGRAMAS`) — a marca d'água, maior presença
+//      das três camadas de fundo (mas sempre abaixo do logo principal e do
+//      conteúdo real da tela, que continuam fora deste componente).
+//
+// As três compartilham a mesma família de cor (ciano/violeta da marca) e a
+// mesma composição "orgânica" de posição/tamanho/opacidade — deliberado,
+// para nunca lerem como três efeitos independentes, e sim como uma única
+// cena. Continua vivendo na mesma camada de parallax, fixa atrás de todo o
+// conteúdo (`App.tsx` empilha o resto da UI num wrapper `relative z-10`),
+// `pointer-events-none` de ponta a ponta.
 
 interface Monograma {
   top: string;
@@ -25,54 +32,39 @@ interface Monograma {
   tamanho: number;
   rotacao: number;
   opacidade: number;
+  /** Sprint 14 — variação por peça da intensidade do próprio glow (não
+   * amarrada ao tamanho), parte da "profundidade" pedida: nenhuma peça deve
+   * brilhar exatamente igual à vizinha. Faixa estreita (0.85–1.2) — "nada
+   * exagerado". */
+  intensidadeGlow: number;
   /** Só documentação — qual papel esta peça cumpre na composição. */
   papel: string;
 }
 
-// Sprint 09.1 — a marca d'água deixa de ser "espalha e reza" e passa a ser
-// uma composição desenhada à mão, como a peça de um designer, não uma
-// distribuição aleatória:
-//
-//  - A viewport é pensada como uma grade solta de 4 colunas × 3 linhas; cada
-//    peça ocupa uma "zona" específica (canto, borda, meio-termo), nunca
-//    alinhada em grade perceptível — sempre com deslocamento manual dentro
-//    da zona.
-//  - Três famílias de tamanho (grande 240–260px / média 190–210px / pequena
-//    130–160px, bem abaixo dos 420–660px da Sprint 09) criam ritmo: poucas
-//    âncoras grandes nos cantos, mais peças pequenas preenchendo bordas e
-//    entrelinhas — nunca peças do mesmo tamanho lado a lado.
-//  - Rotação (5°–15° de magnitude) segue uma regra de composição, não sorteio:
-//    peças da metade esquerda giram para a esquerda (negativo), peças da
-//    metade direita giram para a direita (positivo) — sugere um leque que se
-//    abre a partir do centro, em vez de ruído.
-//  - As quatro âncoras de canto ficam parcialmente cortadas pela borda da
-//    janela de propósito (posição negativa/>90%); mais 4 peças cortam as
-//    quatro bordas (topo/base/esquerda/direita) para a naturalidade pedida,
-//    sem concentrar o corte só nos cantos.
-//  - A faixa central (onde o conteúdo real do app fica) é deliberadamente
-//    mais vazia — a textura vive na periferia, nunca compete com o card em
-//    primeiro plano.
-//  - Opacidade sempre entre 3% e 5%: âncoras grandes um pouco mais presentes
-//    (4–4,5%), peças pequenas mais discretas (3%). Blur proporcional ao
-//    tamanho (~6% do tamanho, 8–16px) — um blur fixo grande (era 48px)
-//    dissolvia peças pequenas até ficarem ilegíveis como monograma.
+// Sprint 09.1 — composição desenhada à mão (grade solta de 4×3 zonas,
+// nunca alinhada em grade perceptível, âncoras grandes nos cantos + peças
+// pequenas nas bordas/entrelinhas, rotação em leque a partir do centro).
+// Posições e tamanhos preservados na Sprint 14 (a composição espacial já
+// funcionava); o que muda é o acabamento — ver `intensidadeGlow` e o
+// tratamento de traço/glow no render abaixo, em vez de preenchimento
+// borrado.
 const MONOGRAMAS: Monograma[] = [
-  { papel: "âncora superior-esquerda, grande", top: "-6%", left: "-4%", tamanho: 260, rotacao: -11, opacidade: 0.045 },
-  { papel: "âncora superior-direita, grande", top: "-8%", left: "82%", tamanho: 240, rotacao: 12, opacidade: 0.04 },
-  { papel: "recorte na borda superior, pequena", top: "-6%", left: "34%", tamanho: 140, rotacao: -6, opacidade: 0.03 },
+  { papel: "âncora superior-esquerda, grande", top: "-6%", left: "-4%", tamanho: 260, rotacao: -11, opacidade: 0.08, intensidadeGlow: 1.15 },
+  { papel: "âncora superior-direita, grande", top: "-8%", left: "82%", tamanho: 240, rotacao: 12, opacidade: 0.075, intensidadeGlow: 0.95 },
+  { papel: "recorte na borda superior, pequena", top: "-6%", left: "34%", tamanho: 140, rotacao: -6, opacidade: 0.055, intensidadeGlow: 1.05 },
 
-  { papel: "recorte na borda direita, média", top: "34%", left: "92%", tamanho: 200, rotacao: 9, opacidade: 0.035 },
-  { papel: "meio-direita inferior, pequena, recorte na borda", top: "64%", left: "97%", tamanho: 150, rotacao: 13, opacidade: 0.03 },
+  { papel: "recorte na borda direita, média", top: "34%", left: "92%", tamanho: 200, rotacao: 9, opacidade: 0.065, intensidadeGlow: 0.9 },
+  { papel: "meio-direita inferior, pequena, recorte na borda", top: "64%", left: "97%", tamanho: 150, rotacao: 13, opacidade: 0.055, intensidadeGlow: 1.1 },
 
-  { papel: "âncora inferior-direita, grande", top: "96%", left: "88%", tamanho: 250, rotacao: 8, opacidade: 0.045 },
-  { papel: "âncora inferior-esquerda, média", top: "92%", left: "6%", tamanho: 210, rotacao: -9, opacidade: 0.04 },
-  { papel: "recorte na borda inferior, pequena", top: "98%", left: "56%", tamanho: 130, rotacao: 5, opacidade: 0.03 },
+  { papel: "âncora inferior-direita, grande", top: "96%", left: "88%", tamanho: 250, rotacao: 8, opacidade: 0.08, intensidadeGlow: 1.0 },
+  { papel: "âncora inferior-esquerda, média", top: "92%", left: "6%", tamanho: 210, rotacao: -9, opacidade: 0.07, intensidadeGlow: 1.15 },
+  { papel: "recorte na borda inferior, pequena", top: "98%", left: "56%", tamanho: 130, rotacao: 5, opacidade: 0.05, intensidadeGlow: 0.9 },
 
-  { papel: "recorte na borda esquerda, média", top: "46%", left: "-6%", tamanho: 190, rotacao: -13, opacidade: 0.035 },
-  { papel: "meio-esquerda superior, pequena", top: "16%", left: "10%", tamanho: 150, rotacao: -6, opacidade: 0.03 },
+  { papel: "recorte na borda esquerda, média", top: "46%", left: "-6%", tamanho: 190, rotacao: -13, opacidade: 0.065, intensidadeGlow: 1.05 },
+  { papel: "meio-esquerda superior, pequena", top: "16%", left: "10%", tamanho: 150, rotacao: -6, opacidade: 0.055, intensidadeGlow: 0.95 },
 
-  { papel: "entrelinha superior-direita, pequena", top: "22%", left: "70%", tamanho: 160, rotacao: 7, opacidade: 0.03 },
-  { papel: "entrelinha inferior-esquerda, pequena", top: "74%", left: "24%", tamanho: 145, rotacao: -8, opacidade: 0.03 },
+  { papel: "entrelinha superior-direita, pequena", top: "22%", left: "70%", tamanho: 160, rotacao: 7, opacidade: 0.055, intensidadeGlow: 1.1 },
+  { papel: "entrelinha inferior-esquerda, pequena", top: "74%", left: "24%", tamanho: 145, rotacao: -8, opacidade: 0.05, intensidadeGlow: 1.0 },
 ];
 
 type EstiloComVariaveis = CSSProperties & Record<`--${string}`, string | number>;
@@ -111,17 +103,24 @@ function entre(minimo: number, maximo: number): number {
   return minimo + aleatorio() * (maximo - minimo);
 }
 
-// Sprint 09.3 — o conceito de "partículas" (poucos pontos quase invisíveis)
-// vira um "campo estelar tecnológico": ~100–120 estrelas espalhadas por
-// toda a viewport, em quatro categorias que criam hierarquia visual entre
-// si sem nenhuma delas competir com o monograma ou o conteúdo do app:
-//  - maioria (poeira, 1px) — brilho discreto, sem glow;
+// Sprint 09.3 — "campo estelar tecnológico": ~100–120 estrelas em quatro
+// categorias que criam hierarquia visual entre si:
+//  - maioria (poeira, 1px) — brilho discreto;
 //  - quantidade menor (ciano, 2px) — glow ciano;
 //  - poucas (roxo, 3px) — glow roxo;
 //  - só algumas (4–8, sparkle "✦") — simulam estrelas mais intensas.
 // ~1 em cada 3 estrelas ganha uma cintilação própria — oscilação lenta
 // (6–12s) e suave de opacidade, nunca abrupta, com atraso aleatório para
-// não sincronizar (senão o campo "respira" todo junto, artificial demais).
+// não sincronizar.
+//
+// Sprint 14 — auditoria encontrou a causa raiz do "parece pixel preto"
+// relatado: a categoria `poeira` (70 das ~112 estrelas, a maioria do
+// campo) nunca teve entrada em `GLOW_POR_TIPO` — um círculo de 1px sem
+// nenhum halo, com opacidade mínima de 0,15, não tem massa visual
+// suficiente para ler como ponto de luz. Toda categoria ganha glow mínimo
+// agora (ver `GLOW_POR_TIPO` abaixo) e o piso de opacidade da poeira sobe
+// de 0,15 para 0,25 — nenhuma estrela deste campo pode mais renderizar sem
+// nenhum brilho.
 function gerarCampoEstelar(): Estrela[] {
   const categorias: Array<{
     tipo: TipoEstrela;
@@ -129,7 +128,7 @@ function gerarCampoEstelar(): Estrela[] {
     tamanho: number;
     opacidade: [number, number];
   }> = [
-    { tipo: "poeira", quantidade: 70, tamanho: 1, opacidade: [0.15, 0.4] },
+    { tipo: "poeira", quantidade: 70, tamanho: 1, opacidade: [0.25, 0.45] },
     { tipo: "ciano", quantidade: 26, tamanho: 2, opacidade: [0.35, 0.55] },
     { tipo: "roxo", quantidade: 10, tamanho: 3, opacidade: [0.4, 0.6] },
     { tipo: "sparkle", quantidade: 6, tamanho: 11, opacidade: [0.55, 0.8] },
@@ -155,22 +154,76 @@ function gerarCampoEstelar(): Estrela[] {
 
 const CAMPO_ESTELAR = gerarCampoEstelar();
 
-const GLOW_POR_TIPO: Partial<Record<TipoEstrela, string>> = {
+// Sprint 14 — toda categoria tem glow agora (era só ciano/roxo); poeira
+// ganha um halo muito pequeno (2px), suficiente para nunca mais ler como
+// "pixel apagado" sem se tornar uma segunda categoria "ciano".
+const GLOW_POR_TIPO: Record<Exclude<TipoEstrela, "sparkle">, string> = {
+  poeira: "0 0 2px 0.5px rgb(226 232 255 / 0.65)",
   ciano: "0 0 4px 1px rgb(34 211 238 / 0.6)",
   roxo: "0 0 6px 1.5px rgb(168 85 247 / 0.55)",
 };
 
-function estiloCintilarDe(estrela: Estrela): EstiloComVariaveis | undefined {
-  if (!estrela.cintila) return undefined;
+interface Particula {
+  top: number;
+  left: number;
+  tamanho: number;
+  desfoque: number;
+  opacidadeBase: number;
+  cor: "ciano" | "violeta" | "branca";
+  cintila: boolean;
+  duracaoCintilarS: number;
+  atrasoCintilarS: number;
+}
+
+// Sprint 14 — nova camada intermediária pedida na decisão oficial: "poucas,
+// suaves, glow difuso maior que uma estrela — nunca competem com os
+// logos". Continua consumindo o mesmo PRNG do módulo (determinístico, sem
+// "pular" entre renders) — poucas peças (12) de propósito, para não
+// competir em quantidade com o campo estelar nem com os logos.
+function gerarParticulasLuminosas(): Particula[] {
+  const cores: Particula["cor"][] = ["ciano", "violeta", "branca"];
+  const quantidade = 12;
+  const particulas: Particula[] = [];
+  for (let indice = 0; indice < quantidade; indice += 1) {
+    particulas.push({
+      top: entre(4, 96),
+      left: entre(4, 96),
+      tamanho: entre(14, 32),
+      desfoque: entre(10, 20),
+      opacidadeBase: entre(0.06, 0.15),
+      cor: cores[Math.floor(entre(0, cores.length))],
+      cintila: aleatorio() < 0.5,
+      duracaoCintilarS: entre(9, 16),
+      atrasoCintilarS: entre(0, 12),
+    });
+  }
+  return particulas;
+}
+
+const PARTICULAS_LUMINOSAS = gerarParticulasLuminosas();
+
+const COR_PARTICULA: Record<Particula["cor"], string> = {
+  ciano: "34 211 238",
+  violeta: "167 139 250",
+  branca: "226 232 255",
+};
+
+function estiloCintilarDe(
+  opacidadeBase: number,
+  cintila: boolean,
+  duracaoS: number,
+  atrasoS: number,
+): EstiloComVariaveis | undefined {
+  if (!cintila) return undefined;
   return {
-    "--estrela-opacidade-min": String(estrela.opacidadeBase * 0.5),
-    "--estrela-opacidade-max": String(Math.min(estrela.opacidadeBase * 1.6, 0.95)),
-    animation: `estrela-cintilar ${estrela.duracaoCintilarS.toFixed(2)}s ease-in-out ${estrela.atrasoCintilarS.toFixed(2)}s infinite`,
+    "--estrela-opacidade-min": String(opacidadeBase * 0.5),
+    "--estrela-opacidade-max": String(Math.min(opacidadeBase * 1.6, 0.95)),
+    animation: `estrela-cintilar ${duracaoS.toFixed(2)}s ease-in-out ${atrasoS.toFixed(2)}s infinite`,
   };
 }
 
 // Deslocamento máximo do parallax — 2 a 3px, exatamente o pedido pela
-// Sprint ("apenas para dar profundidade"), nunca mais que isso.
+// Sprint 09 ("apenas para dar profundidade"), nunca mais que isso.
 const PARALLAX_MAX_PX = 3;
 
 export default function FundoDecorativo() {
@@ -213,26 +266,22 @@ export default function FundoDecorativo() {
 
   return (
     <div aria-hidden="true" className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-      <div ref={camadaParallaxRef} className="absolute inset-0 will-change-transform">
-        {MONOGRAMAS.map((monograma) => (
-          <svg
-            key={monograma.papel}
-            viewBox="0 0 100 100"
-            className="absolute text-white"
-            style={{
-              top: monograma.top,
-              left: monograma.left,
-              width: monograma.tamanho,
-              height: monograma.tamanho,
-              opacity: monograma.opacidade,
-              transform: `translate(-50%, -50%) rotate(${monograma.rotacao}deg)`,
-              filter: `blur(${Math.round(monograma.tamanho * 0.06)}px)`,
-            }}
-          >
-            <path fillRule="evenodd" d={CAMINHO_MONOGRAMA} fill="currentColor" />
-          </svg>
-        ))}
+      {/* Gradiente único compartilhado por todos os logos holográficos —
+          definido uma vez e referenciado por `url(#logo-holografico)` em
+          cada `<path>`, em vez de repetir o mesmo `<linearGradient>` 12
+          vezes. Mesmos tons do gradiente de marca (`--gradient-marca`). */}
+      <svg width="0" height="0" focusable="false">
+        <defs>
+          <linearGradient id="logo-holografico" x1="50" y1="16" x2="50" y2="84" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#2563EB" />
+            <stop offset="50%" stopColor="#06B6D4" />
+            <stop offset="100%" stopColor="#8B5CF6" />
+          </linearGradient>
+        </defs>
+      </svg>
 
+      <div ref={camadaParallaxRef} className="absolute inset-0 will-change-transform">
+        {/* Camada 1 — campo estrelado (a mais discreta das três). */}
         {CAMPO_ESTELAR.map((estrela, indice) => {
           const classeCintilar = estrela.cintila ? " estrela-cintilante" : "";
           const estiloBase: EstiloComVariaveis = {
@@ -240,7 +289,7 @@ export default function FundoDecorativo() {
             left: `${estrela.left}%`,
             transform: "translate(-50%, -50%)",
             opacity: estrela.cintila ? undefined : estrela.opacidadeBase,
-            ...estiloCintilarDe(estrela),
+            ...estiloCintilarDe(estrela.opacidadeBase, estrela.cintila, estrela.duracaoCintilarS, estrela.atrasoCintilarS),
           };
 
           if (estrela.tipo === "sparkle") {
@@ -270,6 +319,61 @@ export default function FundoDecorativo() {
                 boxShadow: GLOW_POR_TIPO[estrela.tipo],
               }}
             />
+          );
+        })}
+
+        {/* Camada 2 — partículas luminosas (atmosfera/profundidade). */}
+        {PARTICULAS_LUMINOSAS.map((particula, indice) => {
+          const classeCintilar = particula.cintila ? " estrela-cintilante" : "";
+          const cor = COR_PARTICULA[particula.cor];
+          const estilo: EstiloComVariaveis = {
+            top: `${particula.top}%`,
+            left: `${particula.left}%`,
+            width: particula.tamanho,
+            height: particula.tamanho,
+            transform: "translate(-50%, -50%)",
+            background: `radial-gradient(circle, rgb(${cor} / 0.9), rgb(${cor} / 0.25) 55%, transparent 75%)`,
+            filter: `blur(${particula.desfoque.toFixed(1)}px)`,
+            opacity: particula.cintila ? undefined : particula.opacidadeBase,
+            ...estiloCintilarDe(particula.opacidadeBase, particula.cintila, particula.duracaoCintilarS, particula.atrasoCintilarS),
+          };
+          return <span key={indice} className={`absolute rounded-full${classeCintilar}`} style={estilo} />;
+        })}
+
+        {/* Camada 3 — logos holográficos (maior presença das três camadas
+            de fundo). Sprint 14: contorno (traço), não preenchimento —
+            nítido em qualquer opacidade, sem depender de blur para
+            "amaciar" uma forma cheia. O glow vem só do `filter`
+            (drop-shadow em duas camadas, mesma fórmula de intensidade dos
+            tokens oficiais — núcleo curto + auréola mais larga), nunca do
+            próprio traço, que fica sempre nítido. */}
+        {MONOGRAMAS.map((monograma) => {
+          const nucleo = (2.4 * monograma.intensidadeGlow).toFixed(1);
+          const aureola = (11 * monograma.intensidadeGlow).toFixed(1);
+          return (
+            <svg
+              key={monograma.papel}
+              viewBox="0 0 100 100"
+              className="absolute"
+              style={{
+                top: monograma.top,
+                left: monograma.left,
+                width: monograma.tamanho,
+                height: monograma.tamanho,
+                opacity: monograma.opacidade,
+                transform: `translate(-50%, -50%) rotate(${monograma.rotacao}deg)`,
+                filter: `drop-shadow(0 0 ${nucleo}px rgb(34 211 238 / 0.55)) drop-shadow(0 0 ${aureola}px rgb(139 92 246 / 0.4))`,
+              }}
+            >
+              <path
+                fillRule="evenodd"
+                d={CAMINHO_MONOGRAMA}
+                fill="none"
+                stroke="url(#logo-holografico)"
+                strokeWidth={2}
+                strokeLinejoin="round"
+              />
+            </svg>
           );
         })}
       </div>

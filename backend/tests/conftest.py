@@ -1,7 +1,24 @@
 import os
+from datetime import date
 
 import pytest
 from openpyxl import Workbook
+
+from app.consulta.base_local import VAR_AMBIENTE_USER_DATA
+
+
+@pytest.fixture(autouse=True)
+def _isolar_base_local_da_appdata_real(tmp_path, monkeypatch):
+    """Sprint 13 — o hook de sincronização da Base Local
+    (`app/services/planilha_service.py`) é engolido em silêncio quando
+    falha, então sem isto qualquer teste que chame `preencher_planilha`
+    escreveria de verdade em `%APPDATA%/ExtratorDiarias` na máquina que
+    roda os testes, sem nenhum teste perceber. `autouse=True` garante que
+    isso nunca aconteça, mesmo em testes que não sabem que a Central
+    Inteligente existe. Testes que precisam controlar o caminho da Base
+    Local explicitamente (`tests/integration/test_base_local.py`) sobrescrevem
+    esta variável com o seu próprio `monkeypatch`."""
+    monkeypatch.setenv(VAR_AMBIENTE_USER_DATA, str(tmp_path / "_base_local_isolada_de_testes"))
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "pdfs_exemplo")
 FIXTURES_DIR_DIARIA_MEMBRO = os.path.join(
@@ -212,6 +229,87 @@ def caminho_planilha_teste(tmp_path):
         )
 
         workbook.create_sheet("Dados")
+        workbook.create_sheet("Tabela Valores")
+
+        caminho = tmp_path / nome_arquivo
+        workbook.save(caminho)
+        return str(caminho)
+
+    return _criar
+
+
+_CABECALHO_DADOS = [
+    "SEI",  # rotulada errado na planilha oficial — conteúdo real é CPF (RN-01)
+    "MATRÍCULA",
+    "NOME",
+    "PREVIDÊNCIA",
+    "CARGO",
+    "ÓRGÃO DE ORIGEM",
+    "REGIME DE PREVIDÊNCIA",
+    "SITUAÇÃO DO SERVIDOR",
+]
+
+
+@pytest.fixture
+def caminho_planilha_conferencia_teste(tmp_path):
+    """Planilha sintética própria da Central de Conferência (Sprint 13) —
+    separada de `caminho_planilha_teste` para não alterar o comportamento
+    dos testes já homologados de `escritor_planilha`. Tem a aba `Dados`
+    populada (cabeçalho real confirmado no doc arquitetural, § 2.2) e a aba
+    `Controle de Diárias` com uma linha cujo CPF+período serve de "duplicata"
+    nos testes que precisarem — os dois servidores cobrem a inconsistência
+    real de armazenamento de CPF (um como `int`, outro como texto mascarado,
+    § 5 do doc arquitetural)."""
+
+    def _criar(nome_arquivo: str = "planilha_conferencia_teste.xlsx") -> str:
+        workbook = Workbook()
+        controle = workbook.active
+        controle.title = "Controle de Diárias"
+        controle.append(_CABECALHO_PLANILHA)
+        controle.append(
+            [
+                "2026DH000100",
+                "19.20.0902.0004521/2026-11",
+                "PJTESTE",
+                12345678901,
+                "=VLOOKUP($D2,Dados!$A:$E,4,FALSE)",
+                "=VLOOKUP($D2,Dados!$A:$E,3,FALSE)",
+                "=VLOOKUP($D2,Dados!$A:$E,5,FALSE)",
+                date(2026, 7, 21),
+                date(2026, 7, 23),
+                "RECIFE - GARANHUNS",
+                "CARRO",
+                "Motivo de teste",
+            ]
+        )
+
+        dados = workbook.create_sheet("Dados")
+        dados.append(_CABECALHO_DADOS)
+        dados.append(
+            [
+                12345678901,
+                1001,
+                "Maria Aparecida Souza",
+                "FUNAFIN",
+                "Analista Judiciário",
+                None,
+                "RPPS",
+                "Em exercício",
+            ]
+        )
+        dados.append(
+            [
+                "591.111.111-00",
+                1002,
+                "João da Silva",
+                "INSS",
+                "Técnico Judiciário",
+                None,
+                "RGPS",
+                "Em exercício",
+            ]
+        )
+
         workbook.create_sheet("Tabela Valores")
 
         caminho = tmp_path / nome_arquivo
