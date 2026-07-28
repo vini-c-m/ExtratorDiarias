@@ -2,7 +2,9 @@
 
 ## Visão geral
 
-O Extrator de Diárias é um aplicativo desktop Electron com dois processos cooperando localmente, sem nenhuma dependência de rede externa: um **renderer** React (interface) e um **backend FastAPI local**, iniciado automaticamente pelo processo principal do Electron e encerrado com ele. Toda a extração, validação e escrita na planilha acontece no backend; o frontend só orquestra a experiência do usuário e chama a API HTTP local.
+O Extrator de Diárias é um aplicativo desktop Electron com dois processos cooperando localmente, sem nenhuma dependência de rede externa: um **renderer** React (interface) e um **backend FastAPI local**, iniciado automaticamente pelo processo principal do Electron e encerrado com ele. Toda a extração, validação, consulta e escrita na planilha acontece no backend; o frontend só orquestra a experiência do usuário e chama a API HTTP local.
+
+Desde a Sprint 14, o renderer tem duas funcionalidades independentes, escolhidas a partir de um Hub (ver [Frontend](#frontend-electron--react) abaixo) — **Processamento** (fluxo original, grava na planilha oficial) e **Central Inteligente de Conferência** (Sprint 11 → 13.1, só consulta, nunca grava — RN-11 em [`docs/central-conferencia/`](../central-conferencia/README.md#rn-11--princípio-arquitetural-a-central-inteligente-é-um-módulo-exclusivamente-consultivo)).
 
 ```mermaid
 flowchart TB
@@ -10,28 +12,37 @@ flowchart TB
         direction TB
         subgraph Main["Processo Main (Electron)"]
             M1["main.ts — sobe/derruba o backend,\ncria a janela"]
-            IPC["IPC nativo\n(planilha.ts, relatorio.ts)"]
+            IPC["IPC nativo\n(planilha.ts, relatorio.ts, conferencia.ts)"]
         end
         subgraph Renderer["Renderer (React + Vite)"]
-            R1["SelecionarProcessar\n(fluxo único de tela)"]
+            R0["BoasVindas → Hub"]
+            R1["SelecionarProcessar\n(Processamento)"]
+            R3["Conferencia\n(Central Inteligente)"]
             R2["services/api.ts"]
         end
         subgraph Backend["Backend local (FastAPI + Uvicorn, 127.0.0.1)"]
-            API["app/api\nprocessamento · planilha · saude"]
-            SVC["app/services\nprocessamento_service · planilha_service"]
+            API["app/api\nprocessamento · planilha · conferencia · saude"]
+            SVC["app/services\nprocessamento_service · planilha_service\nconferencia_service"]
             EXT["app/extraction\npdf_reader · parsers · enriquecimento"]
-            DOM["app/domain\nregras de validação, entidades"]
+            DOM["app/domain\nregras de validação/conferência, entidades"]
             PLA["app/planilha\nescritor_planilha · relatorio"]
+            CONS["app/consulta\nbase_local · repositórios (Sprint 13)"]
         end
     end
-    Usuario(["Usuário"]) -->|seleciona PDFs| R1
+    Usuario(["Usuário"]) --> R0
+    R0 --> R1 & R3
     R1 --> R2 -->|HTTP 127.0.0.1| API
+    R3 --> R2
     R1 -.->|diálogos nativos<br/>Salvar/Abrir| IPC
     API --> SVC --> EXT --> DOM
     SVC --> PLA -->|grava| XLSX[("Planilha oficial\n.xlsx")]
     PLA -->|gera| HTML[["Relatório HTML\nautossuficiente"]]
+    PLA -.->|sincroniza após\ncada processamento| BASE[("Base Local de Consulta\nsomente-leitura, AppData")]
+    API --> SVC --> CONS -->|lê, nunca escreve| BASE
     M1 -.->|spawn/kill| Backend
 ```
+
+Ponto arquitetural deliberado (RN-11): a única seta de escrita na planilha oficial é `PLA --> XLSX`, sempre a partir do fluxo de Processamento. A Central de Conferência (`CONS`) só lê a Base Local — nunca a planilha oficial diretamente, nunca em modo de escrita. Detalhe completo da proposta e das regras de negócio (RN-01 a RN-13) em [`docs/central-conferencia/`](../central-conferencia/README.md).
 
 ## O pipeline de extração
 
@@ -70,14 +81,15 @@ Arquitetura em camadas, sem framework de DI — dependências fluem por import d
 | Schemas | `app/schemas/` | Contratos Pydantic de entrada/saída da API |
 | Serviços | `app/services/` | Orquestração de caso de uso (`processar_lote`, `preencher_planilha`) |
 | Extração | `app/extraction/` | Leitura de PDF, parsing, segmentação, enriquecimento |
-| Domínio | `app/domain/` | Entidades e regras de negócio puras (validação, tipos, estrutura de uma Diária) |
+| Domínio | `app/domain/` | Entidades e regras de negócio puras — validação/enriquecimento de diária (`domain/rules/validacao_diaria.py`) e, desde a Sprint 13, o diagnóstico da Central de Conferência (`domain/rules/conferencia.py`, `domain/entities/`) |
 | Planilha | `app/planilha/` | Escrita no `.xlsx` oficial e geração do relatório HTML |
+| Consulta | `app/consulta/` | Sprint 13 — sincronização e leitura somente-leitura da Base Local de Consulta (`base_local.py`, `repositorio_servidores.py`, `repositorio_diarias.py`); nenhum módulo aqui escreve na planilha oficial (RN-11) |
 | Infra | `app/infra/` | Configuração, logging (a camada de banco local em `infra/db` está preparada para uso futuro, não é usada no fluxo atual) |
 
 ## Frontend (Electron + React)
 
-- **Processo main** ([`frontend/electron/main.ts`](../../frontend/electron/main.ts)) — sobe o backend (do `.venv` em desenvolvimento; do executável PyInstaller standalone quando empacotado), cria a janela, expõe IPC nativo para diálogos de arquivo (`ipc/planilha.ts`, `ipc/relatorio.ts` — "Salvar Como"/"Abrir Local", que exigem API nativa do SO, não HTTP) e encerra o backend ao fechar.
-- **Renderer** ([`frontend/src/`](../../frontend/src/)) — fluxo de tela único (`pages/SelecionarProcessar.tsx`): seleção de PDFs → processamento com barra de progresso → tabela de resultado → preenchimento da planilha → relatório. `services/api.ts` fala HTTP com o backend local (`127.0.0.1`); `theme/` é a fonte única de verdade da identidade visual (ver [`docs/branding/`](../branding/)).
+- **Processo main** ([`frontend/electron/main.ts`](../../frontend/electron/main.ts)) — sobe o backend (do `.venv` em desenvolvimento; do executável PyInstaller standalone quando empacotado), cria a janela, expõe IPC nativo para diálogos de arquivo (`ipc/planilha.ts`, `ipc/relatorio.ts`, `ipc/conferencia.ts` — "Salvar Como"/"Abrir Local"/"Copiar Histórico", que exigem API nativa do SO, não HTTP) e encerra o backend ao fechar.
+- **Renderer** ([`frontend/src/`](../../frontend/src/)) — desde a Sprint 14, navegação em 4 telas sem `react-router` (app de janela única, sem necessidade de URL/histórico): `pages/BoasVindas.tsx` (vitrine de entrada) → `pages/Hub.tsx` (escolha da funcionalidade) → `pages/SelecionarProcessar.tsx` (seleção de PDFs → processamento → resultado → preenchimento da planilha → relatório) **ou** `pages/Conferencia.tsx` (Etapa 1 — diagnóstico; Etapa 2 — geração do histórico do e-Fisco, só quando apto). Retorno ao Hub a qualquer momento via "← Hub" no `Cabecalho`. `services/api.ts` fala HTTP com o backend local (`127.0.0.1`); `theme/` é a fonte única de verdade da identidade visual (ver [`docs/branding/`](../branding/)).
 
 ## Empacotamento
 

@@ -19,7 +19,8 @@
     "release": "npm run build && npm run build:backend && electron-builder --win --x64 --publish=never",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "screenshots": "node scripts/capturar-screenshots.mjs"
+    "screenshots": "node scripts/capturar-screenshots.mjs",
+    "gif": "node scripts/gerar-gif.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -39,6 +40,7 @@
     "concurrently": "^9.1.0",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
+    "gifenc": "^1.0.3",
     "jsdom": "^25.0.1",
     "playwright": "^1.61.1",
     "png-to-ico": "^3.0.2",
