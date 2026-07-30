@@ -1,4 +1,5 @@
 import { mensagemAmigavel } from "../lib/mensagens";
+import type { ConfiguracaoAtiva, EstadoConfiguracao } from "../types/configuracao";
 import type { ResultadoConferencia } from "../types/conferencia";
 import type {
   LoteProcessamento,
@@ -122,8 +123,11 @@ export async function processarLoteComProgresso(
   };
 }
 
+// Sprint 15 — Configuração Inicial da Planilha Oficial (§7.1): o caminho de
+// destino deixou de ser escolhido a cada execução. O backend resolve
+// sozinho, a partir da configuração já validada — esta função não recebe
+// (nem envia) mais nenhum caminho de planilha.
 export async function preencherPlanilha(
-  caminhoPlanilha: string,
   processos: Processo[],
   tempoProcessamentoMs?: number | null,
 ): Promise<ResultadoPreenchimento> {
@@ -149,7 +153,6 @@ export async function preencherPlanilha(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      caminho_planilha: caminhoPlanilha,
       itens,
       erros,
       avisos,
@@ -270,4 +273,34 @@ export async function checarSaudeBackend(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Sprint 15 — Configuração Inicial da Planilha Oficial.
+export async function buscarConfiguracao(): Promise<EstadoConfiguracao> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/configuracao`);
+  if (!resposta.ok) {
+    throw new Error(`Backend respondeu ${resposta.status}`);
+  }
+  return resposta.json();
+}
+
+/** Usada tanto pela Configuração Inicial quanto por "Alterar Planilha
+ * Oficial" (§8 do doc arquitetural) — um único endpoint, uma única função
+ * de validação no backend, nenhuma regra duplicada entre os dois fluxos.
+ * O tipo de retorno é sempre `ConfiguracaoAtiva`: o backend só responde
+ * 200 quando a validação passa por inteiro (§5) — qualquer falha vira uma
+ * exceção lançada abaixo, nunca um corpo de sucesso parcial. */
+export async function definirConfiguracao(caminhoPlanilhaOficial: string): Promise<ConfiguracaoAtiva> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/configuracao`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ caminho_planilha_oficial: caminhoPlanilhaOficial }),
+  });
+
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
 }

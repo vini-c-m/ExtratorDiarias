@@ -73,6 +73,7 @@ beforeEach(() => {
     salvarComo: vi.fn(),
     salvarRelatorio: vi.fn(),
     copiarHistorico: vi.fn(),
+    selecionarPlanilhaOficial: vi.fn(),
   };
 });
 

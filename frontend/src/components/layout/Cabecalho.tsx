@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Settings } from "lucide-react";
 import type { StatusBackend } from "../../hooks/useBackendStatus";
 import { CORES_STATUS, type VarianteStatus } from "../../theme/cores";
 import { GLOW_LOGO_NEON, GLOW_PERIGO } from "../../theme/estilos";
@@ -23,6 +23,12 @@ interface Props {
    * Sprint). `SelecionarProcessar`/`Conferencia` continuam sem saber que
    * isso existe — o retorno é chrome do `Cabecalho`, não de cada página. */
   aoVoltarAoHub?: () => void;
+  /** Sprint 15 — abre "Alterar Planilha Oficial" (§8/§11 do doc
+   * arquitetural: "página" mínima de Configurações, sem tela dedicada
+   * ainda). Sempre presente, em qualquer funcionalidade — o Cabecalho só
+   * reporta o clique pra cima, quem decide o que fazer é `App.tsx`, mesmo
+   * padrão já usado por `aoVoltarAoHub`. */
+  aoAbrirConfiguracoes: () => void;
 }
 
 interface Descritor {
@@ -95,22 +101,33 @@ function glowDaVariante(variante: VarianteStatus): string {
 // só uma composição diferente dos mesmos tokens. Mesmo tratamento na tela
 // de Boas-vindas (`pages/BoasVindas.tsx`), única outra tela com o logo em
 // destaque.
-export default function Cabecalho({ status, estadoApp, aoVoltarAoHub }: Props) {
+export default function Cabecalho({ status, estadoApp, aoVoltarAoHub, aoAbrirConfiguracoes }: Props) {
   const descritor = status === "conectado" ? DESCRITOR_ESTADO[estadoApp] : DESCRITOR_BACKEND[status];
   const glow = glowDaVariante(descritor.variante);
 
   return (
     <header className="relative animate-entrada-conteudo px-6 pt-9 pb-7">
-      {aoVoltarAoHub && (
+      <div className="absolute left-6 top-7 flex items-center gap-2">
+        {aoVoltarAoHub && (
+          <button
+            type="button"
+            onClick={aoVoltarAoHub}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-slate-100"
+          >
+            <ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" />
+            Hub
+          </button>
+        )}
         <button
           type="button"
-          onClick={aoVoltarAoHub}
-          className="absolute left-6 top-7 flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-2 text-xs font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-slate-100"
+          onClick={aoAbrirConfiguracoes}
+          aria-label="Configurações"
+          title="Configurações"
+          className="flex items-center justify-center rounded-full border border-white/10 bg-white/[0.04] p-2.5 text-slate-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-slate-100"
         >
-          <ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" />
-          Hub
+          <Settings aria-hidden="true" className="h-3.5 w-3.5" />
         </button>
-      )}
+      </div>
 
       <div
         className={`absolute right-6 top-7 max-w-[230px] rounded-2xl border px-4 py-2.5 backdrop-blur-sm transition-shadow ${CORES_STATUS[descritor.variante].alerta} ${glow}`}

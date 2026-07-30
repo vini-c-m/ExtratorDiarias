@@ -34,9 +34,15 @@ Histórico de sprints do Extrator de Diárias. As Sprints até a 10 foram recons
 | **14** | **Hub de funcionalidades e Boas-vindas** — navegação passa de tela única para 4 telas (Boas-vindas → Hub → Processamento \| Conferência), sempre reversível via "← Hub" no cabeçalho; a Central de Conferência deixa de ser a única funcionalidade e passa a conviver com o Processamento como dois módulos escolhidos a partir do Hub. Refinamento visual do fundo decorativo (logos holográficos "ED" promovidos a elemento permanente da identidade, não mais decorativo) e do glow do logo no cabeçalho/Boas-vindas. Ver [`docs/branding/README.md`](../branding/README.md#fundo-decorativo-fundodecorativotsx). |
 | **14.1** | **Revisão completa da documentação pública** — README reescrito para refletir o estado atual do app (Central de Conferência, Hub, Boas-vindas), screenshots e GIF de demonstração regerados a partir do app real (automação Playwright estendida, `frontend/scripts/capturar-screenshots.mjs` e `frontend/scripts/gerar-gif.mjs`, novo) e este roadmap atualizado. Exclusivamente documentação — nenhuma regra de negócio, layout ou comportamento do app alterado. |
 
+## Concluído (continuação)
+
+| Sprint | Entrega |
+| --- | --- |
+| **15** | **Arquitetura da Configuração Inicial da Planilha Oficial** — exclusivamente documentação, nenhum código de produção alterado. Define uma tela obrigatória na primeira execução para o usuário selecionar a planilha oficial (diálogo nativo do Electron), validação em backend (existência, formato, abertura via `openpyxl`, aba e cabeçalhos exigidos pelo escritor atual), persistência local simples em JSON (sem SQLite, sem copiar/mover a planilha), detecção de substituição estrutural (fingerprint por hash do cabeçalho + nomes das abas, deliberadamente sem usar tamanho/data de modificação do arquivo) e bloqueio por ação — nunca por módulo inteiro — quando a planilha configurada fica inacessível. "Alterar Planilha Oficial" reaproveita o mesmo fluxo de validação, sem duplicar regras. Ver [`docs/configuracao-inicial/`](../configuracao-inicial/README.md). Reaproveita o número 15, livre desde o cancelamento integral da proposta anterior (recuperação de processamento, `ProcessoOperacional`, Fila do Dia) — sem nenhuma relação entre as duas. |
+
 ## Em desenvolvimento
 
-Nenhum item em desenvolvimento ativo no momento desta publicação — a Sprint 15 (Build e Distribuição, rumo à Release Candidate v1.0.0-RC1) ainda não foi iniciada.
+Nenhum item em desenvolvimento ativo no momento desta publicação. A implementação da arquitetura definida na Sprint 15 (ver acima) ainda não tem código escrito. A Sprint de Build e Distribuição, rumo à Release Candidate v1.0.0-RC1, foi renumerada de 15 para **16** para não colidir com a Sprint 15 acima — também ainda não iniciada.
 
 ## Planejado (não implementado)
 

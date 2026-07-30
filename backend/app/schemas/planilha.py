@@ -19,7 +19,11 @@ class ItemAvisoResposta(BaseModel):
 
 
 class RequisicaoPreenchimento(BaseModel):
-    caminho_planilha: str
+    # Sprint 15 — Configuração Inicial da Planilha Oficial: o caminho de
+    # destino deixou de vir do cliente (não existe mais seleção manual por
+    # execução). O backend resolve sozinho, a partir da configuração já
+    # validada (`app/infra/config/configuracao_app.resolver_caminho_para_preenchimento`),
+    # e é a única autoridade sobre esse caminho — ver `app/api/planilha.py`.
     itens: list[ItemParaPreencher]
     erros: list[ItemErroResposta] = []
     avisos: list[ItemAvisoResposta] = []

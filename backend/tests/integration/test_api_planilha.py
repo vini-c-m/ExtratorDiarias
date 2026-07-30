@@ -1,8 +1,9 @@
 import os
 
 from fastapi.testclient import TestClient
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
+from app.infra.config import configuracao_app
 from app.main import app
 
 client = TestClient(app)
@@ -19,15 +20,38 @@ _DIARIA = {
 }
 
 
-def test_post_planilha_preencher_grava_na_copia_de_teste(caminho_planilha_teste):
+def _com_cabecalho_completo(caminho_planilha: str) -> str:
+    """`caminho_planilha_teste` (conftest) não tem as colunas P/Q — exigidas
+    pela validação de configuração da Sprint 15 (§5 do doc arquitetural),
+    que agora é pré-requisito para qualquer preenchimento. Completa o
+    cabeçalho aqui, sem alterar a fixture compartilhada — os demais testes
+    que já a usam (escritor, diária de membro etc.) continuam intocados."""
+    workbook = load_workbook(caminho_planilha)
+    planilha = workbook["Controle de Diárias"]
+    planilha["P1"] = "VALOR TOTAL DAS DIÁRIAS"
+    planilha["Q1"] = "LOCAL"
+    workbook.save(caminho_planilha)
+    return caminho_planilha
+
+
+def _configurar_planilha_oficial(monkeypatch, tmp_path, caminho_planilha: str) -> None:
+    """Sprint 15 — desde que o backend passou a ser a única autoridade
+    sobre o caminho da planilha (§7.1), qualquer teste de preenchimento
+    precisa primeiro configurar uma planilha oficial válida, exatamente
+    como a aplicação real exige."""
+    monkeypatch.setenv(configuracao_app.VAR_AMBIENTE_USER_DATA, str(tmp_path / "dados_usuario"))
+    caminho = _com_cabecalho_completo(caminho_planilha)
+    fingerprint = configuracao_app.validar_planilha(caminho)
+    configuracao_app.persistir(caminho, fingerprint)
+
+
+def test_post_planilha_preencher_grava_na_copia_de_teste(monkeypatch, tmp_path, caminho_planilha_teste):
     caminho = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho)
 
     resposta = client.post(
         "/api/v1/planilha/preencher",
-        json={
-            "caminho_planilha": caminho,
-            "itens": [{"arquivo_origem": "arquivo.pdf", "diaria": _DIARIA}],
-        },
+        json={"itens": [{"arquivo_origem": "arquivo.pdf", "diaria": _DIARIA}]},
     )
 
     assert resposta.status_code == 200
@@ -52,16 +76,16 @@ def test_post_planilha_preencher_grava_na_copia_de_teste(caminho_planilha_teste)
     assert planilha["B4"].value == _DIARIA["sei"]
 
 
-def test_post_planilha_preencher_bug1_duplicidade_no_lote(caminho_planilha_teste):
+def test_post_planilha_preencher_bug1_duplicidade_no_lote(monkeypatch, tmp_path, caminho_planilha_teste):
     """Mesmo PDF (mesmo SEI) enviado duas vezes na mesma requisição — só uma
     diária pode ser gravada, a outra vira 'duplicado no lote'."""
     caminho = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho)
     sei_novo = "19.20.0000.0000020/2025-00"
 
     resposta = client.post(
         "/api/v1/planilha/preencher",
         json={
-            "caminho_planilha": caminho,
             "itens": [
                 {"arquivo_origem": "a.pdf", "diaria": {**_DIARIA, "sei": sei_novo}},
                 {"arquivo_origem": "b.pdf", "diaria": {**_DIARIA, "sei": sei_novo}},
@@ -84,17 +108,17 @@ def test_post_planilha_preencher_bug1_duplicidade_no_lote(caminho_planilha_teste
 
 
 def test_post_planilha_preencher_bug2_duplicidade_na_planilha_informa_linha(
-    caminho_planilha_teste,
+    monkeypatch, tmp_path, caminho_planilha_teste,
 ):
     """SEI que já existe na planilha (linha 2 da fixture) não pode virar
     linha nova, e a resposta precisa apontar em qual linha ele já existe."""
     caminho = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho)
     sei_ja_existente = "19.20.0000.0000001/2025-00"
 
     resposta = client.post(
         "/api/v1/planilha/preencher",
         json={
-            "caminho_planilha": caminho,
             "itens": [
                 {"arquivo_origem": "a.pdf", "diaria": {**_DIARIA, "sei": sei_ja_existente}},
             ],
@@ -127,20 +151,20 @@ def test_post_planilha_preencher_bug2_duplicidade_na_planilha_informa_linha(
 
 
 def test_post_planilha_preencher_grava_dh_transporte_local_e_lista_avisos_no_relatorio(
-    caminho_planilha_teste,
+    monkeypatch, tmp_path, caminho_planilha_teste,
 ):
     """Sprint 03: quando a diária vem com documento_habil/transporte/
     estado_destino preenchidos, eles são gravados nas colunas A/K/Q. Quando
     um arquivo tem avisos (campo não identificado com segurança), eles
     aparecem no relatório e no log — sem afetar a deduplicação por SEI."""
     caminho = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho)
     sei_completo = "19.20.0000.0000030/2025-00"
     sei_incompleto = "19.20.0000.0000031/2025-00"
 
     resposta = client.post(
         "/api/v1/planilha/preencher",
         json={
-            "caminho_planilha": caminho,
             "itens": [
                 {
                     "arquivo_origem": "completo.pdf",
@@ -191,13 +215,75 @@ def test_post_planilha_preencher_grava_dh_transporte_local_e_lista_avisos_no_rel
     assert "REVISAO_MANUAL arquivo: incompleto.pdf" in conteudo_log
 
 
-def test_post_planilha_preencher_planilha_inexistente_retorna_422():
+# --- Sprint 15 — backend como autoridade sobre o caminho (§7.1) -------------
+
+
+def test_post_planilha_preencher_sem_configuracao_retorna_422(monkeypatch, tmp_path):
+    monkeypatch.setenv(configuracao_app.VAR_AMBIENTE_USER_DATA, str(tmp_path / "dados_usuario"))
+
+    resposta = client.post(
+        "/api/v1/planilha/preencher",
+        json={"itens": [{"arquivo_origem": "arquivo.pdf", "diaria": _DIARIA}]},
+    )
+
+    assert resposta.status_code == 422
+    assert "Nenhuma planilha oficial configurada" in resposta.json()["detail"]
+
+
+def test_post_planilha_preencher_planilha_configurada_mas_inacessivel_retorna_422(
+    monkeypatch, tmp_path, caminho_planilha_teste,
+):
+    caminho = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho)
+    os.remove(caminho)
+
+    resposta = client.post(
+        "/api/v1/planilha/preencher",
+        json={"itens": [{"arquivo_origem": "arquivo.pdf", "diaria": _DIARIA}]},
+    )
+
+    assert resposta.status_code == 422
+    assert "inacessível" in resposta.json()["detail"]
+
+
+def test_post_planilha_preencher_requer_revalidacao_retorna_422(
+    monkeypatch, tmp_path, caminho_planilha_teste,
+):
+    caminho = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho)
+
+    # Estrutura divergente da configurada — mesmo caminho, arquivo diferente.
+    workbook = Workbook()
+    workbook.active.title = "Controle de Diárias"
+    workbook.save(caminho)
+
+    resposta = client.post(
+        "/api/v1/planilha/preencher",
+        json={"itens": [{"arquivo_origem": "arquivo.pdf", "diaria": _DIARIA}]},
+    )
+
+    assert resposta.status_code == 422
+    assert "estrutura da planilha oficial mudou" in resposta.json()["detail"]
+
+
+def test_post_planilha_preencher_ignora_qualquer_caminho_enviado_pelo_cliente(
+    monkeypatch, tmp_path, caminho_planilha_teste,
+):
+    """O cliente não tem mais como influenciar qual arquivo é gravado — um
+    `caminho_planilha` extra no corpo é ignorado pelo schema (campo
+    removido de `RequisicaoPreenchimento`), o caminho usado é sempre o da
+    configuração."""
+    caminho_oficial = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho_oficial)
+
     resposta = client.post(
         "/api/v1/planilha/preencher",
         json={
-            "caminho_planilha": "C:/caminho/que/nao/existe.xlsx",
+            "caminho_planilha": "C:/tentativa/de/enviar/outro/caminho.xlsx",
             "itens": [{"arquivo_origem": "arquivo.pdf", "diaria": _DIARIA}],
         },
     )
 
-    assert resposta.status_code == 422
+    assert resposta.status_code == 200
+    planilha = load_workbook(caminho_oficial)["Controle de Diárias"]
+    assert planilha["B4"].value == _DIARIA["sei"]

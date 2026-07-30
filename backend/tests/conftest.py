@@ -238,6 +238,60 @@ def caminho_planilha_teste(tmp_path):
     return _criar
 
 
+# Sprint 15 — Configuração Inicial da Planilha Oficial. Cabeçalho completo
+# (inclui P/Q, que `caminho_planilha_teste` acima não tem) porque a
+# validação de configuração (§5 do doc arquitetural) confere exatamente as
+# colunas que `escritor_planilha.preencher` escreve, e nada além delas.
+_CABECALHO_PLANILHA_COMPLETO = {
+    "A": "DH",
+    "B": "SEI",
+    "C": "DOC ORIGEM",
+    "D": "CPF",
+    "E": "PREVIDÊNCIA",
+    "F": "NOME",
+    "G": "CARGO",
+    "H": "PERÍODO INICIAL",
+    "I": "PERÍODO FINAL",
+    "J": "TRECHO",
+    "K": "TRANSPORTE",
+    "L": "MOTIVO",
+    "M": "VALOR DA PASSAGEM",
+    "N": "QUANT. DIÁRIA INTEGRAL",
+    "O": "QUANT. DIÁRIA PARCIAL",
+    "P": "VALOR TOTAL DAS DIÁRIAS",
+    "Q": "LOCAL",
+}
+
+
+@pytest.fixture
+def caminho_planilha_configuracao_teste(tmp_path):
+    """Planilha sintética própria da Sprint 15 (Configuração Inicial) —
+    cabeçalho completo, incluindo as colunas P/Q que a fixture de
+    preenchimento (`caminho_planilha_teste`) não tem. Aceita um cabeçalho
+    alternativo para os testes negativos (rótulo errado/faltando)."""
+
+    def _criar(
+        nome_arquivo: str = "planilha_configuracao_teste.xlsx",
+        *,
+        cabecalho: dict[str, str] | None = None,
+        abas_extra: tuple[str, ...] = ("Dados", "Tabela Valores"),
+    ) -> str:
+        workbook = Workbook()
+        planilha = workbook.active
+        planilha.title = "Controle de Diárias"
+        for coluna, rotulo in (cabecalho if cabecalho is not None else _CABECALHO_PLANILHA_COMPLETO).items():
+            planilha[f"{coluna}1"] = rotulo
+
+        for aba in abas_extra:
+            workbook.create_sheet(aba)
+
+        caminho = tmp_path / nome_arquivo
+        workbook.save(caminho)
+        return str(caminho)
+
+    return _criar
+
+
 _CABECALHO_DADOS = [
     "SEI",  # rotulada errado na planilha oficial — conteúdo real é CPF (RN-01)
     "MATRÍCULA",

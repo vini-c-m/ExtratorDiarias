@@ -12,7 +12,6 @@ export const MENSAGENS = {
   aguardandoAplicativo: "Aguardando o aplicativo terminar de iniciar...",
   arquivoInvalido: "Arquivo PDF inválido.",
   falhaProcessarDocumento: "Não foi possível processar este documento.",
-  nenhumaPlanilhaSelecionada: "Selecione a planilha antes de continuar.",
   interromperProcessamento: "⏹ Interromper Processamento",
   tituloConfirmarInterrupcao: "Interromper processamento?",
   mensagemConfirmarInterrupcao:

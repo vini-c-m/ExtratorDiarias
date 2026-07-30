@@ -25,13 +25,35 @@ vi.mock("../services/api", async (importarOriginal) => {
     ...real,
     processarLoteComProgresso: vi.fn(),
     preencherPlanilha: vi.fn(),
+    buscarConfiguracao: vi.fn(),
+    definirConfiguracao: vi.fn(),
   };
 });
 
-import { preencherPlanilha, processarLoteComProgresso } from "../services/api";
+import {
+  buscarConfiguracao,
+  definirConfiguracao,
+  preencherPlanilha,
+  processarLoteComProgresso,
+} from "../services/api";
 
 const processarMock = vi.mocked(processarLoteComProgresso);
 const preencherMock = vi.mocked(preencherPlanilha);
+const buscarConfiguracaoMock = vi.mocked(buscarConfiguracao);
+const definirConfiguracaoMock = vi.mocked(definirConfiguracao);
+
+// Sprint 15 — Configuração Inicial da Planilha Oficial: substitui o antigo
+// seletor manual de arquivo `.xlsx`. Por padrão, os testes assumem uma
+// planilha oficial já configurada e acessível — cada teste que precisar de
+// um estado diferente (inacessível, requer revalidação) sobrescreve com
+// `buscarConfiguracaoMock.mockResolvedValueOnce(...)`.
+const CONFIGURACAO_ATIVA_PADRAO = {
+  configurado: true as const,
+  planilha_acessivel: true as const,
+  requer_revalidacao: false,
+  caminho_planilha_oficial: "G:\\Meu Drive\\DIMCAC\\Controle de Diárias.xlsx",
+  configurado_em: "2026-07-30T14:32:10",
+};
 
 function criarPdf(nome: string): File {
   return new File(["conteudo"], nome, { type: "application/pdf" });
@@ -49,7 +71,9 @@ beforeEach(() => {
     salvarComo: vi.fn(),
     salvarRelatorio: vi.fn(),
     copiarHistorico: vi.fn(),
+    selecionarPlanilhaOficial: vi.fn(),
   };
+  buscarConfiguracaoMock.mockResolvedValue(CONFIGURACAO_ATIVA_PADRAO);
 });
 
 describe("SelecionarProcessar — cancelamento do processamento", () => {
@@ -220,11 +244,6 @@ describe("SelecionarProcessar — salvar e abrir o relatório final", () => {
     caminho_log: "C:/res/resultado_20260715_143218/log.txt",
   };
 
-  async function selecionarPlanilhaXlsx(usuario: ReturnType<typeof userEvent.setup>) {
-    const input = document.querySelector('input[type="file"][accept=".xlsx"]') as HTMLInputElement;
-    await usuario.upload(input, new File(["conteudo"], "planilha.xlsx"));
-  }
-
   async function chegarNaTelaFinal(usuario: ReturnType<typeof userEvent.setup>) {
     processarMock.mockResolvedValueOnce(loteFixture);
     preencherMock.mockResolvedValueOnce(resultadoPreenchimentoFixture);
@@ -232,8 +251,13 @@ describe("SelecionarProcessar — salvar e abrir o relatório final", () => {
     render(<SelecionarProcessar backendOnline />);
     await selecionarPdf(usuario, "processo-a.pdf");
     await usuario.click(screen.getByRole("button", { name: "Processar" }));
-    await selecionarPlanilhaXlsx(usuario);
-    await usuario.click(await screen.findByRole("button", { name: "Preencher planilha" }));
+    // Sprint 15 — não há mais seleção manual: espera a planilha oficial
+    // (mockada como configurada e acessível, ver CONFIGURACAO_ATIVA_PADRAO)
+    // ser consultada e o botão ficar habilitado.
+    await screen.findByText("Planilha configurada");
+    const botaoPreencher = await screen.findByRole("button", { name: "Preencher planilha" });
+    expect(botaoPreencher).toBeEnabled();
+    await usuario.click(botaoPreencher);
     await screen.findByRole("button", { name: "Salvar Relatório" });
   }
 
@@ -310,5 +334,72 @@ describe("SelecionarProcessar — salvar e abrir o relatório final", () => {
     await chegarNaTelaFinal(usuario);
 
     expect(screen.queryByRole("button", { name: "Abrir Local" })).not.toBeInTheDocument();
+  });
+});
+
+// Sprint 15 — Configuração Inicial da Planilha Oficial (§7/§7.1): bloqueio
+// da ação "Preencher planilha", nunca da seleção/processamento de PDFs.
+describe("SelecionarProcessar — planilha oficial inacessível ou desatualizada (Sprint 15)", () => {
+  async function chegarNaEtapaDePreenchimento(usuario: ReturnType<typeof userEvent.setup>) {
+    processarMock.mockResolvedValueOnce({
+      id: "lote-1",
+      total: 1,
+      sucesso: 1,
+      erro: 0,
+      processos: [],
+    });
+
+    render(<SelecionarProcessar backendOnline />);
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    await screen.findByRole("button", { name: "Preencher planilha" });
+  }
+
+  it("planilha_acessivel:false não impede selecionar/processar PDFs, só bloqueia 'Preencher planilha'", async () => {
+    const usuario = userEvent.setup();
+    buscarConfiguracaoMock.mockResolvedValue({ configurado: true, planilha_acessivel: false });
+
+    await chegarNaEtapaDePreenchimento(usuario);
+
+    expect(
+      await screen.findByText(/planilha oficial configurada está inacessível/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preencher planilha" })).toBeDisabled();
+    expect(preencherMock).not.toHaveBeenCalled();
+  });
+
+  it("requer_revalidacao:true também bloqueia 'Preencher planilha', com aviso próprio", async () => {
+    const usuario = userEvent.setup();
+    buscarConfiguracaoMock.mockResolvedValue({
+      ...CONFIGURACAO_ATIVA_PADRAO,
+      requer_revalidacao: true,
+    });
+
+    await chegarNaEtapaDePreenchimento(usuario);
+
+    expect(
+      await screen.findByText(/estrutura da planilha oficial mudou desde a última configuração/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preencher planilha" })).toBeDisabled();
+  });
+
+  it("'Alterar Planilha Oficial' abre o modal e, após configurar, libera 'Preencher planilha'", async () => {
+    const usuario = userEvent.setup();
+    buscarConfiguracaoMock.mockResolvedValue({ configurado: true, planilha_acessivel: false });
+
+    await chegarNaEtapaDePreenchimento(usuario);
+    await usuario.click(screen.getByRole("button", { name: "Alterar Planilha Oficial" }));
+
+    expect(screen.getByRole("dialog", { name: "Alterar Planilha Oficial" })).toBeInTheDocument();
+
+    vi.mocked(window.api.selecionarPlanilhaOficial).mockResolvedValueOnce(
+      "G:\\Meu Drive\\DIMCAC\\Controle de Diárias.xlsx",
+    );
+    definirConfiguracaoMock.mockResolvedValueOnce(CONFIGURACAO_ATIVA_PADRAO);
+
+    await usuario.click(screen.getByRole("button", { name: "Selecionar planilha oficial (.xlsx)" }));
+
+    expect(await screen.findByRole("button", { name: "Preencher planilha" })).toBeEnabled();
+    expect(screen.queryByRole("dialog", { name: "Alterar Planilha Oficial" })).not.toBeInTheDocument();
   });
 });

@@ -201,13 +201,13 @@ Histórico completo, sprint a sprint, em **[`docs/roadmap/`](docs/roadmap/)**.
 
 | Status | Descrição |
 | --- | --- |
-| ✅ Concluído | Pipeline de extração completo (enriquecimento de Documento Hábil, transporte, local, Diária de Membro), preenchimento de planilha, relatório HTML; **Central Inteligente de Conferência** completa (diagnóstico de cadastro/duplicidade/janela operacional + geração do histórico do e-Fisco); Hub de funcionalidades e tela de Boas-vindas; identidade visual própria, empacotamento Windows, publicação pública v1.0.0; documentação revisada de ponta a ponta (Sprint 14.1) |
-| 🔄 Em desenvolvimento | Nenhum item ativo — a Sprint 15 (Build e Distribuição, rumo à Release Candidate v1.0.0-RC1) ainda não foi iniciada |
+| ✅ Concluído | Pipeline de extração completo (enriquecimento de Documento Hábil, transporte, local, Diária de Membro), preenchimento de planilha, relatório HTML; **Central Inteligente de Conferência** completa (diagnóstico de cadastro/duplicidade/janela operacional + geração do histórico do e-Fisco); Hub de funcionalidades e tela de Boas-vindas; identidade visual própria, empacotamento Windows, publicação pública v1.0.0; documentação revisada de ponta a ponta (Sprint 14.1); arquitetura da Configuração Inicial da Planilha Oficial definida, sem código ainda (Sprint 15 — ver [`docs/configuracao-inicial/`](docs/configuracao-inicial/)) |
+| 🔄 Em desenvolvimento | Nenhum item ativo — a implementação da Sprint 15 (Configuração Inicial da Planilha Oficial) ainda não foi iniciada, nem a Sprint 16 (Build e Distribuição, rumo à Release Candidate v1.0.0-RC1) |
 | 📋 Planejado (não comprometido) | Evoluções da Central de Conferência (consulta por matrícula/nome, histórico completo por servidor — ver [`docs/backlog/`](docs/backlog/README.md)); stream de progresso via SSE; camada de persistência local — descritos, não implementados, na concepção original do backend |
 
 ## Status atual do projeto
 
-Todas as funcionalidades descritas neste README estão implementadas, testadas (362 testes automatizados) e refletidas fielmente nas capturas de tela e no GIF acima — nenhuma delas é aspiracional. O projeto está encerrando a Sprint 14.1 (revisão de documentação); a próxima etapa é a Sprint 15 (Build e Distribuição), rumo a uma Release Candidate v1.0.0-RC1 — ainda não iniciada, sem build, instalador ou tag publicados a partir deste ponto da documentação.
+Todas as funcionalidades descritas neste README estão implementadas, testadas (362 testes automatizados) e refletidas fielmente nas capturas de tela e no GIF acima — nenhuma delas é aspiracional. O projeto está encerrando a Sprint 15 (arquitetura da Configuração Inicial da Planilha Oficial — documentação apenas, sem código); a implementação dela e, na sequência, a Sprint 16 (Build e Distribuição), rumo a uma Release Candidate v1.0.0-RC1, ainda não foram iniciadas, sem build, instalador ou tag publicados a partir deste ponto da documentação.
 
 ## Dados sintéticos
 

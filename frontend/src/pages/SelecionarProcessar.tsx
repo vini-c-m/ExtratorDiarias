@@ -10,6 +10,8 @@ import {
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import ModalAlterarPlanilhaOficial from "../components/configuracao/ModalAlterarPlanilhaOficial";
+import ResumoConfiguracao from "../components/configuracao/ResumoConfiguracao";
 import Alerta from "../components/ui/Alerta";
 import Badge from "../components/ui/Badge";
 import Botao from "../components/ui/Botao";
@@ -26,6 +28,7 @@ import { adicionarArquivos, limparFila, removerArquivo, type ItemFila } from "..
 import { MENSAGENS, mensagemAmigavel } from "../lib/mensagens";
 import { formatarDuracao } from "../lib/progresso";
 import {
+  buscarConfiguracao,
   preencherPlanilha,
   processarLoteComProgresso,
   ProcessamentoCanceladoError,
@@ -34,7 +37,34 @@ import {
 import type { EstadoApp } from "../components/layout/Cabecalho";
 import { SUPERFICIE_BASE } from "../theme/estilos";
 import { TIPOGRAFIA } from "../theme/tipografia";
+import type { EstadoConfiguracao } from "../types/configuracao";
 import type { LoteProcessamento, ResultadoPreenchimento } from "../types/processamento";
+
+// Sprint 15 — Configuração Inicial da Planilha Oficial (§7.1): "Preencher
+// Planilha" só fica disponível com uma planilha oficial configurada,
+// acessível agora e sem divergência estrutural pendente de revalidação —
+// mesma checagem que o backend já faz de forma autoritativa antes de
+// gravar; aqui é só para não deixar o usuário clicar num caminho que o
+// backend já sabe que vai recusar.
+function podePreencherPlanilha(estado: EstadoConfiguracao | null): boolean {
+  if (!estado || !estado.configurado || !estado.planilha_acessivel) return false;
+  return !estado.requer_revalidacao;
+}
+
+// Sprint 15 — normaliza `EstadoConfiguracao` para as props de
+// `ResumoConfiguracao`: quando inacessível, o contrato do backend (§4) não
+// devolve nome/local/data, então nem tenta.
+function propsResumoConfiguracao(estado: EstadoConfiguracao) {
+  if (estado.configurado && estado.planilha_acessivel) {
+    return {
+      caminhoPlanilhaOficial: estado.caminho_planilha_oficial,
+      configuradoEm: estado.configurado_em,
+      planilhaAcessivel: true as const,
+      requerRevalidacao: estado.requer_revalidacao,
+    };
+  }
+  return { planilhaAcessivel: false as const };
+}
 
 interface Props {
   backendOnline: boolean;
@@ -67,7 +97,12 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
   const [confirmandoInterrupcao, setConfirmandoInterrupcao] = useState(false);
   const [mensagemCancelamento, setMensagemCancelamento] = useState<string | null>(null);
 
-  const [planilhaCaminho, setPlanilhaCaminho] = useState<string | null>(null);
+  // Sprint 15 — substitui a antiga seleção manual de planilha por
+  // execução: a planilha oficial é única e já configurada (§7.1 do doc
+  // arquitetural), então esta tela só precisa saber se ela está acessível
+  // e sem revalidação pendente antes de liberar "Preencher Planilha".
+  const [configuracao, setConfiguracao] = useState<EstadoConfiguracao | null>(null);
+  const [modalAlterarAberto, setModalAlterarAberto] = useState(false);
   const [preenchendo, setPreenchendo] = useState(false);
   const [resultadoPreenchimento, setResultadoPreenchimento] =
     useState<ResultadoPreenchimento | null>(null);
@@ -113,6 +148,25 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
     aoMudarEstado?.(estado);
   }, [processando, preenchendo, resultado, resultadoPreenchimento, aoMudarEstado]);
 
+  // Sprint 15 — assim que há algo para preencher, verifica a planilha
+  // oficial configurada (§7.1) — no momento em que a ação é de fato
+  // relevante, não na abertura da tela (nada aqui depende de configuração
+  // enquanto o usuário só está selecionando/processando PDFs, §7).
+  useEffect(() => {
+    if (!resultado || resultado.sucesso === 0) return;
+    let cancelado = false;
+    buscarConfiguracao()
+      .then((estado) => {
+        if (!cancelado) setConfiguracao(estado);
+      })
+      .catch(() => {
+        if (!cancelado) setConfiguracao(null);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [resultado]);
+
   function adicionarNaFila(novosArquivos: File[]) {
     const { validos, invalidos } = filtrarSomentePdf(novosArquivos);
     const resultadoAdicao = adicionarArquivos(fila, validos, (arquivo) =>
@@ -155,13 +209,6 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
   function limparTudo() {
     setFila(limparFila());
     setAvisoFila(null);
-  }
-
-  function selecionarPlanilha(evento: ChangeEvent<HTMLInputElement>) {
-    const arquivo = evento.target.files?.[0];
-    setPlanilhaCaminho(arquivo ? window.api.getPathForFile(arquivo) : null);
-    setResultadoPreenchimento(null);
-    setErroPreenchimento(null);
   }
 
   async function processar() {
@@ -225,13 +272,13 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
 
   async function preencherPlanilhaClique() {
     if (preenchendo) return;
-    if (!resultado || !planilhaCaminho) return;
+    if (!resultado || !podePreencherPlanilha(configuracao)) return;
     if (resultado.sucesso === 0) return;
 
     setPreenchendo(true);
     setErroPreenchimento(null);
     try {
-      const resultadoGravacao = await preencherPlanilha(planilhaCaminho, resultado.processos, duracaoMs);
+      const resultadoGravacao = await preencherPlanilha(resultado.processos, duracaoMs);
       setResultadoPreenchimento(resultadoGravacao);
     } catch (erro) {
       setErroPreenchimento(mensagemAmigavel(erro, "Não foi possível preencher a planilha."));
@@ -240,19 +287,29 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
     }
   }
 
+  // Sprint 15 — "Abrir Planilha"/"Salvar Como..." (tela final, já
+  // preenchida) usam o mesmo caminho oficial já configurado — não existe
+  // mais uma seleção manual própria desta tela para servir de origem.
+  function caminhoPlanilhaConfigurada(): string | null {
+    if (!configuracao || !configuracao.configurado || !configuracao.planilha_acessivel) return null;
+    return configuracao.caminho_planilha_oficial;
+  }
+
   async function abrirPlanilhaClique() {
-    if (!planilhaCaminho) return;
+    const caminho = caminhoPlanilhaConfigurada();
+    if (!caminho) return;
     try {
-      await window.api.abrirArquivo(planilhaCaminho);
+      await window.api.abrirArquivo(caminho);
     } catch (erro) {
       setErroAcao(mensagemAmigavel(erro, "Não foi possível abrir a planilha."));
     }
   }
 
   async function salvarComoClique() {
-    if (!planilhaCaminho) return;
+    const caminho = caminhoPlanilhaConfigurada();
+    if (!caminho) return;
     try {
-      await window.api.salvarComo(planilhaCaminho);
+      await window.api.salvarComo(caminho);
     } catch (erro) {
       setErroAcao(mensagemAmigavel(erro, "Não foi possível salvar a cópia."));
     }
@@ -314,7 +371,7 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
     setAvisoFila(null);
     setResultado(null);
     setErroGeral(null);
-    setPlanilhaCaminho(null);
+    setConfiguracao(null);
     setResultadoPreenchimento(null);
     setErroPreenchimento(null);
     setErroAcao(null);
@@ -527,30 +584,25 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
             <div className={`mt-8 ${SUPERFICIE_BASE} p-7`}>
               <h3 className={TIPOGRAFIA.subtitulo}>Preencher planilha</h3>
               <p className={`mt-1.5 ${TIPOGRAFIA.textoAuxiliar}`}>
-                Selecione a cópia de teste da planilha oficial. Apenas as colunas já homologadas
-                serão preenchidas, a partir da primeira linha livre. Diárias cujo número SEI já
-                exista na planilha (ou se repita neste mesmo lote) são ignoradas como duplicadas.
+                Apenas as colunas já homologadas serão preenchidas na planilha oficial configurada,
+                a partir da primeira linha livre. Diárias cujo número SEI já exista na planilha (ou
+                se repita neste mesmo lote) são ignoradas como duplicadas.
               </p>
 
-              <div className="mt-4 flex items-center gap-3">
-                <BotaoArquivo
-                  accept=".xlsx"
-                  desabilitado={algumaOperacaoEmAndamento}
-                  onChange={selecionarPlanilha}
-                >
-                  <FileSpreadsheet aria-hidden="true" className="h-4 w-4" />
-                  Selecionar planilha (.xlsx)
-                </BotaoArquivo>
-                <span className="truncate text-sm text-slate-500">
-                  {planilhaCaminho ?? MENSAGENS.nenhumaPlanilhaSelecionada}
-                </span>
-              </div>
+              {configuracao && (
+                <div className="mt-4">
+                  <ResumoConfiguracao
+                    {...propsResumoConfiguracao(configuracao)}
+                    aoAlterarPlanilha={() => setModalAlterarAberto(true)}
+                  />
+                </div>
+              )}
 
               <div className="mt-5">
                 <Botao
                   variante="primaria"
                   onClick={preencherPlanilhaClique}
-                  disabled={!planilhaCaminho}
+                  disabled={!podePreencherPlanilha(configuracao)}
                   carregando={preenchendo}
                 >
                   {!preenchendo && <ListChecks aria-hidden="true" className="h-4 w-4" />}
@@ -572,6 +624,16 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
             </div>
           )}
         </div>
+      )}
+
+      {modalAlterarAberto && (
+        <ModalAlterarPlanilhaOficial
+          onFechar={() => setModalAlterarAberto(false)}
+          aoConfigurar={(novaConfiguracao) => {
+            setConfiguracao(novaConfiguracao);
+            setModalAlterarAberto(false);
+          }}
+        />
       )}
     </div>
   );

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.domain.entities.diaria import Diaria
 from app.domain.entities.processo import Processo, StatusProcesso
+from app.infra.config import configuracao_app
 from app.planilha.relatorio import ItemAviso, ItemErro
 from app.schemas.planilha import (
     ItemResultadoResposta,
@@ -15,6 +16,16 @@ router = APIRouter(prefix="/api/v1", tags=["planilha"])
 
 @router.post("/planilha/preencher", response_model=ResultadoPreenchimentoResposta)
 def preencher(requisicao: RequisicaoPreenchimento) -> ResultadoPreenchimentoResposta:
+    # Sprint 15 — o backend é a única autoridade sobre o caminho da planilha
+    # oficial (§7.1 do doc arquitetural). Esta rota não sabe (e não deveria
+    # saber) que existe um `configuracao.json`, qual sua estrutura ou como a
+    # validação/fingerprint funcionam — tudo isso fica encapsulado em
+    # `configuracao_app`, que expõe só esta função e esta exceção.
+    try:
+        caminho_planilha = configuracao_app.resolver_caminho_para_preenchimento()
+    except configuracao_app.PlanilhaOficialIndisponivel as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+
     processos = [
         Processo(
             arquivo_origem=item.arquivo_origem,
@@ -34,7 +45,7 @@ def preencher(requisicao: RequisicaoPreenchimento) -> ResultadoPreenchimentoResp
 
     try:
         resultado, arquivos_gerados = preencher_planilha(
-            requisicao.caminho_planilha,
+            caminho_planilha,
             processos,
             erros,
             avisos,

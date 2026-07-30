@@ -17,4 +17,6 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("relatorio:salvar-como", caminhoOrigem, pastaResultados),
   copiarHistorico: (texto: string): Promise<void> =>
     ipcRenderer.invoke("conferencia:copiar-historico", texto),
+  selecionarPlanilhaOficial: (): Promise<string | null> =>
+    ipcRenderer.invoke("configuracao:selecionar-planilha"),
 });

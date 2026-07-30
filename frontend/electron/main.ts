@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron";
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
 import * as path from "path";
 import { registrarIpcConferencia } from "./ipc/conferencia";
+import { registrarIpcConfiguracao } from "./ipc/configuracao";
 import { registrarIpcPlanilha } from "./ipc/planilha";
 import { registrarIpcRelatorio } from "./ipc/relatorio";
 
@@ -104,6 +105,7 @@ app.whenReady().then(() => {
   registrarIpcPlanilha();
   registrarIpcRelatorio();
   registrarIpcConferencia();
+  registrarIpcConfiguracao();
   subirBackend();
   criarJanela();
 
