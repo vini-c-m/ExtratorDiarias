@@ -2,7 +2,7 @@
   "name": "extrator-diarias-frontend",
   "productName": "Extrator de Diárias",
   "private": true,
-  "version": "1.0.0-RC1",
+  "version": "1.0.0-RC2",
   "description": "Automação Inteligente de Processos",
   "author": "Vinicius Mendes",
   "main": "dist-electron/main.js",
