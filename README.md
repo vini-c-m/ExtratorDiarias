@@ -29,7 +29,7 @@ O processo de concessão de diárias do DIMCAC tem três partes. A **primeira** 
 
 Nenhuma regra deste projeto foi inventada em teoria — cada uma existe por causa de um padrão documental real de processo SEI ou de uma fórmula real da planilha oficial, encontrados durante a homologação e a engenharia reversa (documentados nos comentários do código-fonte, em [`docs/central-conferencia/`](docs/central-conferencia/README.md) e em [`docs/central-analitica/`](docs/central-analitica/README.md), hoje com dados fictícios equivalentes nas fixtures de teste — veja [Dados sintéticos](#dados-sintéticos)).
 
-## Demonstração
+## Demonstração do Fluxo da Aplicação
 
 | Boas-vindas | Hub |
 | --- | --- |
