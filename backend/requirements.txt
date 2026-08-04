@@ -5,3 +5,13 @@ pymupdf==1.28.0
 openpyxl==3.1.5
 pytest==9.1.1
 httpx==0.28.1
+# Sprint 19.7.2 — geração real de PDF em `POST /api/v1/analitica/relatorios`
+# (`analitica_service.py::gerar_relatorio`). Promovida de
+# requirements-dev.txt (onde só gerava PDFs de fixture de teste) para cá —
+# mesmo cuidado de avaliação de licença/manutenção da 19.6.4 (bibliotecas
+# de gráfico): licença BSD (permissiva, mesma família do próprio projeto),
+# já usada e testada neste repositório desde a Sprint 10, sem histórico de
+# problema de manutenção. `openpyxl` (acima) já cobre Excel — CSV usa só a
+# biblioteca padrão do Python, nenhuma dependência nova para nenhum dos
+# dois.
+reportlab==5.0.0

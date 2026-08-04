@@ -1,4 +1,6 @@
 import os
+import re
+import zipfile
 from datetime import date
 
 import pytest
@@ -302,6 +304,35 @@ _CABECALHO_DADOS = [
     "REGIME DE PREVIDÊNCIA",
     "SITUAÇÃO DO SERVIDOR",
 ]
+
+
+@pytest.fixture
+def remover_tag_dimension_da_planilha():
+    """Micro-sprint 18.7.1 — reproduz o caso real que quebrava
+    `base_local_sqlite.capturar_sinal_frescor`: planilhas que passaram
+    pelo Google Sheets (confirmado numa planilha real desta instalação,
+    via a relação `.../customschemas.google.com/...` em
+    `xl/_rels/workbook.xml.rels`) podem não gravar a tag `<dimension>` no
+    XML da aba — sem ela, `openpyxl` com `read_only=True` não calcula
+    `max_row` sem escanear célula por célula, e o atributo volta `None`.
+    Remove a tag diretamente do `.xlsx` (arquivo ZIP) para reproduzir essa
+    condição de forma determinística, sem depender de gerar o arquivo via
+    outra ferramenta."""
+
+    def _remover(caminho_xlsx: str, nome_arquivo_interno: str = "xl/worksheets/sheet1.xml") -> None:
+        with zipfile.ZipFile(caminho_xlsx, "r") as zf:
+            entradas = {info.filename: zf.read(info.filename) for info in zf.infolist()}
+
+        conteudo_original = entradas[nome_arquivo_interno].decode("utf-8")
+        conteudo_sem_dimension = re.sub(r"<dimension[^>]*/>", "", conteudo_original)
+        assert conteudo_sem_dimension != conteudo_original, "a tag <dimension> não foi encontrada para remoção"
+        entradas[nome_arquivo_interno] = conteudo_sem_dimension.encode("utf-8")
+
+        with zipfile.ZipFile(caminho_xlsx, "w", zipfile.ZIP_DEFLATED) as zf:
+            for nome, dado in entradas.items():
+                zf.writestr(nome, dado)
+
+    return _remover
 
 
 @pytest.fixture

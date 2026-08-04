@@ -13,7 +13,7 @@
  * fundo sólido opaco, que quebraria a sensação de "vidro" do resto do Design
  * System (ver `SUPERFICIE_BASE` em `estilos.ts`). */
 
-export type VarianteStatus = "sucesso" | "aviso" | "erro" | "info" | "neutro";
+export type VarianteStatus = "sucesso" | "aviso" | "erro" | "critico" | "info" | "neutro";
 
 interface EstiloStatus {
   /** Pílula (badge de status em tabelas, cabeçalho). */
@@ -44,6 +44,20 @@ export const CORES_STATUS: Record<VarianteStatus, EstiloStatus> = {
     alerta: "border-red-500/30 bg-red-500/10 text-red-300",
     texto: "text-red-400",
     ponto: "bg-red-400",
+  },
+  // Sprint 19.8.4 — "Inconsistência" do Diagnóstico (`v2-demonstracao-
+  // visual.md` § 8): a classificação de negócio mais severa do catálogo,
+  // mas nunca vermelha (RN-08 — vermelho fica reservado exclusivamente a
+  // falha técnica real). Laranja é deliberadamente uma família de cor
+  // própria, nunca reaproveitando `erro` (vermelho) nem `aviso` (âmbar) —
+  // o mockup exige as 3 cores visualmente distintas lado a lado (verde/
+  // âmbar/laranja), e confundir laranja com vermelho aqui seria
+  // exatamente o erro que RN-08 existe para prevenir.
+  critico: {
+    badge: "bg-orange-500/10 text-orange-400",
+    alerta: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+    texto: "text-orange-400",
+    ponto: "bg-orange-400",
   },
   // Informativo/neutro — agora usa ciano, a própria cor de marca (uma das
   // três paradas do gradiente oficial), em vez de uma gambiarra sobre o

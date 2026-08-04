@@ -8,10 +8,11 @@ Para o histórico de desenvolvimento sprint a sprint, veja [`docs/roadmap/`](doc
 
 ## [Não lançado]
 
-Build de homologação interna `1.0.0-RC2` — não publicada, só para teste em outra máquina.
+Release da versão definitiva V2, construída sobre a build de homologação interna `1.0.0-RC2`.
 
 ### Adicionado
 
+- **Central Analítica** (Sprints 17-19, homologada em 2026-08-04): terceiro módulo do Hub, consultivo por princípio arquitetural (nunca grava). Pesquisa/filtro de diárias (SEI, CPF, servidor, matrícula, origem, destino, trecho, município, motivo, situação do servidor, período, valor) sobre uma Base Local em SQLite sincronizada automaticamente a cada preenchimento bem-sucedido da planilha oficial; Dashboard com indicadores e distribuições do recorte filtrado (com refinamento do filtro a partir de um gráfico); geração de Relatórios (PDF, Excel ou CSV, em 6 tipos — executivo, detalhado, financeiro, por servidor, por município, por situação); Análise Rápida/Diagnóstico, que classifica cada diária do recorte (esperado/atenção/inconsistência, nunca vermelho para um achado de negócio). Fluxo único orientado por tarefa (filtrar → revisar recorte → agir) — redefinição funcional v2 sobre o desenho original de 3 abas, pedida pelo DIMCAC antes de Dashboard/Relatórios chegarem a ser implementados. Ver [`docs/central-analitica/`](docs/central-analitica/README.md).
 - **Configuração Inicial da Planilha Oficial** (Sprint 15): na primeira execução, o app exige a seleção da planilha oficial (diálogo nativo, validada em 5 critérios — existência, extensão, abertura, aba e cabeçalhos esperados) antes de liberar qualquer funcionalidade. O caminho é persistido localmente (`configuracao.json`, na pasta de dados do usuário) e passa a ser usado automaticamente em todo preenchimento — o backend é a única autoridade sobre esse caminho, que deixou de ser escolhido a cada execução.
 - Detecção de substituição estrutural da planilha configurada (fingerprint de cabeçalho + abas), sem bloquear o uso — apenas solicita revalidação.
 - Ação "Alterar Planilha Oficial", acessível a qualquer momento por um novo ícone de Configurações no cabeçalho ou pelo próprio painel de preenchimento quando a planilha estiver inacessível.

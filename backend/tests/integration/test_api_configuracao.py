@@ -2,6 +2,7 @@ import os
 
 from fastapi.testclient import TestClient
 
+from app.consulta import base_local_sqlite
 from app.infra.config import configuracao_app as config
 from app.main import app
 
@@ -111,6 +112,73 @@ def test_get_configuracao_requer_revalidacao_apos_estrutura_divergir(
     assert corpo["configurado"] is True
     assert corpo["planilha_acessivel"] is True
     assert corpo["requer_revalidacao"] is True
+
+
+def test_post_configuracao_valida_reconstroi_base_local_imediatamente(
+    monkeypatch, tmp_path, caminho_planilha_configuracao_teste
+):
+    """Sprint 18.7 — a Central Analítica não pode mais depender de um
+    processamento de PDF nem de um clique manual em "Sincronizar agora"
+    para ficar disponível: salvar a Configuração Inicial já reconstrói a
+    Base Local (Gatilho A), de forma síncrona."""
+    _isolar_diretorio_configuracao(monkeypatch, tmp_path)
+    caminho_planilha = caminho_planilha_configuracao_teste()
+
+    resposta = client.post(
+        "/api/v1/configuracao",
+        json={"caminho_planilha_oficial": caminho_planilha},
+    )
+
+    assert resposta.status_code == 200
+
+    caminho_sqlite = base_local_sqlite.caminho_base_local_sqlite(diretorio_base=tmp_path / "dados_usuario")
+    assert caminho_sqlite.is_file()
+
+    verificacao = client.get("/api/v1/analitica/sincronizacao")
+    assert verificacao.status_code == 200
+    corpo = verificacao.json()
+    assert corpo["status"] != "nunca_sincronizado"
+    assert corpo["origem"] == "configuracao_inicial"
+
+
+def test_post_configuracao_persiste_mesmo_se_reconstrucao_da_base_local_falhar(
+    monkeypatch, tmp_path, caminho_planilha_configuracao_teste
+):
+    """A reconstrução da Base Local (Gatilho A) é best-effort — uma falha
+    nela nunca pode impedir a Configuração Inicial de ser salva (mesma
+    garantia já homologada para o hook de `planilha_service.py`)."""
+    _isolar_diretorio_configuracao(monkeypatch, tmp_path)
+    caminho_planilha = caminho_planilha_configuracao_teste()
+
+    def _sincronizar_com_falha(*args, **kwargs):
+        raise RuntimeError("falha simulada na reconstrução da Base Local")
+
+    monkeypatch.setattr("app.api.configuracao.base_local.sincronizar", _sincronizar_com_falha)
+
+    resposta = client.post(
+        "/api/v1/configuracao",
+        json={"caminho_planilha_oficial": caminho_planilha},
+    )
+
+    assert resposta.status_code == 200
+    assert config.carregar(diretorio_base=tmp_path / "dados_usuario") is not None
+
+
+def test_alterar_planilha_oficial_tambem_reconstroi_a_base_local(
+    monkeypatch, tmp_path, caminho_planilha_configuracao_teste
+):
+    """"Alterar Planilha Oficial" reusa `POST /api/v1/configuracao` — o
+    Gatilho A dispara igualmente, não só na primeira configuração."""
+    _isolar_diretorio_configuracao(monkeypatch, tmp_path)
+    caminho_v1 = caminho_planilha_configuracao_teste(nome_arquivo="v1.xlsx")
+    client.post("/api/v1/configuracao", json={"caminho_planilha_oficial": caminho_v1})
+
+    caminho_v2 = caminho_planilha_configuracao_teste(nome_arquivo="v2.xlsx")
+    resposta = client.post("/api/v1/configuracao", json={"caminho_planilha_oficial": caminho_v2})
+
+    assert resposta.status_code == 200
+    verificacao = client.get("/api/v1/analitica/sincronizacao")
+    assert verificacao.json()["status"] != "nunca_sincronizado"
 
 
 def test_alterar_planilha_oficial_reutiliza_o_mesmo_post(

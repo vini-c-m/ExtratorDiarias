@@ -6,12 +6,13 @@ import LimiteDeErro from "./components/layout/LimiteDeErro";
 import { useBackendStatus } from "./hooks/useBackendStatus";
 import { useConfiguracao } from "./hooks/useConfiguracao";
 import BoasVindas from "./pages/BoasVindas";
+import CentralAnalitica from "./pages/CentralAnalitica";
 import Conferencia from "./pages/Conferencia";
 import ConfiguracaoInicial from "./pages/ConfiguracaoInicial";
 import Hub from "./pages/Hub";
 import SelecionarProcessar from "./pages/SelecionarProcessar";
 
-type Pagina = "boasvindas" | "hub" | "processamento" | "conferencia";
+type Pagina = "boasvindas" | "hub" | "processamento" | "conferencia" | "analitica";
 
 export default function App() {
   const status = useBackendStatus();
@@ -93,12 +94,14 @@ export default function App() {
               backendOnline={status === "conectado"}
               aoSelecionarProcessamento={() => setPagina("processamento")}
               aoSelecionarConferencia={() => setPagina("conferencia")}
+              aoSelecionarAnalitica={() => setPagina("analitica")}
             />
           )}
           {pagina === "processamento" && (
             <SelecionarProcessar backendOnline={status === "conectado"} aoMudarEstado={setEstadoApp} />
           )}
           {pagina === "conferencia" && <Conferencia backendOnline={status === "conectado"} />}
+          {pagina === "analitica" && <CentralAnalitica backendOnline={status === "conectado"} />}
         </LimiteDeErro>
       </div>
 

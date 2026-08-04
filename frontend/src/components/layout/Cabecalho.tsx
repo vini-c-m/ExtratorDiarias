@@ -71,14 +71,21 @@ const DESCRITOR_ESTADO: Record<EstadoApp, Descritor> = {
 // (mesma fórmula, sem token próprio) para `erro`, a mesma usada no botão de
 // perigo/diálogo/painel de erro — nunca um brilho "inventado" só para este
 // componente.
-const GLOW_POR_VARIANTE: Record<Exclude<VarianteStatus, "erro" | "neutro">, string> = {
+const GLOW_POR_VARIANTE: Record<Exclude<VarianteStatus, "erro" | "neutro" | "critico">, string> = {
   sucesso: "shadow-glow-green",
   info: "shadow-glow-cyan",
   aviso: "shadow-glow-amber",
 };
 
 function glowDaVariante(variante: VarianteStatus): string {
-  return variante === "erro" ? GLOW_PERIGO : GLOW_POR_VARIANTE[variante as "sucesso" | "info" | "aviso"];
+  // Sprint 19.8.4 — `critico` (Diagnóstico) nunca aparece neste indicador
+  // de status de Processamento; tratado como `erro` só para nunca deixar
+  // `GLOW_POR_VARIANTE` sem uma entrada — mesmo fallback visual do glow
+  // de perigo, caso este componente algum dia precise renderizar essa
+  // variante (hoje não precisa).
+  return variante === "erro" || variante === "critico"
+    ? GLOW_PERIGO
+    : GLOW_POR_VARIANTE[variante as "sucesso" | "info" | "aviso"];
 }
 
 // Sprint 07 — cabeçalho da nova identidade visual: nenhuma referência

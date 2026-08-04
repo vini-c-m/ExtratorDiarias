@@ -1,4 +1,21 @@
 import { mensagemAmigavel } from "../lib/mensagens";
+import type {
+  DiagnosticoResposta,
+  DiariaCompletaResposta,
+  DistribuicaoResposta,
+  EstadoSincronizacaoResposta,
+  ExecucaoSincronizacaoResposta,
+  IndicadoresResposta,
+  OpcoesFiltroResposta,
+  PaginaAvisosResposta,
+  ParametrosDiagnosticoQuery,
+  ParametrosDistribuicaoQuery,
+  ParametrosIndicadoresQuery,
+  ParametrosPesquisaDiariasQuery,
+  ParametrosRelatorioQuery,
+  RelatorioGeradoResposta,
+  ResultadoPesquisaResposta,
+} from "../types/analitica";
 import type { ConfiguracaoAtiva, EstadoConfiguracao } from "../types/configuracao";
 import type { ResultadoConferencia } from "../types/conferencia";
 import type {
@@ -297,6 +314,249 @@ export async function definirConfiguracao(caminhoPlanilhaOficial: string): Promi
     body: JSON.stringify({ caminho_planilha_oficial: caminhoPlanilhaOficial }),
   });
 
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+// Sprint 18.4.1 — Central Analítica (`app/api/analitica.py`, Sprint 17.4,
+// homologado; nenhum contrato alterado por esta Sprint de frontend). Mesma
+// convenção das demais funções deste módulo: função pura, `fetch` +
+// tratamento de erro HTTP, sem estado.
+
+/** Falha técnica da Central Analítica (Base Local em SQLite ausente ou
+ * corrompida) — sempre HTTP 503, mesmo padrão de `ErroConferenciaIndisponivel`. */
+export class ErroAnaliticaIndisponivel extends Error {
+  constructor() {
+    super("Não foi possível acessar os registros da Central Analítica agora. Tente novamente em instantes.");
+    this.name = "ErroAnaliticaIndisponivel";
+  }
+}
+
+/** SEI sem diária correspondente (`GET /diarias/{sei}` → 404) — resultado
+ * de negócio válido, nunca uma falha técnica; classe própria para o
+ * chamador distinguir isto de `ErroAnaliticaIndisponivel`. */
+export class DiariaNaoEncontradaError extends Error {
+  constructor(sei: string) {
+    super(`Diária com SEI "${sei}" não encontrada.`);
+    this.name = "DiariaNaoEncontradaError";
+  }
+}
+
+/** `POST /sincronizacao` recusado (409) porque outra já está em andamento
+ * (RN-A) — nunca tratado como erro, é um estado esperado. */
+export class SincronizacaoEmAndamentoError extends Error {
+  constructor() {
+    super("Uma sincronização já está em andamento. Aguarde a conclusão antes de tentar novamente.");
+    this.name = "SincronizacaoEmAndamentoError";
+  }
+}
+
+/** Monta a query string a partir de um objeto de parâmetros, omitindo
+ * `undefined`/`null`/string vazia — mesmo critério do backend (`if
+ * filtros.q:` etc., `repositorio_analitico._montar_where`): um filtro
+ * "vazio" equivale a "não aplicado", nunca vira `?campo=` na URL. */
+function construirQueryString(parametros: object): string {
+  const busca = new URLSearchParams();
+  const entradas = Object.entries(parametros) as [string, string | number | undefined | null][];
+  for (const [chave, valor] of entradas) {
+    if (valor === undefined || valor === null || valor === "") continue;
+    busca.set(chave, String(valor));
+  }
+  const query = busca.toString();
+  return query ? `?${query}` : "";
+}
+
+export async function pesquisarDiarias(
+  parametros: ParametrosPesquisaDiariasQuery,
+): Promise<ResultadoPesquisaResposta> {
+  const resposta = await fetch(
+    `${BACKEND_URL}/api/v1/analitica/diarias${construirQueryString(parametros)}`,
+  );
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** `sei` viaja literal na URL (RN-12 herdada — nunca normalizado/
+ * codificado pelo cliente): a rota (`{sei:path}`) existe justamente
+ * porque o número SEI contém barras (`19.20.0903.0030720/2024-36`); usar
+ * `encodeURIComponent` transformaria essas barras em `%2F`, alterando a
+ * forma do dado sem necessidade — o backend já trata o valor como texto
+ * opaco, não como múltiplos segmentos de path. */
+export async function detalharDiaria(sei: string): Promise<DiariaCompletaResposta> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/analitica/diarias/${sei}`);
+
+  if (resposta.status === 404) {
+    throw new DiariaNaoEncontradaError(sei);
+  }
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Sprint 19.6.2 — `GET /indicadores`. `parametros` traz só os 15 campos
+ * de filtro (`ParametrosIndicadoresQuery`, sem paginação/ordenação — o
+ * endpoint sempre opera sobre o recorte inteiro). */
+export async function obterIndicadores(
+  parametros: ParametrosIndicadoresQuery,
+): Promise<IndicadoresResposta> {
+  const resposta = await fetch(
+    `${BACKEND_URL}/api/v1/analitica/indicadores${construirQueryString(parametros)}`,
+  );
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Sprint 19.6.3 — `GET /distribuicoes`. `parametros` traz os 15 campos de
+ * filtro (`ParametrosDistribuicaoQuery`, sem paginação/ordenação — mesmo
+ * critério de `obterIndicadores`), mais `dimensao` (obrigatório, um valor
+ * por chamada, § 12.3). */
+export async function obterDistribuicao(
+  parametros: ParametrosDistribuicaoQuery,
+): Promise<DistribuicaoResposta> {
+  const resposta = await fetch(
+    `${BACKEND_URL}/api/v1/analitica/distribuicoes${construirQueryString(parametros)}`,
+  );
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+export async function obterOpcoesFiltro(): Promise<OpcoesFiltroResposta> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/analitica/opcoes-filtro`);
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+export async function consultarEstadoSincronizacao(): Promise<EstadoSincronizacaoResposta> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/analitica/sincronizacao`);
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+export async function dispararSincronizacaoManual(): Promise<ExecucaoSincronizacaoResposta> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/analitica/sincronizacao`, { method: "POST" });
+
+  if (resposta.status === 409) {
+    throw new SincronizacaoEmAndamentoError();
+  }
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+export async function consultarAvisosSincronizacao(
+  pagina: number = 1,
+  tamanhoPagina: number = 25,
+): Promise<PaginaAvisosResposta> {
+  const query = construirQueryString({ pagina, tamanho_pagina: tamanhoPagina });
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/analitica/sincronizacao/avisos${query}`);
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Sprint 19.7.2 — `POST /relatorios`. `422` cobre tanto validação de
+ * contrato (ex.: período inválido) quanto as duas regras de negócio
+ * devolvidas pelo backend com mensagem própria — "gráficos só em PDF" e
+ * "tipo ainda não implementado" (`TipoRelatorioIndisponivel`, pendente de
+ * `diagnostico.py`, Sprint 19.8) — `mensagemDoErro422` já extrai o texto
+ * de `detail` em ambos os casos, sem precisar de uma classe de erro
+ * própria para cada um (mesmo padrão de `definirConfiguracao`). */
+export async function gerarRelatorio(
+  parametros: ParametrosRelatorioQuery,
+): Promise<RelatorioGeradoResposta> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/analitica/relatorios`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parametros),
+  });
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Sprint 19.8.2 — `GET /diagnostico`. `parametros` traz só os 15 campos
+ * de filtro (`ParametrosDiagnosticoQuery`, sem paginação/ordenação — o
+ * endpoint sempre opera sobre o recorte inteiro, § 8.3). */
+export async function obterDiagnostico(
+  parametros: ParametrosDiagnosticoQuery,
+): Promise<DiagnosticoResposta> {
+  const resposta = await fetch(
+    `${BACKEND_URL}/api/v1/analitica/diagnostico${construirQueryString(parametros)}`,
+  );
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
     throw new Error(mensagemDoErro422(corpo, resposta.status));

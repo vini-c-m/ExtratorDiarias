@@ -1,7 +1,5 @@
 # Sprint 10 — dependências de desenvolvimento, separadas de requirements.txt
-# (runtime) e requirements-build.txt (empacotamento). Hoje usada só por
-# tests/fixtures/gerar_fixtures_sinteticas.py, a ferramenta que regenera as
-# fixtures sintéticas de PDF usadas pela suíte de testes — não é importada
-# por nenhum código de produção nem pela suíte em si (os PDFs já gerados
-# ficam versionados).
-reportlab==5.0.0
+# (runtime) e requirements-build.txt (empacotamento). `reportlab` mudou para
+# requirements.txt na Sprint 19.7.2 (geração real de PDF em
+# `analitica_service.py::gerar_relatorio`) — este arquivo fica vazio até a
+# próxima dependência exclusiva de desenvolvimento surgir.

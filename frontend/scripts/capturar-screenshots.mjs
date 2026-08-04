@@ -2,13 +2,18 @@
 // Sprint 14.1 — estendido para o fluxo completo de 4 telas (Boas-vindas →
 // Hub → Processamento | Central de Conferência), que substituiu o antigo
 // fluxo de tela única a partir da Sprint 14.
+// Release da versão definitiva V2 — estendido de novo para cobrir a Central
+// Analítica (resultados, Dashboard, Relatório, Diagnóstico) e a tela de
+// Configurações, homologadas nas Sprints 16-19.
 //
 // Sobe o app de verdade (Vite dev server + backend local, do jeito que
 // `npm run dev` já faz) e usa o Electron real do projeto — via
 // `playwright`'s `_electron` — para dirigir o fluxo completo: Boas-vindas,
 // Hub, processamento (selecionar PDFs de demonstração, processar, revisar
-// o resultado, preencher a planilha, abrir o relatório) e Central de
-// Conferência (diagnóstico + geração do histórico do e-Fisco). Cada etapa é
+// o resultado, preencher a planilha, abrir o relatório), Central de
+// Conferência (diagnóstico + geração do histórico do e-Fisco), Central
+// Analítica (resultados sincronizados da Base Local, Dashboard, Relatório,
+// Diagnóstico) e Configurações (Alterar Planilha Oficial). Cada etapa é
 // capturada na mesma janela (1024x720, tamanho fixo do app — ver
 // `frontend/electron/main.ts`), então todas as imagens saem com a mesma
 // resolução/zoom sem nenhum passo manual.
@@ -84,6 +89,36 @@ function aguardarPorta(porta, tentativasMax = 60) {
   });
 }
 
+// Configuração Inicial (Sprint 15) — gate obrigatório antes de Boas-vindas
+// quando o perfil de userData deste Electron (que, fora de um build
+// empacotado, pode divergir do perfil usado por `npm run dev` — cada um
+// resolve o nome do app e a pasta de dados de um jeito) ainda não tem
+// nenhuma planilha oficial configurada. A tela de Boas-vindas chega a
+// renderizar de forma otimista antes do backend confirmar esse estado
+// (`useConfiguracao`), então resolver isso ANTES de aguardar "Começar"
+// evita que a troca de tela aconteça no meio de uma captura. Como o
+// seletor de planilha usa um diálogo nativo do SO (`dialog.showOpenDialog`,
+// `electron/ipc/configuracao.ts`), inatingível pelo DOM, o diálogo é
+// substituído no processo main via `app.evaluate` — mesma técnica
+// recomendada pelo próprio Playwright para automação de Electron.
+async function resolverConfiguracaoInicial(app, janela) {
+  await app.evaluate(({ dialog }, caminho) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [caminho] });
+  }, PLANILHA_DEMO);
+
+  const apareceu = await janela
+    .getByRole("heading", { name: "Configuração inicial" })
+    .waitFor({ timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!apareceu) return;
+
+  console.log("Configuração Inicial (perfil sem planilha oficial) — configurando com a planilha de demonstração...");
+  await janela.getByRole("button", { name: "Selecionar planilha oficial (.xlsx)" }).click();
+  await janela.getByRole("button", { name: "Continuar" }).waitFor({ timeout: 15000 });
+  await janela.getByRole("button", { name: "Continuar" }).click();
+}
+
 async function main() {
   mkdirSync(PASTA_SCREENSHOTS, { recursive: true });
 
@@ -129,6 +164,8 @@ async function main() {
     const janela = await app.firstWindow();
     await janela.setViewportSize({ width: 1024, height: 720 });
 
+    await resolverConfiguracaoInicial(app, janela);
+
     await janela.getByRole("button", { name: "Começar" }).waitFor({ timeout: 30000 });
     await capturar(janela, "01-boas-vindas");
 
@@ -151,6 +188,8 @@ async function main() {
     // de cada fluxo, não de `main()`.
     await fluxoProcessamento(janela);
     await fluxoConferencia(janela);
+    await fluxoAnalitica(janela);
+    await fluxoConfiguracoes(janela);
 
     await app.close();
     console.log(`Screenshots salvas em ${PASTA_SCREENSHOTS}`);
@@ -206,9 +245,14 @@ async function fluxoProcessamento(janela) {
   await janela.waitForTimeout(500);
   await capturar(janela, "05-resultado");
 
-  console.log("Selecionando a planilha de demonstração...");
-  await janela.locator('input[type="file"][accept=".xlsx"]').setInputFiles(PLANILHA_DEMO);
-  await janela.getByRole("button", { name: "Preencher planilha" }).click();
+  // Desde a Sprint 15 (Configuração Inicial), a planilha oficial já vem da
+  // configuração persistida — não existe mais um seletor de arquivo neste
+  // passo (`resolverConfiguracaoInicial` já configurou a planilha de
+  // demonstração no início do fluxo); o `.click()` abaixo já espera
+  // sozinho o botão sair do estado desabilitado (actionability do
+  // Playwright), assim que `configuracao` termina de carregar.
+  console.log("Preenchendo a planilha oficial configurada...");
+  await janela.getByRole("button", { name: "Preencher planilha" }).click({ timeout: 15000 });
   await janela.getByText("Processamento concluído").waitFor({ timeout: 30000 });
   await janela.waitForTimeout(500);
   await capturar(janela, "06-preenchimento-planilha");
@@ -261,6 +305,70 @@ async function fluxoConferencia(janela) {
   await janela.getByRole("heading", { name: "Histórico para o e-Fisco", exact: true }).waitFor({ timeout: 15000 });
   await janela.waitForTimeout(300);
   await capturar(janela, "09-conferencia-historico");
+
+  console.log("Voltando ao Hub...");
+  await janela.getByRole("button", { name: "Hub" }).click();
+  await janela.getByText("O que você precisa fazer agora?").waitFor({ timeout: 10000 });
+}
+
+// Central Analítica (Sprints 16-19, homologada) — a Base Local de Consulta
+// já foi sincronizada por `fluxoProcessamento` (preenchimento bem-sucedido
+// da planilha oficial), então a tela de resultados abre com os 3 registros
+// de demonstração sem precisar de nenhum filtro — mesmo comportamento
+// padrão de `useDiarias` (sem filtro aplicado, devolve tudo). As 3 ações do
+// recorte (Dashboard, Relatório, Diagnóstico) ficam habilitadas assim que
+// os indicadores terminam de carregar.
+async function fluxoAnalitica(janela) {
+  console.log("Abrindo Central Analítica...");
+  await janela.getByRole("button", { name: /Central Analítica/ }).click();
+  await janela.getByRole("heading", { name: "Central Analítica" }).waitFor({ timeout: 10000 });
+
+  const botaoDashboard = janela.getByRole("button", { name: "Gerar Dashboard" });
+  await botaoDashboard.waitFor({ timeout: 10000 });
+  await janela.waitForTimeout(1200); // indicadores calculando (ver ResumoRecorte)
+  await capturar(janela, "10-analitica-resultados");
+
+  console.log("Gerando Dashboard do recorte...");
+  await botaoDashboard.click();
+  await janela.getByText("Total de diárias").waitFor({ timeout: 15000 });
+  await janela.waitForTimeout(300);
+  await capturar(janela, "11-analitica-dashboard");
+  await janela.getByRole("button", { name: "← Voltar aos resultados" }).click();
+  await janela.getByRole("button", { name: "Gerar Dashboard" }).waitFor({ timeout: 10000 });
+
+  console.log("Abrindo o modal de Relatório...");
+  await janela.getByRole("button", { name: "Gerar Relatório" }).click();
+  await janela.getByRole("dialog", { name: "Gerar relatório" }).waitFor({ timeout: 10000 });
+  await janela.waitForTimeout(200);
+  await capturar(janela, "12-analitica-relatorio");
+  await janela.getByRole("button", { name: "Fechar" }).click();
+  await janela.getByRole("dialog", { name: "Gerar relatório" }).waitFor({ state: "hidden", timeout: 10000 });
+
+  console.log("Executando a Análise Rápida (Diagnóstico)...");
+  await janela.getByRole("button", { name: "Análise Rápida" }).click();
+  await janela.getByText("Analisando o recorte...").waitFor({ state: "hidden", timeout: 15000 });
+  await janela.waitForTimeout(300);
+  await capturar(janela, "13-analitica-diagnostico");
+  await janela.getByRole("button", { name: "← Voltar aos resultados" }).click();
+
+  console.log("Voltando ao Hub...");
+  await janela.getByRole("button", { name: "Hub" }).click();
+  await janela.getByText("O que você precisa fazer agora?").waitFor({ timeout: 10000 });
+}
+
+// Configurações (Sprint 15) — "Alterar Planilha Oficial", acessível de
+// qualquer funcionalidade pelo ícone de engrenagem do Cabeçalho; aqui
+// aberta a partir do Hub só para a screenshot, sem de fato trocar a
+// planilha configurada.
+async function fluxoConfiguracoes(janela) {
+  console.log("Abrindo Configurações...");
+  await janela.getByRole("button", { name: "Configurações" }).click();
+  await janela.getByRole("dialog", { name: "Alterar Planilha Oficial" }).waitFor({ timeout: 10000 });
+  await janela.waitForTimeout(200);
+  await capturar(janela, "14-configuracoes");
+  // Dois botões "Fechar" no modal (ícone X no topo + botão de texto no
+  // rodapé, `ModalAlterarPlanilhaOficial.tsx`) — `.first()` desambigua.
+  await janela.getByRole("button", { name: "Fechar" }).first().click();
 }
 
 // O painel de resultado ("Pasta de resultados") e o relatório HTML mostram

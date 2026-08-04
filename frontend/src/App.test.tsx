@@ -35,6 +35,11 @@ vi.mock("./pages/SelecionarProcessar", () => ({
 vi.mock("./pages/Conferencia", () => ({
   default: () => <div>Tela de Conferência</div>,
 }));
+// Sprint 18.4.2 — mesmo isolamento das duas funcionalidades acima; a
+// Central Analítica já tem sua própria suíte (`CentralAnalitica.test.tsx`).
+vi.mock("./pages/CentralAnalitica", () => ({
+  default: () => <div>Tela da Central Analítica</div>,
+}));
 
 // Sprint 15 — Configuração Inicial da Planilha Oficial: `useConfiguracao`
 // mockado para que os testes de navegação (Sprint 14, acima) continuem
@@ -85,7 +90,7 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
     expect(screen.queryByText("Tela de Processamento")).not.toBeInTheDocument();
   });
 
-  it("'Começar' leva ao Hub, com as duas funcionalidades", async () => {
+  it("'Começar' leva ao Hub, com as três funcionalidades", async () => {
     const usuario = userEvent.setup();
     render(<App />);
 
@@ -93,6 +98,7 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
 
     expect(screen.getByText("Processamento da Planilha")).toBeInTheDocument();
     expect(screen.getByText("Central Inteligente de Conferência")).toBeInTheDocument();
+    expect(screen.getByText("Central Analítica")).toBeInTheDocument();
   });
 
   it("selecionar um card abre a funcionalidade e mostra o link de volta ao Hub", async () => {
@@ -103,6 +109,17 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
     await usuario.click(screen.getByRole("button", { name: /Processamento da Planilha/ }));
 
     expect(screen.getByText("Tela de Processamento")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Hub/ })).toBeInTheDocument();
+  });
+
+  it("selecionar o card da Central Analítica abre o módulo e mostra o link de volta ao Hub", async () => {
+    const usuario = userEvent.setup();
+    render(<App />);
+    await usuario.click(screen.getByRole("button", { name: "Começar" }));
+
+    await usuario.click(screen.getByRole("button", { name: /Central Analítica/ }));
+
+    expect(screen.getByText("Tela da Central Analítica")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Hub/ })).toBeInTheDocument();
   });
 

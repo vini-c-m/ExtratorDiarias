@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 import { FOCO_ANEL, PRESSIONAR, SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 
-type Cor = "roxo" | "ciano";
+type Cor = "roxo" | "ciano" | "azul";
 
 interface Props {
   titulo: string;
@@ -30,19 +30,32 @@ interface Props {
 // RN-11, a Central nunca decide, só informa). Escalável: um 3º módulo
 // futuro só precisa de uma nova entrada neste mapa, nunca um valor de
 // sombra novo.
+//
+// Sprint 18.4.2 — Central Analítica = azul (`shadow-glow-blue`), exatamente
+// a extensão que o comentário acima previa, confirmando a proposta já
+// registrada em `docs/central-analitica/ui-plano-tecnico.md` § 1/§ 11.
+// `shadow-glow-blue` já tem outro consumidor (`GLOW_PDFS`, zona de
+// arrastar PDFs em Processamento) — sem conflito visual real (as duas
+// telas nunca aparecem juntas), só reaproveita o mesmo token de sombra;
+// o tom de borda/selo/seta usa `blue-400`/`blue-500`, uma família Tailwind
+// diferente do `blue-800` de `GLOW_PDFS`, para não duplicar exatamente a
+// mesma aparência de outro elemento já existente.
 const GLOW_POR_COR: Record<Cor, string> = {
   roxo: "border-violet-400/20 shadow-glow-purple hover:border-violet-400/35",
   ciano: "border-cyan-400/20 shadow-glow-cyan hover:border-cyan-400/35",
+  azul: "border-blue-400/20 shadow-glow-blue hover:border-blue-400/35",
 };
 
 const SELO_POR_COR: Record<Cor, string> = {
   roxo: "bg-violet-500/10 text-violet-300",
   ciano: "bg-cyan-500/10 text-cyan-300",
+  azul: "bg-blue-500/10 text-blue-300",
 };
 
 const SETA_POR_COR: Record<Cor, string> = {
   roxo: "text-violet-300",
   ciano: "text-cyan-300",
+  azul: "text-blue-300",
 };
 
 const HOVER_ELEVACAO = "transition hover:-translate-y-1 hover:bg-white/[0.06] hover:shadow-floating";

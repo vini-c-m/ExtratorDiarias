@@ -1,4 +1,4 @@
-import { FileSpreadsheet, ListChecks } from "lucide-react";
+import { BarChart3, FileSpreadsheet, ListChecks } from "lucide-react";
 import CardFuncionalidade from "../components/hub/CardFuncionalidade";
 import Alerta from "../components/ui/Alerta";
 import { MENSAGENS } from "../lib/mensagens";
@@ -8,6 +8,7 @@ interface Props {
   backendOnline: boolean;
   aoSelecionarProcessamento: () => void;
   aoSelecionarConferencia: () => void;
+  aoSelecionarAnalitica: () => void;
 }
 
 // Sprint 14 — Hub de funcionalidades: segunda tela do fluxo (Boas-vindas →
@@ -25,7 +26,12 @@ interface Props {
 // offline (mesma decisão já tomada para o botão "Começar" da Boas-vindas):
 // quem trava ou não uma ação por causa do backend continua sendo cada
 // funcionalidade, não a navegação.
-export default function Hub({ backendOnline, aoSelecionarProcessamento, aoSelecionarConferencia }: Props) {
+export default function Hub({
+  backendOnline,
+  aoSelecionarProcessamento,
+  aoSelecionarConferencia,
+  aoSelecionarAnalitica,
+}: Props) {
   const funcionalidades = [
     {
       titulo: "Processamento da Planilha",
@@ -41,6 +47,20 @@ export default function Hub({ backendOnline, aoSelecionarProcessamento, aoSeleci
       icone: ListChecks,
       cor: "ciano" as const,
       aoClicar: aoSelecionarConferencia,
+    },
+    {
+      // Sprint 18.4.2 — terceiro card do Hub, cor "azul" (extensão de
+      // `CardFuncionalidade`). Descrição original restrita a pesquisa/
+      // filtro, porque Dashboard/Relatórios/Diagnóstico ainda estavam
+      // bloqueados (`ui-arquitetura.md` § 0.6). Auditoria de regressão
+      // global (Sprint 19.x): a V2 (19.1-19.10, homologada) tornou esses
+      // três reais — texto desatualizado corrigido aqui, achado puramente
+      // de conteúdo, nenhum comportamento/rota alterado.
+      titulo: "Central Analítica",
+      descricao: "Pesquise, filtre e analise diárias com dashboards, relatórios e diagnóstico automático.",
+      icone: BarChart3,
+      cor: "azul" as const,
+      aoClicar: aoSelecionarAnalitica,
     },
   ];
 

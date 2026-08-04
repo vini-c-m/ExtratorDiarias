@@ -1,4 +1,7 @@
 // Sprint 14.1 — gera o GIF de demonstração do README (docs/screenshots/demo.gif).
+// Release da versão definitiva V2 — sequência estendida para incluir a
+// Central Analítica (Dashboard, Relatório, Diagnóstico) e Configurações,
+// mesmo fluxo real coberto por `capturar-screenshots.mjs`.
 //
 // Reaproveita a mesma automação de `capturar-screenshots.mjs` (sobe o app
 // real — Vite + backend local + Electron via Playwright — e dirige o fluxo
@@ -153,6 +156,28 @@ class GravadorGif {
   }
 }
 
+// Configuração Inicial (Sprint 15) — mesmo tratamento e mesmo motivo de
+// `capturar-screenshots.mjs::resolverConfiguracaoInicial` (ver aquele
+// arquivo para o porquê): resolve o gate obrigatório de planilha oficial
+// ANTES de aguardar "Começar", usando a mesma planilha de demonstração.
+async function resolverConfiguracaoInicial(app, janela) {
+  await app.evaluate(({ dialog }, caminho) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [caminho] });
+  }, PLANILHA_DEMO);
+
+  const apareceu = await janela
+    .getByRole("heading", { name: "Configuração inicial" })
+    .waitFor({ timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!apareceu) return;
+
+  console.log("Configuração Inicial (perfil sem planilha oficial) — configurando com a planilha de demonstração...");
+  await janela.getByRole("button", { name: "Selecionar planilha oficial (.xlsx)" }).click();
+  await janela.getByRole("button", { name: "Continuar" }).waitFor({ timeout: 15000 });
+  await janela.getByRole("button", { name: "Continuar" }).click();
+}
+
 async function main() {
   mkdirSync(path.dirname(CAMINHO_GIF), { recursive: true });
 
@@ -190,6 +215,8 @@ async function main() {
     const janela = await app.firstWindow();
     await janela.setViewportSize({ width: LARGURA_JANELA, height: ALTURA_JANELA });
 
+    await resolverConfiguracaoInicial(app, janela);
+
     await janela.getByRole("button", { name: "Começar" }).waitFor({ timeout: 30000 });
     await gravador.capturar(janela, "boas-vindas", 1600);
 
@@ -221,8 +248,10 @@ async function main() {
     await janela.waitForTimeout(400);
     await gravador.capturar(janela, "resultado", 1500);
 
-    await janela.locator('input[type="file"][accept=".xlsx"]').setInputFiles(PLANILHA_DEMO);
-    await janela.getByRole("button", { name: "Preencher planilha" }).click();
+    // Desde a Sprint 15 (Configuração Inicial), a planilha oficial já vem
+    // da configuração persistida — sem seletor de arquivo neste passo (ver
+    // mesma observação em `capturar-screenshots.mjs::fluxoProcessamento`).
+    await janela.getByRole("button", { name: "Preencher planilha" }).click({ timeout: 15000 });
     await janela.getByText("Processamento concluído").waitFor({ timeout: 30000 });
     await janela.waitForTimeout(400);
     await gravador.capturar(janela, "preenchimento", 1600);
@@ -253,6 +282,50 @@ async function main() {
     await gravador.capturar(janela, "conferencia-historico", 2200);
 
     await janela.getByRole("button", { name: "Hub" }).click();
+    await janela.getByText("O que você precisa fazer agora?").waitFor({ timeout: 10000 });
+    await gravador.capturar(janela, "hub-3", 900);
+
+    console.log("Central Analítica...");
+    await janela.getByRole("button", { name: /Central Analítica/ }).click();
+    await janela.getByRole("heading", { name: "Central Analítica" }).waitFor({ timeout: 10000 });
+    const botaoDashboard = janela.getByRole("button", { name: "Gerar Dashboard" });
+    await botaoDashboard.waitFor({ timeout: 10000 });
+    await janela.waitForTimeout(1200);
+    await gravador.capturar(janela, "analitica-resultados", 1700);
+
+    await botaoDashboard.click();
+    await janela.getByText("Total de diárias").waitFor({ timeout: 15000 });
+    await janela.waitForTimeout(300);
+    await gravador.capturar(janela, "analitica-dashboard", 1900);
+    await janela.getByRole("button", { name: "← Voltar aos resultados" }).click();
+    await janela.getByRole("button", { name: "Gerar Dashboard" }).waitFor({ timeout: 10000 });
+
+    await janela.getByRole("button", { name: "Gerar Relatório" }).click();
+    await janela.getByRole("dialog", { name: "Gerar relatório" }).waitFor({ timeout: 10000 });
+    await janela.waitForTimeout(200);
+    await gravador.capturar(janela, "analitica-relatorio", 1700);
+    await janela.getByRole("button", { name: "Fechar" }).click();
+    await janela.getByRole("dialog", { name: "Gerar relatório" }).waitFor({ state: "hidden", timeout: 10000 });
+
+    await janela.getByRole("button", { name: "Análise Rápida" }).click();
+    await janela.getByText("Analisando o recorte...").waitFor({ state: "hidden", timeout: 15000 });
+    await janela.waitForTimeout(300);
+    await gravador.capturar(janela, "analitica-diagnostico", 1900);
+    await janela.getByRole("button", { name: "← Voltar aos resultados" }).click();
+
+    await janela.getByRole("button", { name: "Hub" }).click();
+    await janela.getByText("O que você precisa fazer agora?").waitFor({ timeout: 10000 });
+
+    console.log("Configurações...");
+    await janela.getByRole("button", { name: "Configurações" }).click();
+    await janela.getByRole("dialog", { name: "Alterar Planilha Oficial" }).waitFor({ timeout: 10000 });
+    await janela.waitForTimeout(200);
+    await gravador.capturar(janela, "configuracoes", 1600);
+    // Dois botões "Fechar" no modal (ícone X no topo + botão de texto no
+    // rodapé, `ModalAlterarPlanilhaOficial.tsx`) — `.first()` desambigua.
+    await janela.getByRole("button", { name: "Fechar" }).first().click();
+    await janela.getByRole("dialog", { name: "Alterar Planilha Oficial" }).waitFor({ state: "hidden", timeout: 10000 });
+
     await janela.getByText("O que você precisa fazer agora?").waitFor({ timeout: 10000 });
     await gravador.capturar(janela, "hub-final", 1400);
 

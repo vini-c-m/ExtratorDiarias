@@ -4,7 +4,7 @@
 
 O Extrator de Diárias é um aplicativo desktop Electron com dois processos cooperando localmente, sem nenhuma dependência de rede externa: um **renderer** React (interface) e um **backend FastAPI local**, iniciado automaticamente pelo processo principal do Electron e encerrado com ele. Toda a extração, validação, consulta e escrita na planilha acontece no backend; o frontend só orquestra a experiência do usuário e chama a API HTTP local.
 
-Desde a Sprint 14, o renderer tem duas funcionalidades independentes, escolhidas a partir de um Hub (ver [Frontend](#frontend-electron--react) abaixo) — **Processamento** (fluxo original, grava na planilha oficial) e **Central Inteligente de Conferência** (Sprint 11 → 13.1, só consulta, nunca grava — RN-11 em [`docs/central-conferencia/`](../central-conferencia/README.md#rn-11--princípio-arquitetural-a-central-inteligente-é-um-módulo-exclusivamente-consultivo)).
+Desde a Sprint 19, o renderer tem três funcionalidades independentes, escolhidas a partir de um Hub (ver [Frontend](#frontend-electron--react) abaixo) — **Processamento** (fluxo original, grava na planilha oficial), **Central Inteligente de Conferência** (Sprint 11 → 13.1, só consulta, nunca grava — RN-11 em [`docs/central-conferencia/`](../central-conferencia/README.md#rn-11--princípio-arquitetural-a-central-inteligente-é-um-módulo-exclusivamente-consultivo)) e **Central Analítica** (Sprints 17 → 19, pesquisa/filtros/Dashboard/Relatórios/Diagnóstico sobre a mesma Base Local, também só consulta — ver [`docs/central-analitica/`](../central-analitica/README.md)).
 
 ```mermaid
 flowchart TB
@@ -18,31 +18,35 @@ flowchart TB
             R0["BoasVindas → Hub"]
             R1["SelecionarProcessar\n(Processamento)"]
             R3["Conferencia\n(Central Inteligente)"]
+            R4["CentralAnalitica\n(pesquisa · Dashboard · Relatórios · Diagnóstico)"]
             R2["services/api.ts"]
         end
         subgraph Backend["Backend local (FastAPI + Uvicorn, 127.0.0.1)"]
-            API["app/api\nprocessamento · planilha · conferencia · saude"]
-            SVC["app/services\nprocessamento_service · planilha_service\nconferencia_service"]
+            API["app/api\nprocessamento · planilha · conferencia · analitica · configuracao · saude"]
+            SVC["app/services\nprocessamento_service · planilha_service\nconferencia_service · analitica_service"]
             EXT["app/extraction\npdf_reader · parsers · enriquecimento"]
-            DOM["app/domain\nregras de validação/conferência, entidades"]
+            DOM["app/domain\nregras de validação/conferência/diagnóstico, entidades\n(inclui domain/analitica — indicadores, distribuições, diagnóstico)"]
             PLA["app/planilha\nescritor_planilha · relatorio"]
-            CONS["app/consulta\nbase_local · repositórios (Sprint 13)"]
+            CONS["app/consulta\nbase_local (Excel, Conferência) · base_local_sqlite\n+ repositórios (Conferência e Analítica)"]
         end
     end
     Usuario(["Usuário"]) --> R0
-    R0 --> R1 & R3
+    R0 --> R1 & R3 & R4
     R1 --> R2 -->|HTTP 127.0.0.1| API
     R3 --> R2
+    R4 --> R2
     R1 -.->|diálogos nativos<br/>Salvar/Abrir| IPC
     API --> SVC --> EXT --> DOM
     SVC --> PLA -->|grava| XLSX[("Planilha oficial\n.xlsx")]
     PLA -->|gera| HTML[["Relatório HTML\nautossuficiente"]]
-    PLA -.->|sincroniza após\ncada processamento| BASE[("Base Local de Consulta\nsomente-leitura, AppData")]
+    PLA -.->|sincroniza após\ncada processamento| BASE[("Base Local de Consulta\nExcel somente-leitura, AppData")]
+    PLA -.->|sincroniza após\ncada processamento| SQLITE[("Base Local SQLite\nsomente-leitura, AppData")]
     API --> SVC --> CONS -->|lê, nunca escreve| BASE
+    CONS -->|lê, nunca escreve| SQLITE
     M1 -.->|spawn/kill| Backend
 ```
 
-Ponto arquitetural deliberado (RN-11): a única seta de escrita na planilha oficial é `PLA --> XLSX`, sempre a partir do fluxo de Processamento. A Central de Conferência (`CONS`) só lê a Base Local — nunca a planilha oficial diretamente, nunca em modo de escrita. Detalhe completo da proposta e das regras de negócio (RN-01 a RN-13) em [`docs/central-conferencia/`](../central-conferencia/README.md).
+Ponto arquitetural deliberado (RN-11): a única seta de escrita na planilha oficial é `PLA --> XLSX`, sempre a partir do fluxo de Processamento. A Central de Conferência e a Central Analítica (`CONS`) só leem suas respectivas Bases Locais — nunca a planilha oficial diretamente, nunca em modo de escrita. Detalhe completo da proposta e das regras de negócio da Conferência (RN-01 a RN-13) em [`docs/central-conferencia/`](../central-conferencia/README.md); arquitetura e regras da Central Analítica em [`docs/central-analitica/`](../central-analitica/README.md).
 
 ## O pipeline de extração
 
@@ -77,19 +81,19 @@ Arquitetura em camadas, sem framework de DI — dependências fluem por import d
 
 | Camada | Pasta | Responsabilidade |
 | --- | --- | --- |
-| API | `app/api/` | Rotas FastAPI (`processamento`, `planilha`, `saude`) — só tradução HTTP ⇄ serviço |
-| Schemas | `app/schemas/` | Contratos Pydantic de entrada/saída da API |
-| Serviços | `app/services/` | Orquestração de caso de uso (`processar_lote`, `preencher_planilha`) |
+| API | `app/api/` | Rotas FastAPI (`processamento`, `planilha`, `conferencia`, `analitica`, `configuracao`, `saude`) — só tradução HTTP ⇄ serviço |
+| Schemas | `app/schemas/` | Contratos Pydantic de entrada/saída da API (inclui `schemas/analitica.py`) |
+| Serviços | `app/services/` | Orquestração de caso de uso (`processamento_service`, `planilha_service`, `conferencia_service`, `analitica_service`) |
 | Extração | `app/extraction/` | Leitura de PDF, parsing, segmentação, enriquecimento |
-| Domínio | `app/domain/` | Entidades e regras de negócio puras — validação/enriquecimento de diária (`domain/rules/validacao_diaria.py`) e, desde a Sprint 13, o diagnóstico da Central de Conferência (`domain/rules/conferencia.py`, `domain/entities/`) |
+| Domínio | `app/domain/` | Entidades e regras de negócio puras — validação de diária (`domain/rules/validacao_diaria.py`), diagnóstico da Central de Conferência (`domain/rules/conferencia.py`) e, desde a Sprint 19.6-19.8, os cálculos puros da Central Analítica (`domain/analitica/` — indicadores, distribuições, diagnóstico) |
 | Planilha | `app/planilha/` | Escrita no `.xlsx` oficial e geração do relatório HTML |
-| Consulta | `app/consulta/` | Sprint 13 — sincronização e leitura somente-leitura da Base Local de Consulta (`base_local.py`, `repositorio_servidores.py`, `repositorio_diarias.py`); nenhum módulo aqui escreve na planilha oficial (RN-11) |
-| Infra | `app/infra/` | Configuração, logging (a camada de banco local em `infra/db` está preparada para uso futuro, não é usada no fluxo atual) |
+| Consulta | `app/consulta/` | Sincronização e leitura somente-leitura das Bases Locais: `base_local.py`/`repositorio_servidores.py`/`repositorio_diarias.py` (Excel, Central de Conferência, Sprint 13) e `base_local_sqlite.py`/`repositorio_analitico.py` (SQLite, Central Analítica, Sprint 17.3+); nenhum módulo aqui escreve na planilha oficial (RN-11) |
+| Infra | `app/infra/` | Configuração, logging e, desde a Sprint 17.3, o esquema/conexão SQLite da Base Local de Consulta da Central Analítica (`infra/db/esquema.py`) |
 
 ## Frontend (Electron + React)
 
-- **Processo main** ([`frontend/electron/main.ts`](../../frontend/electron/main.ts)) — sobe o backend (do `.venv` em desenvolvimento; do executável PyInstaller standalone quando empacotado), cria a janela, expõe IPC nativo para diálogos de arquivo (`ipc/planilha.ts`, `ipc/relatorio.ts`, `ipc/conferencia.ts` — "Salvar Como"/"Abrir Local"/"Copiar Histórico", que exigem API nativa do SO, não HTTP) e encerra o backend ao fechar.
-- **Renderer** ([`frontend/src/`](../../frontend/src/)) — desde a Sprint 14, navegação em 4 telas sem `react-router` (app de janela única, sem necessidade de URL/histórico): `pages/BoasVindas.tsx` (vitrine de entrada) → `pages/Hub.tsx` (escolha da funcionalidade) → `pages/SelecionarProcessar.tsx` (seleção de PDFs → processamento → resultado → preenchimento da planilha → relatório) **ou** `pages/Conferencia.tsx` (Etapa 1 — diagnóstico; Etapa 2 — geração do histórico do e-Fisco, só quando apto). Retorno ao Hub a qualquer momento via "← Hub" no `Cabecalho`. `services/api.ts` fala HTTP com o backend local (`127.0.0.1`); `theme/` é a fonte única de verdade da identidade visual (ver [`docs/branding/`](../branding/)).
+- **Processo main** ([`frontend/electron/main.ts`](../../frontend/electron/main.ts)) — sobe o backend (do `.venv` em desenvolvimento; do executável PyInstaller standalone quando empacotado), cria a janela, expõe IPC nativo para diálogos de arquivo (`ipc/planilha.ts`, `ipc/relatorio.ts`, `ipc/conferencia.ts`, `ipc/clipboard.ts` — "Salvar Como"/"Abrir Local"/"Copiar Histórico"/"Copiar SEI", que exigem API nativa do SO, não HTTP) e encerra o backend ao fechar.
+- **Renderer** ([`frontend/src/`](../../frontend/src/)) — navegação sem `react-router` (app de janela única, sem necessidade de URL/histórico), com um gate obrigatório de Configuração Inicial (Sprint 15 — nenhuma tela é liberada até a planilha oficial estar configurada) antes de: `pages/BoasVindas.tsx` (vitrine de entrada) → `pages/Hub.tsx` (escolha da funcionalidade) → `pages/SelecionarProcessar.tsx` (seleção de PDFs → processamento → resultado → preenchimento da planilha → relatório), `pages/Conferencia.tsx` (Etapa 1 — diagnóstico; Etapa 2 — geração do histórico do e-Fisco, só quando apto) **ou** `pages/CentralAnalitica.tsx` (filtros → resultados → Dashboard/Relatório/Diagnóstico do recorte, Sprint 19). Retorno ao Hub a qualquer momento via "← Hub" no `Cabecalho`, que também abre "Alterar Planilha Oficial" (ícone de Configurações) de qualquer tela. `services/api.ts` fala HTTP com o backend local (`127.0.0.1`); `theme/` é a fonte única de verdade da identidade visual (ver [`docs/branding/`](../branding/)).
 
 ## Empacotamento
 

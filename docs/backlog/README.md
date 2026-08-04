@@ -50,3 +50,20 @@ Já registrados em [`docs/roadmap/README.md`](../roadmap/README.md#planejado-nã
 
 - Barramento de eventos / progresso via SSE (`app/events/`).
 - Camada de persistência local (`app/infra/db/`).
+
+## Dívida documental (não é Sprint — ajuste de texto, não de escopo)
+
+- **`docs/central-analitica/v2-plano-tecnico.md` — cabeçalho e § 20
+  ("Confirmação de escopo") desatualizados.** Ambos ainda afirmam
+  literalmente "nenhuma linha de código de produção foi escrita" e
+  "aguardando aprovação do DIMCAC antes da primeira Sprint de
+  implementação (19.5)" — texto herdado da redação original da Sprint
+  19.4 (planejamento puro), nunca atualizado à medida que 19.5–19.5.7.1.1
+  foram implementadas, testadas e homologadas (§ 18 do mesmo documento já
+  reflete isso corretamente). Achado pela Auditoria Técnica da atualização
+  de rastreabilidade de 19.5.7.1/19.5.7.1.1 (2026-08-03) — classificado
+  como divergência documental pré-existente, fora do escopo daquela
+  atualização e não bloqueante para a continuidade do roadmap. Corrigir
+  o texto (não o conteúdo técnico) quando uma próxima atualização
+  documental do arquivo for feita, sem necessidade de micro-sprint
+  própria.

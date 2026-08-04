@@ -1,3 +1,4 @@
+import logging
 import os
 
 from app.consulta import base_local
@@ -12,6 +13,8 @@ from app.planilha.relatorio import ItemAviso, ItemErro
 # DIMCAC, então a coluna C foi preenchida pela extração do PDF, já
 # homologada. Isto não é um erro de processamento — é só um pedido de
 # conferência, tratado como os demais avisos de revisão manual.
+_logger = logging.getLogger(__name__)
+
 _AVISO_DOC_ORIGEM_SEM_HISTORICO = (
     "DOC DE ORIGEM preenchido através da extração do processo. Não foi localizado "
     "histórico deste servidor na planilha oficial do DIMCAC. Recomenda-se conferir "
@@ -68,16 +71,16 @@ def preencher_planilha(
     # Sprint 13 — hook aditivo para a Central Inteligente de Conferência
     # (doc arquitetural § 4.2): ao lado da cópia com timestamp que já existe
     # acima, sobrescreve a Base Local de Consulta com a planilha recém
-    # preenchida. Só quando algo foi de fato gravado — uma requisição que só
-    # encontrou duplicidade não paga o custo de copiar ~3 mil linhas. Nunca
-    # pode quebrar o fluxo de preenchimento já homologado: qualquer falha
-    # aqui é engolida em silêncio (risco aceito nesta Sprint, sem
-    # infraestrutura de logging no projeto — ver TODO em
-    # `app/consulta/base_local.py`).
+    # preenchida (Sprint 17.3: também reconstrói a materialização em
+    # SQLite, usada pela Central Analítica). Só quando algo foi de fato
+    # gravado — uma requisição que só encontrou duplicidade não paga o
+    # custo de reindexar ~3 mil linhas. Nunca pode quebrar o fluxo de
+    # preenchimento já homologado: qualquer falha aqui é registrada no log
+    # (não mais engolida em silêncio) e nunca propagada.
     if resultado.total_gravado > 0:
         try:
             base_local.sincronizar(caminho_planilha)
         except Exception:
-            pass
+            _logger.exception("Falha ao sincronizar a Base Local de Consulta")
 
     return resultado, arquivos_gerados

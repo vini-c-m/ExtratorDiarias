@@ -90,10 +90,12 @@ describe("registrarIpcRelatorio", () => {
     vi.useRealTimers();
   });
 
-  function chamarHandler() {
+  function chamarHandler(nomeSugerido?: string) {
     registrarIpcRelatorio();
     const handler = handlers.get("relatorio:salvar-como")!;
-    return handler({ sender: {} }, caminhoOrigem, pastaResultados);
+    return nomeSugerido === undefined
+      ? handler({ sender: {} }, caminhoOrigem, pastaResultados)
+      : handler({ sender: {} }, caminhoOrigem, pastaResultados, nomeSugerido);
   }
 
   it("abre o diálogo 'Salvar Como' com o nome sugerido e o filtro .html", async () => {
@@ -150,5 +152,79 @@ describe("registrarIpcRelatorio", () => {
     expect(dialogMock.showSaveDialog).toHaveBeenCalledWith(
       expect.objectContaining({ filters: [{ name: "Relatório HTML", extensions: ["html"] }] }),
     );
+  });
+
+  // --- Sprint 19.7.5 — generalização (Central Analítica: PDF/Excel/CSV) --
+
+  it("Processamento continua funcionando sem nenhuma mudança de chamada (regressão) — mesmo nome/filtro .html de sempre", async () => {
+    dialogMock.showSaveDialog.mockResolvedValue({ canceled: true });
+
+    await chamarHandler(); // sem 3º argumento — call site real de `SelecionarProcessar.tsx`, inalterado
+
+    expect(dialogMock.showSaveDialog).toHaveBeenCalledWith(
+      { id: "janela-fake" },
+      {
+        defaultPath: path.join(pastaResultados, "Relatório Processamento - 15-07-2026.html"),
+        filters: [{ name: "Relatório HTML", extensions: ["html"] }],
+      },
+    );
+  });
+
+  it.each([
+    ["Relatório Executivo - 04-08-2026.pdf", { name: "PDF", extensions: ["pdf"] }],
+    ["Relatório Detalhado - 04-08-2026.xlsx", { name: "Excel", extensions: ["xlsx"] }],
+    ["Relatório Por situação - 04-08-2026.csv", { name: "CSV", extensions: ["csv"] }],
+  ])("com nomeSugerido=%s, o diálogo usa esse nome exato e o filtro correspondente ao formato", async (nome, filtro) => {
+    dialogMock.showSaveDialog.mockResolvedValue({ canceled: true });
+
+    await chamarHandler(nome);
+
+    expect(dialogMock.showSaveDialog).toHaveBeenCalledWith(
+      { id: "janela-fake" },
+      { defaultPath: path.join(pastaResultados, nome), filters: [filtro] },
+    );
+  });
+
+  it("nomeSugerido com colisão no destino também deduplica com ' (2)', preservando a extensão real", async () => {
+    const nome = "Relatório Executivo - 04-08-2026.pdf";
+    existsSyncMock.mockImplementation((caminho: string) => caminho === path.join(pastaResultados, nome));
+    dialogMock.showSaveDialog.mockResolvedValue({ canceled: true });
+
+    await chamarHandler(nome);
+
+    expect(dialogMock.showSaveDialog).toHaveBeenCalledWith(
+      { id: "janela-fake" },
+      expect.objectContaining({
+        defaultPath: path.join(pastaResultados, "Relatório Executivo - 04-08-2026 (2).pdf"),
+      }),
+    );
+  });
+
+  it("extensão desconhecida usa um filtro genérico, nunca lança", async () => {
+    dialogMock.showSaveDialog.mockResolvedValue({ canceled: true });
+
+    await chamarHandler("Relatório Estranho - 04-08-2026.xyz");
+
+    expect(dialogMock.showSaveDialog).toHaveBeenCalledWith(
+      { id: "janela-fake" },
+      expect.objectContaining({ filters: [{ name: "Arquivo", extensions: ["xyz"] }] }),
+    );
+  });
+
+  it("salvamento bem-sucedido com nomeSugerido copia o arquivo real e retorna caminho/pasta (mesmo mecanismo do Processamento)", async () => {
+    const destino = "D:\\arquivados\\Relatório Executivo - 04-08-2026.pdf";
+    dialogMock.showSaveDialog.mockResolvedValue({ canceled: false, filePath: destino });
+    copyFileMock.mockResolvedValue(undefined);
+
+    const resultado = await chamarHandler("Relatório Executivo - 04-08-2026.pdf");
+
+    expect(copyFileMock).toHaveBeenCalledWith(caminhoOrigem, destino);
+    expect(resultado).toEqual({ caminhoArquivo: destino, pastaArquivo: path.dirname(destino) });
+  });
+
+  it("nenhum canal IPC novo é registrado — só 'relatorio:salvar-como'", () => {
+    registrarIpcRelatorio();
+    expect(ipcMainMock.handle).toHaveBeenCalledTimes(1);
+    expect(ipcMainMock.handle).toHaveBeenCalledWith("relatorio:salvar-como", expect.any(Function));
   });
 });

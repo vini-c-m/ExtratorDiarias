@@ -12,7 +12,12 @@ afterEach(() => {
 describe("Hub", () => {
   it("mostra um card por funcionalidade, com título e descrição", () => {
     render(
-      <Hub backendOnline aoSelecionarProcessamento={vi.fn()} aoSelecionarConferencia={vi.fn()} />,
+      <Hub
+        backendOnline
+        aoSelecionarProcessamento={vi.fn()}
+        aoSelecionarConferencia={vi.fn()}
+        aoSelecionarAnalitica={vi.fn()}
+      />,
     );
 
     expect(screen.getByText("Processamento da Planilha")).toBeInTheDocument();
@@ -20,17 +25,22 @@ describe("Hub", () => {
 
     expect(screen.getByText("Central Inteligente de Conferência")).toBeInTheDocument();
     expect(screen.getByText(/Consulte rapidamente servidores/)).toBeInTheDocument();
+
+    expect(screen.getByText("Central Analítica")).toBeInTheDocument();
+    expect(screen.getByText(/Pesquise, filtre e analise diárias/)).toBeInTheDocument();
   });
 
   it("clicar no card de Processamento aciona só aoSelecionarProcessamento", async () => {
     const usuario = userEvent.setup();
     const aoSelecionarProcessamento = vi.fn();
     const aoSelecionarConferencia = vi.fn();
+    const aoSelecionarAnalitica = vi.fn();
     render(
       <Hub
         backendOnline
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={aoSelecionarConferencia}
+        aoSelecionarAnalitica={aoSelecionarAnalitica}
       />,
     );
 
@@ -38,17 +48,20 @@ describe("Hub", () => {
 
     expect(aoSelecionarProcessamento).toHaveBeenCalledTimes(1);
     expect(aoSelecionarConferencia).not.toHaveBeenCalled();
+    expect(aoSelecionarAnalitica).not.toHaveBeenCalled();
   });
 
   it("clicar no card de Conferência aciona só aoSelecionarConferencia", async () => {
     const usuario = userEvent.setup();
     const aoSelecionarProcessamento = vi.fn();
     const aoSelecionarConferencia = vi.fn();
+    const aoSelecionarAnalitica = vi.fn();
     render(
       <Hub
         backendOnline
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={aoSelecionarConferencia}
+        aoSelecionarAnalitica={aoSelecionarAnalitica}
       />,
     );
 
@@ -56,6 +69,28 @@ describe("Hub", () => {
 
     expect(aoSelecionarConferencia).toHaveBeenCalledTimes(1);
     expect(aoSelecionarProcessamento).not.toHaveBeenCalled();
+    expect(aoSelecionarAnalitica).not.toHaveBeenCalled();
+  });
+
+  it("clicar no card da Central Analítica aciona só aoSelecionarAnalitica", async () => {
+    const usuario = userEvent.setup();
+    const aoSelecionarProcessamento = vi.fn();
+    const aoSelecionarConferencia = vi.fn();
+    const aoSelecionarAnalitica = vi.fn();
+    render(
+      <Hub
+        backendOnline
+        aoSelecionarProcessamento={aoSelecionarProcessamento}
+        aoSelecionarConferencia={aoSelecionarConferencia}
+        aoSelecionarAnalitica={aoSelecionarAnalitica}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: /Central Analítica/ }));
+
+    expect(aoSelecionarAnalitica).toHaveBeenCalledTimes(1);
+    expect(aoSelecionarProcessamento).not.toHaveBeenCalled();
+    expect(aoSelecionarConferencia).not.toHaveBeenCalled();
   });
 
   it("backend offline: mostra o aviso, mas os cards continuam clicáveis", async () => {
@@ -66,6 +101,7 @@ describe("Hub", () => {
         backendOnline={false}
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={vi.fn()}
+        aoSelecionarAnalitica={vi.fn()}
       />,
     );
 
@@ -77,7 +113,12 @@ describe("Hub", () => {
 
   it("backend online: não mostra o aviso", () => {
     render(
-      <Hub backendOnline aoSelecionarProcessamento={vi.fn()} aoSelecionarConferencia={vi.fn()} />,
+      <Hub
+        backendOnline
+        aoSelecionarProcessamento={vi.fn()}
+        aoSelecionarConferencia={vi.fn()}
+        aoSelecionarAnalitica={vi.fn()}
+      />,
     );
 
     expect(screen.queryByText("Aguardando o aplicativo terminar de iniciar...")).not.toBeInTheDocument();
