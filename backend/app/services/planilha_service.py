@@ -3,6 +3,7 @@ import os
 
 from app.consulta import base_local
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo
 from app.planilha.escritor_planilha import NOME_ABA, ResultadoPreenchimento, preencher
 from app.planilha.pasta_resultados import ArquivosGerados, montar
@@ -45,12 +46,13 @@ def preencher_planilha(
     avisos: list[ItemAviso] | None = None,
     *,
     tempo_processamento_ms: int | None = None,
+    modo: ModoProcessamento = ModoProcessamento.PADRAO,
 ) -> tuple[ResultadoPreenchimento, ArquivosGerados]:
     if not os.path.isfile(caminho_planilha):
         raise ErroPreenchimentoPlanilha(f"Planilha não encontrada: {caminho_planilha}")
 
     try:
-        resultado = preencher(caminho_planilha, processos)
+        resultado = preencher(caminho_planilha, processos, modo)
     except KeyError:
         raise ErroPreenchimentoPlanilha(f"Aba '{NOME_ABA}' não encontrada na planilha")
     except PermissionError:

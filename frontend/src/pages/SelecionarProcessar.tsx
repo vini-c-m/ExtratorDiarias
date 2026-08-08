@@ -80,6 +80,12 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
   const [fila, setFila] = useState<ItemFila[]>([]);
   const [avisoFila, setAvisoFila] = useState<string | null>(null);
 
+  // RN-14 — Modo Complemento de Diárias: fluxo separado, mesmo parser/
+  // arquitetura já homologados, só ajustando as regras específicas
+  // (coluna AVISO, coluna O, SEI não bloqueante). Escolha explícita do
+  // usuário, feita antes de processar.
+  const [modoComplemento, setModoComplemento] = useState(false);
+
   const [processando, setProcessando] = useState(false);
   const processandoRef = useRef(false); // trava síncrona contra clique duplo/reentrância
   const [progresso, setProgresso] = useState<ProgressoProcessamento | null>(null);
@@ -230,7 +236,12 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
     setDuracaoMs(null);
 
     try {
-      const lote = await processarLoteComProgresso(caminhos, setProgresso, controller.signal);
+      const lote = await processarLoteComProgresso(
+        caminhos,
+        setProgresso,
+        controller.signal,
+        modoComplemento ? "COMPLEMENTO" : "PADRAO",
+      );
       setResultado(lote);
       setDuracaoMs(Date.now() - inicio);
     } catch (erro) {
@@ -278,7 +289,11 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
     setPreenchendo(true);
     setErroPreenchimento(null);
     try {
-      const resultadoGravacao = await preencherPlanilha(resultado.processos, duracaoMs);
+      const resultadoGravacao = await preencherPlanilha(
+        resultado.processos,
+        duracaoMs,
+        modoComplemento ? "COMPLEMENTO" : "PADRAO",
+      );
       setResultadoPreenchimento(resultadoGravacao);
     } catch (erro) {
       setErroPreenchimento(mensagemAmigavel(erro, "Não foi possível preencher a planilha."));
@@ -476,11 +491,36 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
 
   return (
     <div className="mx-auto max-w-4xl animate-entrada-conteudo px-6 py-14 md:px-10">
-      <h2 className={TIPOGRAFIA.titulo}>Selecionar e Processar</h2>
-      <p className={`mt-2 ${TIPOGRAFIA.texto}`}>
-        Arraste os PDFs de processos de diárias do SEI para esta janela, ou use o botão abaixo.
-        Nada é gravado na planilha ainda nesta etapa.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className={TIPOGRAFIA.titulo}>Selecionar e Processar</h2>
+          <p className={`mt-2 ${TIPOGRAFIA.texto}`}>
+            Arraste os PDFs de processos de diárias do SEI para esta janela, ou use o botão abaixo.
+            Nada é gravado na planilha ainda nesta etapa.
+          </p>
+        </div>
+        {/* RN-14 — fluxo separado, não substitui o Processamento normal:
+            mesmo padrão aditivo do "Modo Executivo" da Central Analítica e
+            do "Modo Complemento de Diárias" da Central de Conferência. */}
+        <Botao
+          variante={modoComplemento ? "primaria" : "secundaria"}
+          disabled={algumaOperacaoEmAndamento || resultado !== null}
+          onClick={() => setModoComplemento((atual) => !atual)}
+        >
+          {modoComplemento ? "Modo Complemento de Diárias (ativo)" : "Modo Complemento de Diárias"}
+        </Botao>
+      </div>
+
+      {modoComplemento && (
+        <div className="mt-4">
+          <Alerta variante="aviso">
+            Modo Complemento de Diárias: a coluna AVISO recebe "COMPLEMENTO DE DIÁRIAS", a
+            quantidade de diária parcial complementar é resolvida a partir dos documentos do
+            processo (padrão institucional: 0, só sobe com evidência explícita), e um SEI já
+            existente não impede mais a gravação da nova linha.
+          </Alerta>
+        </div>
+      )}
 
       <div className="mt-8">
         <ZonaArrastar onArquivosSoltos={adicionarNaFila} desabilitado={algumaOperacaoEmAndamento}>

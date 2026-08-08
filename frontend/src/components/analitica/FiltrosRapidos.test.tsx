@@ -18,7 +18,7 @@ function fixarHoje(dataIso: string) {
 }
 
 describe("FiltrosRapidos", () => {
-  it("mostra os 8 atalhos, 2 deles desabilitados (nunca escondidos)", () => {
+  it("mostra os 6 atalhos de período, todos habilitados", () => {
     render(<FiltrosRapidos onMudarFiltro={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Hoje" })).toBeEnabled();
@@ -27,49 +27,17 @@ describe("FiltrosRapidos", () => {
     expect(screen.getByRole("button", { name: "Mês atual" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Mês anterior" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Ano inteiro" })).toBeEnabled();
-
-    expect(screen.getByRole("button", { name: "Registros incompletos" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Possível inconsistência" })).toBeDisabled();
   });
 
-  it("atalhos pendentes explicam o motivo via title, não ficam mudos", () => {
+  // Decisão de produto 2026-08-06: os atalhos "Registros incompletos" e
+  // "Possível inconsistência" (sempre desabilitados, dependentes de uma
+  // decisão institucional ainda pendente) foram retirados da interface —
+  // não devem mais aparecer, nem desabilitados.
+  it("não mostra mais os atalhos retirados da interface (Registros incompletos / Possível inconsistência)", () => {
     render(<FiltrosRapidos onMudarFiltro={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: "Registros incompletos" })).toHaveAttribute(
-      "title",
-      expect.stringContaining("Pendente de definição"),
-    );
-  });
-
-  // Sprint 19.5.6.1 — achado da auditoria da 19.5.6: `title` sozinho não é
-  // suficiente (suporte inconsistente entre leitores de tela/toque). Cada
-  // atalho pendente agora associa uma explicação via `aria-describedby` a
-  // um texto `sr-only` de verdade — este teste comprova a associação
-  // programática, não só a presença do `title`.
-  it("a explicação dos atalhos pendentes está acessivelmente associada (aria-describedby + sr-only)", () => {
-    render(<FiltrosRapidos onMudarFiltro={vi.fn()} />);
-
-    for (const rotulo of ["Registros incompletos", "Possível inconsistência"]) {
-      const botao = screen.getByRole("button", { name: rotulo });
-      const idDescricao = botao.getAttribute("aria-describedby");
-      expect(idDescricao).toBeTruthy();
-
-      const descricao = document.getElementById(idDescricao!);
-      expect(descricao).not.toBeNull();
-      expect(descricao).toHaveClass("sr-only");
-      expect(descricao).toHaveTextContent("Pendente de definição");
-    }
-  });
-
-  it("os 2 atalhos desabilitados nunca chamam onMudarFiltro, mesmo tentando clicar", async () => {
-    const usuario = userEvent.setup();
-    const onMudarFiltro = vi.fn();
-    render(<FiltrosRapidos onMudarFiltro={onMudarFiltro} />);
-
-    await usuario.click(screen.getByRole("button", { name: "Registros incompletos" }));
-    await usuario.click(screen.getByRole("button", { name: "Possível inconsistência" }));
-
-    expect(onMudarFiltro).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Registros incompletos" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Possível inconsistência" })).not.toBeInTheDocument();
   });
 
   it("'Hoje' aplica período_inicial = período_final = hoje", async () => {

@@ -15,7 +15,10 @@ export type ColunaOpcional =
   | "situacao"
   | "cpf"
   | "doc_origem"
-  | "transporte";
+  | "transporte"
+  // Sprint 20 (2026-08-05) — MEMBRO/SERVIDOR/NAO_IDENTIFICADO, já calculada
+  // na Base Local (`app/domain/analitica/categoria_funcional.py`).
+  | "categoria_funcional";
 
 export const COLUNAS_OPCIONAIS_DISPONIVEIS: ColunaOpcional[] = [
   "motivo",
@@ -26,6 +29,7 @@ export const COLUNAS_OPCIONAIS_DISPONIVEIS: ColunaOpcional[] = [
   "cpf",
   "doc_origem",
   "transporte",
+  "categoria_funcional",
 ];
 
 export interface EstadoUseColunasTabela {

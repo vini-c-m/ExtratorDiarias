@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CentralAnalitica from "./CentralAnalitica";
 import type {
   DiagnosticoResposta,
   DiariaCompletaResposta,
+  DocumentosHabeisPendentesResposta,
   IndicadoresResposta,
   OpcoesFiltroResposta,
   ResultadoPesquisaResposta,
@@ -32,6 +33,7 @@ vi.mock("../services/api", async (importarOriginal) => {
     obterDistribuicao: vi.fn(),
     gerarRelatorio: vi.fn(),
     obterDiagnostico: vi.fn(),
+    obterDocumentosHabeisPendentes: vi.fn(),
   };
 });
 
@@ -40,6 +42,7 @@ import {
   gerarRelatorio,
   obterDiagnostico,
   obterDistribuicao,
+  obterDocumentosHabeisPendentes,
   obterIndicadores,
   obterOpcoesFiltro,
   pesquisarDiarias,
@@ -49,6 +52,7 @@ const pesquisarDiariasMock = vi.mocked(pesquisarDiarias);
 const obterOpcoesFiltroMock = vi.mocked(obterOpcoesFiltro);
 const detalharDiariaMock = vi.mocked(detalharDiaria);
 const obterIndicadoresMock = vi.mocked(obterIndicadores);
+const obterDocumentosHabeisPendentesMock = vi.mocked(obterDocumentosHabeisPendentes);
 // Sprint 19.6.4 — `DashboardRecorte` busca as 6 dimensões via
 // `useDistribuicoes`; um recorte "vazio" genérico é suficiente para os
 // testes desta página (que não são sobre o conteúdo do Dashboard em si —
@@ -133,14 +137,33 @@ const DIAGNOSTICO_VAZIO: DiagnosticoResposta = {
   registros: [],
 };
 
-// Usado só pelo teste de "▸ Ver" (correção 19.8.5): precisa de um `sei`
-// que bata com `RESULTADO_COM_ITENS`/`DETALHE_COMPLETO`, para que
-// `aoSelecionarRegistro` abra o mesmo registro já detalhado por
-// `detalharDiariaMock`.
-const DIAGNOSTICO_COM_REGISTRO: DiagnosticoResposta = {
-  resumo: { esperado: 0, atencao: 1, inconsistencia: 0 },
+// Correção de foco (2026-08-05) — recorte "vazio" genérico para
+// `GET /documentos-habeis-pendentes`, mesmo critério de `DIAGNOSTICO_VAZIO`
+// acima: os testes desta página não são sobre o conteúdo da tela em si
+// (isso é `PainelDocumentosHabeisPendentes.test.tsx`), só sobre a fiação.
+const DOCUMENTOS_HABEIS_PENDENTES_VAZIO: DocumentosHabeisPendentesResposta = {
+  resumo: { aguardando_liberacao: 0, revisao_manual_necessaria: 0 },
+  registros: [],
+};
+
+// Usado pelos testes de navegação/badge/aviso: precisa de um `sei` que
+// bata com `RESULTADO_COM_ITENS`/`DETALHE_COMPLETO`.
+const DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO: DocumentosHabeisPendentesResposta = {
+  resumo: { aguardando_liberacao: 0, revisao_manual_necessaria: 1 },
   registros: [
-    { sei: RESULTADO_COM_ITENS.itens[0].sei, classificacao: "atencao", casos: [] },
+    {
+      sei: RESULTADO_COM_ITENS.itens[0].sei,
+      servidor_nome: "Maria Souza",
+      cpf_mascarado: "***.***.***-11",
+      periodo: { inicial: "2026-01-08", final: "2026-01-10" },
+      destino: "Araripina",
+      data_liberacao_prevista: "2025-12-24",
+      situacao: "revisao_manual_necessaria",
+      dias_restantes: null,
+      dias_atraso: 45,
+      texto_contagem: null,
+      mensagem: "Documento Hábil pendente. A data de liberação já foi atingida. Recomenda-se análise manual.",
+    },
   ],
 };
 
@@ -151,6 +174,7 @@ beforeEach(() => {
   obterIndicadoresMock.mockResolvedValue(INDICADORES_VAZIOS);
   obterDistribuicaoMock.mockImplementation(async (parametros) => ({ dimensao: parametros.dimensao, pontos: [] }));
   obterDiagnosticoMock.mockResolvedValue(DIAGNOSTICO_VAZIO);
+  obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_VAZIO);
   gerarRelatorioMock.mockResolvedValue({
     caminho_arquivo_temporario: "/tmp/relatorio.pdf",
     nome_sugerido: "relatorio.pdf",
@@ -233,7 +257,7 @@ describe("CentralAnalitica", () => {
     await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Análise Rápida" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ })).toBeDisabled();
   });
 
   it("recorte com resultado: as 3 ações ficam habilitadas", async () => {
@@ -242,7 +266,7 @@ describe("CentralAnalitica", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeEnabled());
     expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Análise Rápida" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ })).toBeEnabled();
   });
 
   // Sprint 19.6.4 — Dashboard ganha conteúdo real (`DashboardRecorte`);
@@ -287,39 +311,47 @@ describe("CentralAnalitica", () => {
     expect(parametros.tipo).toBe("executivo");
   });
 
-  // Sprint 19.8.5 — mesmo padrão acima, para `PainelDiagnostico`.
-  it("clicar em 'Análise Rápida' mostra o PainelDiagnostico real no lugar da tabela", async () => {
+  // Correção de foco (2026-08-05) — substitui a antiga "Análise Rápida
+  // (Diagnóstico)": o botão abre `PainelDocumentosHabeisPendentes`, nunca
+  // mais `PainelDiagnostico`.
+  it("clicar em 'Documentos Hábeis Pendentes' mostra o PainelDocumentosHabeisPendentes real no lugar da tabela", async () => {
     const usuario = userEvent.setup();
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
     render(<CentralAnalitica backendOnline />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Análise Rápida" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ })).toBeEnabled());
 
-    await usuario.click(screen.getByRole("button", { name: "Análise Rápida" }));
+    await usuario.click(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ }));
 
-    await waitFor(() => expect(obterDiagnosticoMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(obterDocumentosHabeisPendentesMock).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(screen.getByText("Nenhum registro neste recorte para diagnosticar.")).toBeInTheDocument(),
+      expect(
+        screen.getByText("Nenhum processo deste recorte está com o Documento Hábil pendente."),
+      ).toBeInTheDocument(),
     );
     expect(screen.queryByText("Ainda não disponível")).not.toBeInTheDocument();
+    expect(obterDiagnosticoMock).not.toHaveBeenCalled();
 
     await usuario.click(screen.getByRole("button", { name: "← Voltar aos resultados" }));
-    expect(screen.queryByText("Nenhum registro neste recorte para diagnosticar.")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Nenhum processo deste recorte está com o Documento Hábil pendente."),
+    ).not.toBeInTheDocument();
   });
 
-  // Sprint 19.8.5 — "▸ Ver" do Diagnóstico abre o mesmo painel de
-  // detalhamento do § 5 (nunca uma tela nova), com o foco inicial no
-  // bloco "Avisos e diagnósticos" em vez do título (`emFoco="diagnosticos"`,
-  // já implementado em `PainelDetalhamentoDiaria` na 19.8.4, mas nunca
-  // alcançável na página real antes desta correção).
-  it("'▸ Ver' no Diagnóstico abre o painel de detalhamento com o foco no bloco de avisos", async () => {
+  // Correção de foco — "Ver detalhes" de Documentos Hábeis Pendentes abre o
+  // mesmo painel de detalhamento do § 5 (nunca uma tela nova), com o foco
+  // inicial no bloco "Avisos e diagnósticos" em vez do título — mesmo alvo
+  // de foco já usado pelo Diagnóstico geral (é literalmente o mesmo caso de
+  // `dh`, nunca um terceiro bloco de foco novo).
+  it("'Ver detalhes' em Documentos Hábeis Pendentes abre o painel de detalhamento com o foco no bloco de avisos", async () => {
     const usuario = userEvent.setup();
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
-    obterDiagnosticoMock.mockResolvedValue(DIAGNOSTICO_COM_REGISTRO);
+    obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
     render(<CentralAnalitica backendOnline />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Análise Rápida" })).toBeEnabled());
-    await usuario.click(screen.getByRole("button", { name: "Análise Rápida" }));
+    const botaoAbrir = await screen.findByRole("button", { name: "Documentos Hábeis Pendentes (1)" });
+    await waitFor(() => expect(botaoAbrir).toBeEnabled());
+    await usuario.click(botaoAbrir);
     const linha = await screen.findByRole("row", {
-      name: `Ver diagnóstico da diária ${RESULTADO_COM_ITENS.itens[0].sei}`,
+      name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}`,
     });
 
     await usuario.click(linha);
@@ -331,18 +363,19 @@ describe("CentralAnalitica", () => {
     expect(screen.getByRole("heading", { name: RESULTADO_COM_ITENS.itens[0].sei })).not.toHaveFocus();
   });
 
-  // Sprint 19.8.5 — "Ver histórico deste CPF" continua levando de volta
-  // aos resultados (comportamento já homologado na 19.5.8.1) mesmo quando
-  // o painel foi aberto a partir do Diagnóstico, não da tabela.
-  it("'Ver histórico deste CPF' a partir do Diagnóstico volta para os resultados", async () => {
+  // "Ver histórico deste CPF" continua levando de volta aos resultados
+  // (comportamento já homologado) mesmo quando o painel foi aberto a
+  // partir de Documentos Hábeis Pendentes, não da tabela.
+  it("'Ver histórico deste CPF' a partir de Documentos Hábeis Pendentes volta para os resultados", async () => {
     const usuario = userEvent.setup();
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
-    obterDiagnosticoMock.mockResolvedValue(DIAGNOSTICO_COM_REGISTRO);
+    obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
     render(<CentralAnalitica backendOnline />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Análise Rápida" })).toBeEnabled());
-    await usuario.click(screen.getByRole("button", { name: "Análise Rápida" }));
+    const botaoAbrir = await screen.findByRole("button", { name: "Documentos Hábeis Pendentes (1)" });
+    await waitFor(() => expect(botaoAbrir).toBeEnabled());
+    await usuario.click(botaoAbrir);
     const linha = await screen.findByRole("row", {
-      name: `Ver diagnóstico da diária ${RESULTADO_COM_ITENS.itens[0].sei}`,
+      name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}`,
     });
     await usuario.click(linha);
     await screen.findByRole("heading", { name: RESULTADO_COM_ITENS.itens[0].sei });
@@ -368,6 +401,224 @@ describe("CentralAnalitica", () => {
     await usuario.click(screen.getByRole("button", { name: "← Voltar aos resultados" }));
 
     expect(screen.queryByText("Total de diárias")).not.toBeInTheDocument();
+  });
+
+  // Sprint 21.2 (Modo Executivo) — mesmo critério de habilitação/fiação já
+  // testado para "Gerar Dashboard" acima: o botão "Modo Executivo" segue a
+  // mesma regra de `recorteValido` e abre o componente real no lugar da
+  // tabela, preservando o recorte ao voltar (decisão 2 da arquitetura
+  // funcional — nenhum estado de filtro paralelo).
+  describe("Modo Executivo (Sprint 21.2)", () => {
+    it("recorte vazio: o botão 'Modo Executivo' fica desabilitado", async () => {
+      render(<CentralAnalitica backendOnline />);
+
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
+      expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeDisabled();
+    });
+
+    it("recorte com resultado: o botão 'Modo Executivo' fica habilitado", async () => {
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      render(<CentralAnalitica backendOnline />);
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+    });
+
+    it("clicar em 'Modo Executivo' mostra o Modo Executivo real no lugar da tabela, preservando o filtro aplicado", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
+      render(<CentralAnalitica backendOnline />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+
+      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+
+      expect(await screen.findByRole("heading", { name: "Modo Executivo" })).toBeInTheDocument();
+      expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      // Nenhuma nova busca de `/diarias` — o mesmo recorte de `useDiarias`
+      // é reaproveitado, nunca refeito ao trocar de modo.
+      expect(pesquisarDiariasMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("'← Voltar ao Modo Operacional' devolve a tabela com o mesmo recorte", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
+      render(<CentralAnalitica backendOnline />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await screen.findByRole("heading", { name: "Modo Executivo" });
+
+      await usuario.click(screen.getByRole("button", { name: "← Voltar ao Modo Operacional" }));
+
+      expect(screen.queryByRole("heading", { name: "Modo Executivo" })).not.toBeInTheDocument();
+      expect(screen.getByRole("table")).toBeInTheDocument();
+      expect(pesquisarDiariasMock).toHaveBeenCalledTimes(1);
+    });
+
+    // Sprint 21.4 — painel lateral contextual: "Abrir relatório"/"Abrir
+    // diagnóstico" navegam para os componentes reais já homologados
+    // (`ModalRelatorio`/`PainelDiagnostico`), nunca uma versão paralela
+    // dentro do Modo Executivo.
+    it("painel lateral → 'Abrir relatório' aplica o filtro do ponto e abre o ModalRelatorio real", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
+      obterDistribuicaoMock.mockImplementation(async (parametros) =>
+        parametros.dimensao === "municipio"
+          ? { dimensao: "municipio", pontos: [{ rotulo: "Araripina", contagem: 1, valor: 200 }] }
+          : { dimensao: parametros.dimensao, pontos: [] },
+      );
+      render(<CentralAnalitica backendOnline />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await waitFor(() => expect(screen.getByText("Municípios")).toBeInTheDocument());
+
+      await usuario.click(screen.getByRole("button", { name: /Filtrar por Araripina/ }));
+      await usuario.click(screen.getByRole("button", { name: "Abrir relatório" }));
+
+      expect(screen.getByRole("dialog", { name: "Gerar relatório" })).toBeInTheDocument();
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ municipio: "Araripina" }),
+      ));
+    });
+
+    // Correção de foco (2026-08-05) — o Diagnóstico geral (catálogo de
+    // anomalias) deixa de ser alcançável pelo botão de `PainelAcoesRecorte`
+    // (que agora abre Documentos Hábeis Pendentes), mas continua existindo
+    // e continua alcançável pelo Modo Executivo, via o painel lateral
+    // contextual (clique num ponto de gráfico).
+    //
+    // BI 4.0 (2026-08-08) — a lateral de Insights do Modo Executivo passou
+    // a ser exclusivamente financeira/gerencial (pedido explícito do
+    // usuário): o caminho "insight de diagnóstico → Abrir diagnóstico" foi
+    // removido (o insight de duplicidade nunca mais aparece na lateral
+    // executiva), e a célula "Atenção (diagnóstico)" da faixa de KPI
+    // também saiu do Modo Executivo (mesma Sprint) — o dado continua
+    // acessível em Diagnóstico geral. Este teste passa a validar as duas
+    // pontas: (1) diagnóstico não aparece mais na lateral/faixa de KPI,
+    // mesmo com um caso no recorte; (2) "Abrir diagnóstico" continua
+    // alcançável de ponta a ponta pelo painel lateral contextual (clique
+    // num ponto de gráfico, Sprint 21.4 — nunca removido).
+    it("diagnóstico não aparece mais na lateral de Insights, mas 'Abrir diagnóstico' via painel lateral contextual continua funcionando de ponta a ponta", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
+      obterDiagnosticoMock.mockResolvedValue({
+        resumo: { esperado: 0, atencao: 1, inconsistencia: 0 },
+        registros: [
+          {
+            sei: RESULTADO_COM_ITENS.itens[0].sei,
+            classificacao: "atencao",
+            casos: [{ campo: null, titulo: "Possível duplicidade", motivo: "m", acao_recomendada: "a" }],
+          },
+        ],
+      });
+      obterDistribuicaoMock.mockImplementation(async (parametros) =>
+        parametros.dimensao === "municipio"
+          ? { dimensao: "municipio", pontos: [{ rotulo: "Araripina", contagem: 1, valor: 200 }] }
+          : { dimensao: parametros.dimensao, pontos: [] },
+      );
+      render(<CentralAnalitica backendOnline />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await waitFor(() => expect(screen.getByText("Municípios")).toBeInTheDocument());
+      expect(screen.queryByText(/possível duplicidade/i)).not.toBeInTheDocument();
+      expect(screen.queryByText("Atenção (diagnóstico)")).not.toBeInTheDocument();
+
+      await usuario.click(screen.getByRole("button", { name: /Filtrar por Araripina/ }));
+      await usuario.click(screen.getByRole("button", { name: "Abrir diagnóstico" }));
+
+      // Drill-down por gráfico (nunca por insight) — sem `filtroCaso`, o
+      // Diagnóstico mostra o recorte inteiro, não "N de M" (esse formato é
+      // só do caminho por insight de caso específico, removido da lateral).
+      await waitFor(() => expect(screen.getByText("Diagnóstico · 1 registro")).toBeInTheDocument());
+
+      await usuario.click(screen.getByRole("button", { name: "← Voltar aos resultados" }));
+      await waitFor(() => expect(screen.getByText("Municípios")).toBeInTheDocument());
+    });
+  });
+
+  // Correção de foco (2026-08-05) — aviso dentro da Central Analítica
+  // quando algum processo do recorte atual atingiu a data de liberação do
+  // DH e continua sem DH (§ 5 do pedido).
+  describe("Aviso de liberação atingida (correção de foco 2026-08-05)", () => {
+    it("sem processos em revisão manual, nenhum aviso aparece", async () => {
+      render(<CentralAnalitica backendOnline />);
+
+      await waitFor(() => expect(obterDocumentosHabeisPendentesMock).toHaveBeenCalled());
+      expect(
+        screen.queryByText(/cuja data de liberação do Documento Hábil foi atingida/),
+      ).not.toBeInTheDocument();
+    });
+
+    it("com 1 processo em revisão manual, mostra o aviso com a contagem no singular ('Existe ... processo ... permanece')", async () => {
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+
+      expect(
+        await screen.findByText(
+          "Existe 1 processo cuja data de liberação do Documento Hábil foi atingida e que ainda permanece sem DH.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("com vários processos em revisão manual, mostra o aviso no plural ('Existem ... processos ... permanecem')", async () => {
+      obterDocumentosHabeisPendentesMock.mockResolvedValue({
+        ...DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO,
+        resumo: { aguardando_liberacao: 0, revisao_manual_necessaria: 3 },
+      });
+      render(<CentralAnalitica backendOnline />);
+
+      expect(
+        await screen.findByText(
+          "Existem 3 processos cuja data de liberação do Documento Hábil foi atingida e que ainda permanecem sem DH.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("'Abrir Documentos Hábeis Pendentes' no aviso abre a tela sem filtro aplicado", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      await screen.findByText(/cuja data de liberação do Documento Hábil foi atingida/);
+
+      await usuario.click(screen.getByRole("button", { name: "Abrir Documentos Hábeis Pendentes" }));
+
+      const grupo = await screen.findByRole("radiogroup", { name: "Filtrar Documentos Hábeis Pendentes" });
+      expect(within(grupo).getByRole("radio", { name: /^Todos/ })).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("'Ver revisão manual' no aviso abre a tela já filtrada para 'Revisão manual necessária'", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      await screen.findByText(/cuja data de liberação do Documento Hábil foi atingida/);
+
+      await usuario.click(screen.getByRole("button", { name: "Ver revisão manual" }));
+
+      expect(await screen.findByRole("radio", { name: /Revisão manual necessária/ })).toHaveAttribute(
+        "aria-checked",
+        "true",
+      );
+    });
+
+    it("'Dispensar' esconde o aviso nesta sessão, sem marcar nada como resolvido nem gravar na planilha", async () => {
+      const usuario = userEvent.setup();
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      await screen.findByText(/cuja data de liberação do Documento Hábil foi atingida/);
+
+      await usuario.click(screen.getByRole("button", { name: "Dispensar" }));
+
+      expect(
+        screen.queryByText(/cuja data de liberação do Documento Hábil foi atingida/),
+      ).not.toBeInTheDocument();
+      // O badge do botão continua mostrando a contagem real — dispensar o
+      // aviso nunca altera a fonte da verdade (`dh` vazio + regra de data).
+      expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes \(1\)/ })).toBeInTheDocument();
+    });
   });
 
   it("usar a barra de pesquisa global aplica o termo buscado e mostra os resultados", async () => {
@@ -666,7 +917,7 @@ describe("CentralAnalitica", () => {
       const indicadoresC = criarPromessaControlavel<IndicadoresResposta>();
       pesquisarDiariasMock.mockReturnValueOnce(diariasC.promessa);
       obterIndicadoresMock.mockReturnValueOnce(indicadoresC.promessa);
-      await usuario.click(screen.getByRole("button", { name: "Últimos 7 dias" }));
+      await usuario.click(screen.getByRole("button", { name: "Mês anterior" }));
 
       // B (obsoleto) resolve primeiro; C (vigente) resolve depois — o
       // resultado final deve ser sempre C.

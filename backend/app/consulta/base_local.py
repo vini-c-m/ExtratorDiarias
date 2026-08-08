@@ -23,6 +23,15 @@ from openpyxl import load_workbook
 NOME_PASTA_DADOS_FALLBACK = "ExtratorDiarias"
 NOME_ARQUIVO_BASE_LOCAL = "base_local_consulta.xlsx"
 VAR_AMBIENTE_USER_DATA = "EXTRATOR_DIARIAS_USER_DATA"
+# Achado real 2026-08-06 (build empacotado desatualizado) — mesmo padrão de
+# `VAR_AMBIENTE_USER_DATA`: `electron/main.ts` passa `app.getVersion()` por
+# esta variável, gravada em `sincronizacoes.versao_app`
+# (`base_local_sqlite.reconstruir`) para `estado_sincronizacao` conseguir
+# detectar uma reinstalação/atualização do app mesmo quando a Planilha
+# Oficial e o schema de tabelas não mudaram nem um pouco (ver esquema.py,
+# VERSAO_ESQUEMA=4). Ausente (string vazia) quando o backend roda
+# standalone, sem Electron — nunca inventada.
+VAR_AMBIENTE_VERSAO_APP = "EXTRATOR_DIARIAS_APP_VERSION"
 
 _logger = logging.getLogger(__name__)
 
@@ -106,7 +115,19 @@ def sincronizar(
 
         sinal_frescor = base_local_sqlite.capturar_sinal_frescor(caminho_planilha_preenchida)
 
-        workbook = load_workbook(caminho_planilha_preenchida)
+        # `data_only=True`: a coluna P (`VALOR TOTAL DAS DIÁRIAS`) de
+        # `Controle de Diárias` é fórmula (`=R+S`) na maioria das linhas
+        # históricas digitadas em Excel — sobretudo as de SERVIDOR (achado
+        # real, planilha oficial 2026: 1.419 de 1.446 diárias de SERVIDOR
+        # usam fórmula, contra 9 de 376 de MEMBRO). Sem `data_only=True`,
+        # openpyxl devolve o texto da fórmula (`"=R123+S123"`), que
+        # `repositorio_diarias._valor_como_numero` não consegue interpretar
+        # como número e descarta como `None` — mesmo quando o Excel já
+        # calculou e guardou em cache o valor real da fórmula. `read_only`
+        # continua `False` (padrão): este workbook nunca é salvo de volta
+        # (só lido e fechado), então não há o risco inverso de
+        # `data_only=True` apagar fórmulas ao gravar.
+        workbook = load_workbook(caminho_planilha_preenchida, data_only=True)
         try:
             resultado_diarias = repositorio_diarias.diarias_completas(
                 workbook[repositorio_diarias.NOME_ABA]
@@ -123,6 +144,7 @@ def sincronizar(
             sinal_frescor,
             origem=origem,
             caminho_destino=base_local_sqlite.caminho_base_local_sqlite(diretorio_base=diretorio_base),
+            versao_app=os.environ.get(VAR_AMBIENTE_VERSAO_APP, ""),
         )
     except Exception:
         _logger.exception("Falha ao reconstruir a Base Local em SQLite")

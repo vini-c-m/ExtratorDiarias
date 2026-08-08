@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.domain.entities.diaria import Diaria
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo, StatusProcesso
 from app.infra.config import configuracao_app
 from app.planilha.relatorio import ItemAviso, ItemErro
@@ -50,6 +51,7 @@ def preencher(requisicao: RequisicaoPreenchimento) -> ResultadoPreenchimentoResp
             erros,
             avisos,
             tempo_processamento_ms=requisicao.tempo_processamento_ms,
+            modo=ModoProcessamento(requisicao.modo),
         )
     except ErroPreenchimentoPlanilha as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
@@ -65,6 +67,7 @@ def preencher(requisicao: RequisicaoPreenchimento) -> ResultadoPreenchimentoResp
                 sei=item.sei,
                 categoria=item.categoria.value,
                 linha=item.linha,
+                sei_ja_existente_em_linha=item.sei_ja_existente_em_linha,
             )
             for item in resultado.itens
         ],

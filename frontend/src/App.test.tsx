@@ -85,7 +85,7 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
   it("abre em Boas-vindas, nunca direto numa funcionalidade", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Extrator de Diárias" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Automatizador de Diárias" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Começar" })).toBeInTheDocument();
     expect(screen.queryByText("Tela de Processamento")).not.toBeInTheDocument();
   });

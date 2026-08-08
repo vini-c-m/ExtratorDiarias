@@ -28,3 +28,14 @@ class Diaria:
     # None quando transporte também é None (nem evidência nem regra
     # resolveram) — ver `enriquecimento/transporte_regra_operacional.py`.
     transporte_fonte: FonteTransporte | None = None
+    # Só resolvido em ModoProcessamento.COMPLEMENTO (ver
+    # `enriquecimento/quantidade_complementar.py`), coluna O na planilha.
+    # Padrão institucional: 0 (rotina real da CMFC — complemento é, em
+    # regra, só de diárias integrais); só maior que 0 com evidência
+    # documental explícita e inequívoca de parcial complementar. Nunca
+    # inferido pelas datas. `None` no modo Padrão (coluna nunca escrita).
+    quantidade_diaria_parcial_complementar: int | None = None
+    # Texto explicando a origem do valor acima — documento que comprovou a
+    # parcial, ou "padrão institucional" quando não há evidência. Nunca um
+    # score/probabilidade.
+    fonte_quantidade_complementar: str | None = None

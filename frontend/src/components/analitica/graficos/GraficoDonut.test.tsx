@@ -78,6 +78,50 @@ describe("GraficoDonut", () => {
     expect(container.querySelector("text")?.textContent).toBe("75%");
   });
 
+  describe("rótulo do segmento dominante (refinamento visual 2.0, 2026-08-07)", () => {
+    it("segmento claramente dominante (>=60%): mostra percentual E o rótulo, em <text> separados", () => {
+      const { container } = render(
+        <GraficoDonut
+          segmentos={[
+            { rotulo: "Servidor", valor: 80, cor: "#3987e5" },
+            { rotulo: "Membro", valor: 20, cor: "#d55181" },
+          ]}
+          formatarValor={formatarValor}
+        />,
+      );
+      const textos = Array.from(container.querySelectorAll("text")).map((t) => t.textContent);
+      expect(textos).toEqual(["80%", "Servidor"]);
+    });
+
+    it("distribuição equilibrada (<60%, sem dominância clara): preserva a apresentação neutra — só o percentual", () => {
+      const { container } = render(
+        <GraficoDonut
+          segmentos={[
+            { rotulo: "Servidor", valor: 55, cor: "#3987e5" },
+            { rotulo: "Membro", valor: 45, cor: "#d55181" },
+          ]}
+          formatarValor={formatarValor}
+        />,
+      );
+      const textos = Array.from(container.querySelectorAll("text")).map((t) => t.textContent);
+      expect(textos).toEqual(["55%"]);
+    });
+
+    it("rótulo dominante longo é truncado com reticências (texto SVG não trunca via CSS)", () => {
+      const { container } = render(
+        <GraficoDonut
+          segmentos={[
+            { rotulo: "Capacitação/Treinamento", valor: 90, cor: "#3987e5" },
+            { rotulo: "Reunião", valor: 10, cor: "#d55181" },
+          ]}
+          formatarValor={formatarValor}
+        />,
+      );
+      const textos = Array.from(container.querySelectorAll("text")).map((t) => t.textContent);
+      expect(textos[1]).toBe("Capacitaç…");
+    });
+  });
+
   describe("clique-refina (Sprint 19.6.5)", () => {
     const SEGMENTOS = [
       { rotulo: "Capacitação", valor: 75, cor: "#3987e5" },

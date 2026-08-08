@@ -1,0 +1,74 @@
+"""Modo Complemento de Diárias (RN-14/RN-16) e o histórico do e-Fisco —
+esclarecimento do usuário (2026-08-07): NÃO existe um segundo modelo de
+texto. `montar_historico` (RN-13) é o único template; o modo Complemento só
+passa uma quantidade de diária parcial diferente do padrão (`1`, RN-04)."""
+
+from datetime import date
+
+from app.domain.rules.historico_efisco import montar_historico
+
+
+def test_complemento_so_integrais_gera_01_diaria_integral_sem_mencionar_parcial() -> None:
+    """Exemplo do usuário: complemento de 1 diária integral, sem parcial."""
+    texto = montar_historico(
+        sei="19.20.0001.0004758/2026-36",
+        nome_servidor="Roberto Alves Ferreira",
+        periodo_inicial=date(2026, 4, 12),
+        periodo_final=date(2026, 4, 13),
+        destino="Recife",
+        quantidade_diaria_parcial=0,
+    )
+    assert "01 (UMA) DIÁRIA INTEGRAL," in texto
+    assert "PARCIAL" not in texto
+
+
+def test_complemento_duas_integrais_gera_02_diarias_integrais_sem_mencionar_parcial() -> None:
+    """Exemplo do usuário: complemento de 2 diárias integrais, sem parcial —
+    reprodução fiel do caso real (SEI 19.20.0001.0004758/2026-36, Validação
+    de Diária complementar 1439057: INTEGRAL=2, PARCIAL="-")."""
+    texto = montar_historico(
+        sei="19.20.0001.0004758/2026-36",
+        nome_servidor="Roberto Alves Ferreira",
+        periodo_inicial=date(2026, 3, 17),
+        periodo_final=date(2026, 3, 19),
+        destino="Recife",
+        quantidade_diaria_parcial=0,
+    )
+    assert texto == (
+        "19.20.0001.0004758/2026-36 ROBERTO ALVES FERREIRA "
+        "02 (DUAS) DIÁRIAS INTEGRAIS, DEST. RECIFE, NO PERÍODO DE 17/03/2026 A 19/03/2026."
+    )
+
+
+def test_complemento_com_parcial_documentada_inclui_e_uma_parcial() -> None:
+    """Regra do usuário: não é regra absoluta — se o documento comprovar
+    parcial, o sistema respeita o documento."""
+    texto = montar_historico(
+        sei="19.20.0001.0004758/2026-36",
+        nome_servidor="Roberto Alves Ferreira",
+        periodo_inicial=date(2026, 3, 17),
+        periodo_final=date(2026, 3, 19),
+        destino="Recife",
+        quantidade_diaria_parcial=1,
+    )
+    assert "02 (DUAS) DIÁRIAS INTEGRAIS E UMA PARCIAL," in texto
+
+
+def test_complemento_default_do_service_e_zero_sem_evidencia() -> None:
+    """`gerar_historico_complemento` (Central de Conferência) não lê PDF —
+    quando quem chama não informa a quantidade, o padrão institucional (0)
+    é aplicado no próprio service, nunca inventado aqui."""
+    import inspect
+
+    from app.services.conferencia_service import gerar_historico_complemento
+
+    parametros = inspect.signature(gerar_historico_complemento).parameters
+    assert parametros["quantidade_diaria_parcial"].default == 0
+
+
+def test_nao_existe_mais_montar_historico_complemento() -> None:
+    """Confirma que o segundo modelo foi removido — só resta `montar_historico`,
+    generalizado (esclarecimento do usuário, 2026-08-07)."""
+    import app.domain.rules.historico_efisco as modulo
+
+    assert not hasattr(modulo, "montar_historico_complemento")

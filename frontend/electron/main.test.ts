@@ -24,6 +24,7 @@ const {
       whenReady: vi.fn(),
       setAppUserModelId: vi.fn(),
       getPath: vi.fn().mockReturnValue("C:\\fake\\userData"),
+      getVersion: vi.fn().mockReturnValue("0.0.0-teste"),
       on: vi.fn(),
     },
     BrowserWindowMock,
@@ -72,5 +73,21 @@ describe("main — registro dos canais IPC ao ficar pronto", () => {
     expect(registrarIpcConferenciaMock).toHaveBeenCalledTimes(1);
     expect(registrarIpcConfiguracaoMock).toHaveBeenCalledTimes(1);
     expect(registrarIpcClipboardMock).toHaveBeenCalledTimes(1);
+  });
+
+  // URGENTE — Central Analítica (2026-08-06, achado real — build
+  // empacotado desatualizado): `app.getVersion()` precisa chegar ao
+  // backend por `EXTRATOR_DIARIAS_APP_VERSION`, mesmo padrão já homologado
+  // de `EXTRATOR_DIARIAS_USER_DATA` — é o que permite `GET /sincronizacao`
+  // detectar uma atualização do app mesmo quando a Planilha Oficial e o
+  // schema de tabelas não mudam (`app/services/analitica_service.py`).
+  it("repassa a versão do app ao backend por EXTRATOR_DIARIAS_APP_VERSION", async () => {
+    await import("./main");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [, , opcoes] = spawnMock.mock.calls[0];
+    expect(opcoes.env.EXTRATOR_DIARIAS_APP_VERSION).toBe("0.0.0-teste");
+    expect(opcoes.env.EXTRATOR_DIARIAS_USER_DATA).toBe("C:\\fake\\userData");
   });
 });

@@ -4,7 +4,7 @@
 ; `name` do package.json ("extrator-diarias-frontend") — não o caminho
 ; pedido pela Sprint. `customInit` roda logo depois da lógica padrão
 ; (`initMultiUser`) em installer.nsi, então sobrescrever `$INSTDIR` aqui
-; força exatamente "C:\Program Files\Extrator de Diárias".
+; força exatamente "C:\Program Files\Automatizador de Diárias".
 !macro customInit
-  StrCpy $INSTDIR "$PROGRAMFILES64\Extrator de Diárias"
+  StrCpy $INSTDIR "$PROGRAMFILES64\Automatizador de Diárias"
 !macroend

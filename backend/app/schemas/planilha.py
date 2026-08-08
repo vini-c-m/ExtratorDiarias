@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from app.schemas.processamento import DiariaResposta
+from app.schemas.processamento import DiariaResposta, ModoProcessamentoRequisicao
 
 
 class ItemParaPreencher(BaseModel):
@@ -30,6 +30,10 @@ class RequisicaoPreenchimento(BaseModel):
     # Sprint 05.1 — só para exibir "Tempo de processamento" no resumo
     # executivo do relatório HTML; não influencia nenhuma regra de negócio.
     tempo_processamento_ms: int | None = None
+    # RN-14 — precisa ser o mesmo modo usado no `/api/v1/processamento`
+    # que gerou estes itens (o cliente é responsável por manter os dois
+    # em sincronia; o backend não guarda estado entre as duas chamadas).
+    modo: ModoProcessamentoRequisicao = "PADRAO"
 
 
 class ItemResultadoResposta(BaseModel):
@@ -37,6 +41,9 @@ class ItemResultadoResposta(BaseModel):
     sei: str
     categoria: str
     linha: int | None = None
+    # RN-14 — só populado no modo Complemento, quando este SEI já existia
+    # (na planilha ou mais cedo no lote); ver `ItemResultado.sei_ja_existente_em_linha`.
+    sei_ja_existente_em_linha: int | None = None
 
 
 class ResultadoPreenchimentoResposta(BaseModel):

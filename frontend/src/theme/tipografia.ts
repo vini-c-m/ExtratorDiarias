@@ -7,7 +7,7 @@
  * (legível sobre o fundo escuro `#0F172A` da nova identidade). */
 
 export const TIPOGRAFIA = {
-  /** Título do cabeçalho do app ("Extrator de Diárias") — Inter ExtraBold,
+  /** Título do cabeçalho do app ("Automatizador de Diárias") — Inter ExtraBold,
    * 30px, leve espaçamento de letras, branco quase puro (`slate-50`).
    * Sprint 09 — 2px maior que a Sprint 07 (o monograma também cresceu),
    * mantendo o cabeçalho baixo/compacto (item "Novo Cabeçalho"). */
@@ -33,4 +33,9 @@ export const TIPOGRAFIA = {
   textoAuxiliar: "text-xs leading-relaxed text-slate-500",
   /** Texto de status/badge. */
   status: "text-xs font-medium",
+  /** BI 4.0 — rótulo pequeno de destaque acima de um valor grande (hero,
+   * KPI, item de timeline de insights): caixa alta, espaçamento largo, cor
+   * de marca (cyan) em vez do slate neutro de `legenda` — marca "isto é o
+   * contexto de um número importante", não um cabeçalho de tabela. */
+  eyebrow: "text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-400/80",
 } as const;

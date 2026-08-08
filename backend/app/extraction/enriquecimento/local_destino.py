@@ -72,8 +72,15 @@ _SEPARADOR_PALAVRA = re.compile(r"\s+(?:e|x)\s+", re.IGNORECASE)
 # independente de qual cidade venha depois. O conector "de" entre o prefixo
 # e o nome do município é opcional ("PJ Palmares" e "PJ de Garanhuns" são
 # igualmente comuns nos processos reais).
+#
+# Correção de 2026-08-05 (Programa de Validação Evolutiva, caso real SEI
+# 19.20.0001.0014871/2026-40): "Promotoria"/"Procuradoria" também aparecem
+# SEM o complemento "de Justiça" (ex.: "PROMOTORIA PALMARES") — mesma forma
+# abreviada de "PJ", só que por extenso. "DE JUSTIÇA" vira opcional depois
+# do nome do órgão, nunca deixando de reconhecer a forma completa já
+# homologada.
 _PREFIXO_INSTITUCIONAL = re.compile(
-    r"^\s*(?:PJ|PROCURADORIA\s+DE\s+JUSTI[ÇC]A|PROMOTORIA\s+DE\s+JUSTI[ÇC]A)(?:\s+DE)?\s+",
+    r"^\s*(?:PJ|PROCURADORIA(?:\s+DE\s+JUSTI[ÇC]A)?|PROMOTORIA(?:\s+DE\s+JUSTI[ÇC]A)?)(?:\s+DE)?\s+",
     re.IGNORECASE,
 )
 
@@ -87,6 +94,34 @@ def _remover_prefixo_institucional(chunk: str) -> str:
     devolve o chunk original em vez de uma string vazia."""
     sem_prefixo = _PREFIXO_INSTITUCIONAL.sub("", chunk, count=1)
     return sem_prefixo if sem_prefixo.strip() else chunk
+
+
+# Programa Permanente de QA Evolutivo (2026-08-06) — caso real SEI
+# 19.20.0001.0001165/2026-47: "CIDADE(S) DESTINO:" trouxe "Santa Filomena/PE"
+# — a UF já é tratada como separador forte por `_associar_cidades_e_uf` (usada
+# para resolver a coluna Q), mas o TRECHO (coluna J) grava `cidade_destino`
+# tal como veio do PDF, sem passar por essa resolução — nas quase 1900 linhas
+# já existentes na planilha oficial, TRECHO nunca traz um sufixo de UF. Esta
+# função só cuida da apresentação em TRECHO (nunca é chamada antes da
+# resolução de estado/regra de transporte, que continuam recebendo o campo
+# bruto, sufixo incluído — é exatamente esse sufixo que as desambigua).
+_SUFIXO_UF = re.compile(r"^(.*\S)\s*/\s*([A-Za-zÀ-ú]{2})$")
+
+
+def remover_sufixo_uf(cidade: str | None) -> str | None:
+    """Remove um sufixo '/UF' final (ex.: 'Santa Filomena/PE' -> 'Santa
+    Filomena') quando a sigla é uma UF brasileira válida — só para exibição
+    (TRECHO); nunca usada antes da resolução de estado/cidade, que depende do
+    sufixo original para desambiguar."""
+    if not cidade:
+        return cidade
+    correspondencia = _SUFIXO_UF.match(cidade.strip())
+    if not correspondencia:
+        return cidade
+    nome, sigla = correspondencia.groups()
+    if normalizar(sigla) in _SIGLAS_VALIDAS:
+        return nome.strip()
+    return cidade
 
 
 def _dividir_em_chunks_fortes(cidade_destino: str) -> list[str]:

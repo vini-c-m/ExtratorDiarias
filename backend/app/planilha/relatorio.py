@@ -54,7 +54,7 @@ _SLATE_300 = "#CBD5E1"
 _SLATE_400 = "#94A3B8"
 _SLATE_500 = "#64748B"
 
-_VERSAO = "1.0"
+_VERSAO = "2.0"
 
 # --- Ícones (Lucide, mesmos traçados usados no aplicativo React) -------------
 # Cada constante é só o miolo (paths/circles) do ícone — a moldura <svg> é
@@ -102,7 +102,7 @@ def _svg_icone(caminho_interno: str) -> str:
 # Mesmo monograma do aplicativo (`Logo.tsx` — `CAMINHO_MONOGRAMA`): silhueta
 # de "D" com um "E" revelado em espaço negativo dentro do bojo. String
 # literal (não f-string) — nenhuma chave aqui precisa de escape.
-_LOGO_SVG = """<svg viewBox="0 0 100 100" role="img" aria-label="Extrator de Diárias" class="logo">
+_LOGO_SVG = """<svg viewBox="0 0 100 100" role="img" aria-label="Automatizador de Diárias" class="logo">
   <defs>
     <linearGradient id="logo-gradiente-marca" x1="50" y1="16" x2="50" y2="84" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#2563EB"></stop>
@@ -320,7 +320,7 @@ def _cabecalho() -> str:
     return f"""<div class="cabecalho">
   {_LOGO_SVG}
   <div>
-    <h1>Extrator de Diárias</h1>
+    <h1>Automatizador de Diárias</h1>
     <p class="tagline">Automação Inteligente de Processos</p>
   </div>
 </div>
@@ -345,7 +345,7 @@ def _acoes_relatorio() -> str:
 
 def _rodape(agora: datetime) -> str:
     return f"""<div class="rodape-marca">
-  <div class="nome">Extrator de Diárias</div>
+  <div class="nome">Automatizador de Diárias</div>
   <p class="tagline">Automação Inteligente de Processos</p>
   <p class="versao">Versão {escape(_VERSAO)}</p>
   <p class="gerado-em">Gerado em {escape(agora.strftime('%d/%m/%Y'))} às {escape(agora.strftime('%H:%M:%S'))}</p>
@@ -410,7 +410,7 @@ def gerar_relatorio_html(
 <head>
 <meta charset="utf-8">
 <meta name="theme-color" content="{_BG}">
-<title>Relatório — Extrator de Diárias</title>
+<title>Relatório — Automatizador de Diárias</title>
 <style>{_ESTILO}</style>
 </head>
 <body>

@@ -340,3 +340,123 @@ def test_cpf_colado_a_outro_numero_nao_vaza_para_a_captura():
     # fallback de "CPF inválido" da validação para este caso.
     processo = validar("arquivo.pdf", campos)
     assert not any("CPF" in m for m in (processo.erro.motivos if processo.erro else []))
+
+
+# --- Programa de Validação Evolutiva (2026-08-05) — SEI errado por citação
+# alheia num anexo posterior ---------------------------------------------
+
+
+def test_citacao_de_sei_alheio_em_anexo_posterior_nao_contamina_a_extracao():
+    """Processo real SEI 19.20.100000001.0014706/2026-11 (reprodução
+    sintética — Política de Dados Sintéticos, `CONTRIBUTING.md`): um anexo
+    "EXTERNO CONFIRMAÇÃO DE SERVIÇO ASSINADA VIA GOV.BR" reproduz o
+    cabeçalho da própria Solicitação (mesmo id do documento), fazendo
+    `ultimo_segmento` reabrir o segmento a partir dele e arrastar para
+    dentro conteúdo bem posterior do processo — no caso real, um Diário
+    Oficial Eletrônico que cita, em prosa, o número de um processo
+    totalmente diferente ("...atestada nos autos do SEI
+    19.20.9999.9999999/2026-00..."). Antes da correção, `re.search(r"SEI\\s*
+    ([\\d./-]+)")` (sem âncora além da palavra "SEI") casava com essa
+    citação alheia primeiro. Agora o parser prefere o padrão de rodapé
+    "SEI <NUP> / pg. <N>" — que só o próprio sistema SEI grava, nunca uma
+    citação em prosa —, então o rodapé genuíno da Solicitação (mais
+    adiante no mesmo texto) é encontrado primeiro."""
+    texto = (
+        "CMFC - Solicitação de Diária - Servidor - 1523645\n"
+        "CIDADE ORIGEM:\n  Caruaru\n"
+        "CIDADE(S) DESTINO:\n  Recife\n"
+        "DATA INICIAL:\n  06/08/2026\n"
+        "DATA DE RETORNO:\n  07/08/2026\n"
+        "CMFC - Solicitação de Diária - Servidor 1523645"
+        "         SEI 19.20.7777.0000001/2026-77 / pg. 1\n"
+        # Reprodução do mesmo documento (mesmo id "1523645") — dispara
+        # `ultimo_segmento` a reabrir o segmento aqui.
+        "CMFC - Solicitação de Diária - Servidor - 1523645\n"
+        "CIDADE ORIGEM:\n  Caruaru\n"
+        "CIDADE(S) DESTINO:\n  Recife\n"
+        "DATA INICIAL:\n  06/08/2026\n"
+        "DATA DE RETORNO:\n  07/08/2026\n"
+        # Conteúdo alheio (anexado depois, dentro do mesmo segmento
+        # bloat) citando, em prosa, um processo TOTALMENTE diferente —
+        # sem o sufixo "/ pg. N" que só um rodapé de página tem.
+        "CONSIDERANDO a disponibilidade orçamentária, devidamente atestada "
+        "nos autos do SEI 19.20.9999.9999999/2026-00, RESOLVE...\n"
+        "CMFC - Solicitação de Diária - Servidor 1523645"
+        "         SEI 19.20.7777.0000001/2026-77 / pg. 3\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.sei == "19.20.7777.0000001/2026-77"
+    assert campos.cidade_origem == "Caruaru"
+    assert campos.cidade_destino == "Recife"
+
+
+def test_layout_antigo_sem_rodape_de_pagina_continua_usando_o_padrao_solto():
+    """Sem nenhum rodapé "SEI ... / pg. N" no texto (layout antigo, já
+    homologado antes desta correção), o parser cai de volta no padrão
+    solto original — comportamento intocado para esse caso."""
+    texto = "SEI 19.20.0001.0000109/2026-09\nCIDADE ORIGEM:\n  Recife\n"
+
+    campos = _campos(texto)
+
+    assert campos.sei == "19.20.0001.0000109/2026-09"
+
+
+# --- Programa Permanente de QA Evolutivo (2026-08-06) — FINALIDADE DA
+# VIAGEM quebrada em duas linhas no PDF ------------------------------------
+
+
+def test_finalidade_da_viagem_quebrada_em_duas_linhas_nao_e_truncada():
+    """Processo real SEI 19.20.0001.0001165/2026-47 (reprodução sintética —
+    Política de Dados Sintéticos, `CONTRIBUTING.md`): "FINALIDADE DA VIAGEM"
+    é o único campo de texto livre do formulário, então é o único que
+    ocasionalmente quebra em mais de uma linha no PDF. Antes da correção, o
+    padrão de valor padrão de `_buscar_campo` (`(.*)`, sem DOTALL) parava no
+    primeiro '\\n' e perdia silenciosamente "municipalidade." — sem erro,
+    sem aviso, só um MOTIVO cortado no meio da frase gravado na planilha."""
+    texto = (
+        "FINALIDADE DA VIAGEM:\n"
+        "Realizar a notificação para a audiência de custódia, bem como "
+        "proceder à entrega de ofício à\n"
+        "municipalidade.\n"
+        "CIDADE ORIGEM:\n"
+        "Ouricuri\n"
+        "CIDADE(S) DESTINO:\n"
+        "Santa Filomena/PE\n"
+        "DATA INICIAL:\n"
+        "21/01/2026\n"
+        "DATA DE RETORNO:\n"
+        "21/01/2026\n"
+        "SEI 19.20.4444.0000001/2026-44 / pg. 1\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.motivo == (
+        "Realizar a notificação para a audiência de custódia, bem como "
+        "proceder à entrega de ofício à municipalidade."
+    )
+    # O sufixo de UF do campo bruto continua intacto aqui — só a
+    # apresentação em TRECHO remove ("escritor_planilha.remover_sufixo_uf",
+    # ver `test_local_destino.py`); a resolução de estado/cidade depende
+    # dele para desambiguar.
+    assert campos.cidade_destino == "Santa Filomena/PE"
+
+
+def test_finalidade_da_viagem_de_uma_linha_so_continua_intocada():
+    """Garantia de não regressão: o caso comum (motivo em uma linha só)
+    continua funcionando exatamente como antes — o novo padrão multilinha
+    para no próximo rótulo conhecido tanto para um valor de uma linha
+    quanto de várias."""
+    texto = (
+        "FINALIDADE DA VIAGEM:\n"
+        "Acompanhar a SGMP para assunto Institucional.\n"
+        "CIDADE ORIGEM:\n"
+        "Recife\n"
+        "SEI 19.20.4444.0000002/2026-45 / pg. 1\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.motivo == "Acompanhar a SGMP para assunto Institucional."

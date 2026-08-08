@@ -96,6 +96,126 @@ def test_reconstruir_diaria_com_cpf_sem_cadastro_fica_com_campos_servidor_nulos(
     assert linha == (None, None)
 
 
+def test_reconstruir_grava_categoria_funcional_servidor_para_cargo_administrativo(
+    tmp_path, caminho_planilha_conferencia_teste
+):
+    """"Maria Aparecida Souza" (cadastro de teste) tem cargo "Analista
+    Judiciário" — fora do catálogo fechado de MEMBRO
+    (`app/domain/analitica/categoria_funcional.py`), então SERVIDOR."""
+    caminho_planilha = caminho_planilha_conferencia_teste()
+    destino = tmp_path / "base_local.sqlite"
+
+    _reconstruir_a_partir_de(caminho_planilha, destino)
+
+    conexao = sqlite3.connect(destino)
+    try:
+        categoria = conexao.execute(
+            "SELECT categoria_funcional FROM diarias WHERE sei = ?",
+            ("19.20.0902.0004521/2026-11",),
+        ).fetchone()[0]
+    finally:
+        conexao.close()
+
+    assert categoria == "SERVIDOR"
+
+
+def test_reconstruir_grava_categoria_funcional_nao_identificado_sem_cadastro(
+    tmp_path, caminho_planilha_conferencia_teste
+):
+    """Mesmo cenário de `test_reconstruir_diaria_com_cpf_sem_cadastro_fica_
+    com_campos_servidor_nulos` — sem `Servidor` (CPF ausente em `Dados`,
+    RN-01), `categoria_funcional` não pode "adivinhar" nenhum dos dois
+    lados: fica `NAO_IDENTIFICADO`, nunca `NULL` (a coluna é `NOT NULL`)."""
+    caminho_planilha = caminho_planilha_conferencia_teste()
+    workbook = load_workbook(caminho_planilha)
+    planilha = workbook[NOME_ABA_DIARIAS]
+    planilha.append(
+        [
+            "2026DH000103",
+            "19.20.0902.0007777/2026-44",
+            "PJTESTE",
+            88899999999,
+            None,
+            None,
+            None,
+            date(2026, 8, 1),
+            date(2026, 8, 3),
+            "RECIFE - OLINDA",
+            "CARRO",
+            "Motivo sem cadastro",
+        ]
+    )
+    workbook.save(caminho_planilha)
+    workbook.close()
+
+    destino = tmp_path / "base_local.sqlite"
+    _reconstruir_a_partir_de(caminho_planilha, destino)
+
+    conexao = sqlite3.connect(destino)
+    try:
+        categoria = conexao.execute(
+            "SELECT categoria_funcional FROM diarias WHERE sei = ?",
+            ("19.20.0902.0007777/2026-44",),
+        ).fetchone()[0]
+    finally:
+        conexao.close()
+
+    assert categoria == "NAO_IDENTIFICADO"
+
+
+def test_reconstruir_grava_categoria_funcional_membro_para_cargo_de_promotor(
+    tmp_path, caminho_planilha_conferencia_teste
+):
+    caminho_planilha = caminho_planilha_conferencia_teste()
+    workbook = load_workbook(caminho_planilha)
+    dados = workbook["Dados"]
+    dados.append(
+        [
+            "111.222.333-44",
+            2001,
+            "Carlos Mendes",
+            "FUNAFIN",
+            "Promotor de Justiça de 2a. entrância",
+            None,
+            "RPPS",
+            "Em exercício",
+        ]
+    )
+    planilha = workbook[NOME_ABA_DIARIAS]
+    planilha.append(
+        [
+            "2026DH000104",
+            "19.20.0902.0006666/2026-33",
+            "PJTESTE",
+            "111.222.333-44",
+            None,
+            None,
+            None,
+            date(2026, 8, 5),
+            date(2026, 8, 6),
+            "RECIFE - CARUARU",
+            "CARRO",
+            "Correição",
+        ]
+    )
+    workbook.save(caminho_planilha)
+    workbook.close()
+
+    destino = tmp_path / "base_local.sqlite"
+    _reconstruir_a_partir_de(caminho_planilha, destino)
+
+    conexao = sqlite3.connect(destino)
+    try:
+        categoria = conexao.execute(
+            "SELECT categoria_funcional FROM diarias WHERE sei = ?",
+            ("19.20.0902.0006666/2026-33",),
+        ).fetchone()[0]
+    finally:
+        conexao.close()
+
+    assert categoria == "MEMBRO"
+
+
 def test_reconstruir_grava_dh_da_diaria(tmp_path, caminho_planilha_conferencia_teste):
     caminho_planilha = caminho_planilha_conferencia_teste()
     destino = tmp_path / "base_local.sqlite"
@@ -404,3 +524,50 @@ def test_caminho_base_local_sqlite_mesma_pasta_do_xlsx(tmp_path, monkeypatch):
 
     assert caminho_sqlite.parent == caminho_xlsx.parent
     assert caminho_sqlite.name == "base_local.sqlite"
+
+
+# --- URGENTE — Central Analítica (2026-08-06): `versao_app` (achado real
+# do 2º rastreamento — build empacotado desatualizado, ver `esquema.py`
+# VERSAO_ESQUEMA=4). ----------------------------------------------------
+
+
+def test_reconstruir_grava_versao_app_informada(tmp_path, caminho_planilha_conferencia_teste):
+    caminho_planilha = caminho_planilha_conferencia_teste()
+    destino = tmp_path / "base_local.sqlite"
+    workbook = load_workbook(caminho_planilha)
+    try:
+        resultado_diarias = diarias_completas(workbook[NOME_ABA_DIARIAS])
+        servidores = servidores_por_cpf(workbook[NOME_ABA_SERVIDORES])
+    finally:
+        workbook.close()
+    sinal = base_local_sqlite.capturar_sinal_frescor(caminho_planilha)
+
+    base_local_sqlite.reconstruir(
+        resultado_diarias, servidores, sinal, origem="teste", caminho_destino=destino, versao_app="2.1.0"
+    )
+
+    conexao = sqlite3.connect(destino)
+    try:
+        (versao_gravada,) = conexao.execute("SELECT versao_app FROM sincronizacoes ORDER BY id DESC LIMIT 1").fetchone()
+    finally:
+        conexao.close()
+    assert versao_gravada == "2.1.0"
+
+
+def test_reconstruir_sem_versao_app_grava_string_vazia_nunca_none(
+    tmp_path, caminho_planilha_conferencia_teste
+):
+    """Backend rodando sem Electron (standalone/dev/teste) — `versao_app`
+    fica `""`, nunca `NULL`/inventada, mesmo critério de `_reconstruir_a_
+    partir_de` (que também não passa este parâmetro, chamador mais antigo
+    preservado 100%)."""
+    caminho_planilha = caminho_planilha_conferencia_teste()
+    destino = tmp_path / "base_local.sqlite"
+    _reconstruir_a_partir_de(caminho_planilha, destino)
+
+    conexao = sqlite3.connect(destino)
+    try:
+        (versao_gravada,) = conexao.execute("SELECT versao_app FROM sincronizacoes ORDER BY id DESC LIMIT 1").fetchone()
+    finally:
+        conexao.close()
+    assert versao_gravada == ""

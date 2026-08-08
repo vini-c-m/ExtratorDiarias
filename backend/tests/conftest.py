@@ -336,6 +336,46 @@ def remover_tag_dimension_da_planilha():
 
 
 @pytest.fixture
+def injetar_cache_formula():
+    """URGENTE — Central Analítica (2026-08-06): reproduz o que o Excel
+    real grava ao salvar uma célula de fórmula — o elemento `<v>` com o
+    último valor calculado, ao lado de `<f>` — algo que `openpyxl` nunca
+    calcula sozinho (ao escrever `ws["P2"] = "=R2+S2"` e salvar, o XML sai
+    com `<v />` vazio, nunca com o número). Sem essa injeção, um teste que
+    monta a planilha só com `openpyxl` nunca reproduziria o caso real que
+    causou a perda de valores (coluna `P` = `VALOR TOTAL DAS DIÁRIAS`,
+    fórmula `=R+S`, cache já calculado pelo Excel — 100% das 2.217 linhas
+    de fórmula da Planilha Oficial real tinham cache; a perda era só de
+    leitura, nunca de cálculo). Omitir a chamada a esta fixture para uma
+    célula de fórmula reproduz o outro caso real, genuinamente sem cache
+    (`data_only=True` devolve `None`, nunca inventa um número)."""
+
+    def _injetar(
+        caminho_xlsx: str,
+        referencia_celula: str,
+        valor_cache: float,
+        nome_arquivo_interno: str = "xl/worksheets/sheet1.xml",
+    ) -> None:
+        with zipfile.ZipFile(caminho_xlsx, "r") as zf:
+            entradas = {info.filename: zf.read(info.filename) for info in zf.infolist()}
+
+        conteudo_original = entradas[nome_arquivo_interno].decode("utf-8")
+        padrao = re.compile(rf'(<c r="{referencia_celula}"[^>]*><f>[^<]*</f>)<v\s*/>')
+        conteudo_novo, total = padrao.subn(rf"\1<v>{valor_cache}</v>", conteudo_original)
+        assert total == 1, (
+            f"célula {referencia_celula} com fórmula (e cache vazio `<v />`) não encontrada "
+            "para injeção — confira se a célula foi escrita como fórmula antes de salvar"
+        )
+        entradas[nome_arquivo_interno] = conteudo_novo.encode("utf-8")
+
+        with zipfile.ZipFile(caminho_xlsx, "w", zipfile.ZIP_DEFLATED) as zf:
+            for nome, dado in entradas.items():
+                zf.writestr(nome, dado)
+
+    return _injetar
+
+
+@pytest.fixture
 def caminho_planilha_conferencia_teste(tmp_path):
     """Planilha sintética própria da Central de Conferência (Sprint 13) —
     separada de `caminho_planilha_teste` para não alterar o comportamento

@@ -1,11 +1,16 @@
 from fastapi import APIRouter, HTTPException
 
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.schemas.conferencia import (
+    CandidatoDiariaOriginalResposta,
     DuplicidadeResposta,
     ItemChecklistResposta,
     JanelaProcessamentoResposta,
+    RegistroCandidatoResposta,
+    RequisicaoCandidatosComplemento,
     RequisicaoConferencia,
     RequisicaoHistorico,
+    RespostaCandidatosComplemento,
     RespostaHistorico,
     ResultadoConferenciaResposta,
     ServidorResposta,
@@ -15,6 +20,8 @@ from app.services.conferencia_service import (
     ServidorNaoEncontrado,
     conferir_cpf,
     gerar_historico,
+    gerar_historico_complemento,
+    localizar_candidatos_complemento,
 )
 
 # RN-11 — só rotas de leitura/consulta. Nenhum verbo de escrita: a Central
@@ -28,7 +35,10 @@ router = APIRouter(prefix="/api/v1", tags=["conferencia"])
 def conferir(requisicao: RequisicaoConferencia) -> ResultadoConferenciaResposta:
     try:
         resultado = conferir_cpf(
-            requisicao.cpf, requisicao.periodo_inicial, requisicao.periodo_final
+            requisicao.cpf,
+            requisicao.periodo_inicial,
+            requisicao.periodo_final,
+            modo=ModoProcessamento(requisicao.modo),
         )
     except BaseLocalIndisponivel as erro:
         raise HTTPException(status_code=503, detail=str(erro)) from erro
@@ -75,7 +85,6 @@ def historico(requisicao: RequisicaoHistorico) -> RespostaHistorico:
             requisicao.periodo_inicial,
             requisicao.periodo_final,
             requisicao.sei,
-            requisicao.origem,
             requisicao.destino,
         )
     except BaseLocalIndisponivel as erro:
@@ -84,3 +93,75 @@ def historico(requisicao: RequisicaoHistorico) -> RespostaHistorico:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
 
     return RespostaHistorico(texto=texto)
+
+
+@router.post("/conferencia/historico-complemento", response_model=RespostaHistorico)
+def historico_complemento(requisicao: RequisicaoHistorico) -> RespostaHistorico:
+    """GERAR HISTÓRICO DE COMPLEMENTO (RN-14/RN-16) — mesmo modelo
+    institucional de `POST /conferencia/historico` (RN-13); só a
+    quantidade de diária parcial varia (esclarecimento do usuário,
+    2026-08-07, RN-16 — não existe um segundo template). Central de
+    Conferência continua só consultiva: este endpoint nunca grava nada."""
+    try:
+        texto = gerar_historico_complemento(
+            requisicao.cpf,
+            requisicao.periodo_inicial,
+            requisicao.periodo_final,
+            requisicao.sei,
+            requisicao.destino,
+            requisicao.quantidade_diaria_parcial
+            if requisicao.quantidade_diaria_parcial is not None
+            else 0,
+        )
+    except BaseLocalIndisponivel as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+    except ServidorNaoEncontrado as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+
+    return RespostaHistorico(texto=texto)
+
+
+@router.post(
+    "/conferencia/complemento/candidatos", response_model=RespostaCandidatosComplemento
+)
+def candidatos_complemento(
+    requisicao: RequisicaoCandidatosComplemento,
+) -> RespostaCandidatosComplemento:
+    """Continuidade Processual (modo Complemento de Diárias) — só
+    encontra e explica candidatos a "diária original"; nunca vincula
+    nem grava nada (RN-11 inalterado). Usado tanto pela Central de
+    Conferência quanto, antes de gravar, pelo Processamento de PDFs."""
+    try:
+        candidatos = localizar_candidatos_complemento(
+            requisicao.cpf,
+            requisicao.periodo_inicial,
+            requisicao.periodo_final,
+            requisicao.cidade_destino,
+            requisicao.sei,
+            requisicao.texto_processo,
+        )
+    except BaseLocalIndisponivel as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+
+    return RespostaCandidatosComplemento(
+        candidatos=[
+            CandidatoDiariaOriginalResposta(
+                registro=RegistroCandidatoResposta(
+                    sei=candidato.registro.sei,
+                    dh=candidato.registro.dh,
+                    periodo_inicial=candidato.registro.periodo_inicial,
+                    periodo_final=candidato.registro.periodo_final,
+                    cidade_origem=candidato.registro.cidade_origem,
+                    cidade_destino=candidato.registro.cidade_destino,
+                    motivo=candidato.registro.motivo,
+                    valor_total_diarias=candidato.registro.valor_total_diarias,
+                    linha_planilha=candidato.registro.linha_planilha,
+                    servidor_nome=(
+                        candidato.registro.servidor.nome if candidato.registro.servidor else None
+                    ),
+                ),
+                evidencias=candidato.evidencias,
+            )
+            for candidato in candidatos
+        ]
+    )

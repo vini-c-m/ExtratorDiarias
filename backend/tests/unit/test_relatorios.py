@@ -43,7 +43,15 @@ _REGISTROS = [
 
 
 def test_recorte_vazio_devolve_indicadores_e_distribuicoes_vazios_para_qualquer_tipo():
-    for tipo in ("executivo", "detalhado", "financeiro", "por_servidor", "por_municipio", "por_situacao"):
+    for tipo in (
+        "executivo",
+        "detalhado",
+        "financeiro",
+        "por_servidor",
+        "por_municipio",
+        "por_situacao",
+        "visao_executiva",
+    ):
         resultado = compor_relatorio([], tipo)
         assert resultado.indicadores.total_diarias == 0
         assert resultado.indicadores.valor_total is None
@@ -121,3 +129,39 @@ class TestPorSituacao:
         rotulos = {ponto.rotulo for distribuicao in resultado.distribuicoes for ponto in distribuicao.pontos}
         assert rotulos == {"Em exercício", "Licença"}
         assert resultado.registros == []
+
+
+class TestVisaoExecutiva:
+    """Sprint 21.9 (Modo Executivo — PDF executivo) — tipo novo, dedicado,
+    que nunca reaproveita nem altera a composição já homologada de
+    "executivo" (Sprint 19.7.1) nem de "detalhado" (usado pelo Dashboard
+    operacional)."""
+
+    def test_contem_as_8_dimensoes_da_grade_executiva_sem_a_dimensao_servidor_e_sem_tabela(self):
+        resultado = compor_relatorio(_REGISTROS, "visao_executiva")
+
+        dimensoes = {distribuicao.dimensao for distribuicao in resultado.distribuicoes}
+        assert dimensoes == {
+            "periodo",
+            "categoria_funcional",
+            "municipio",
+            "motivo",
+            "situacao",
+            "origem_destino",
+            "transporte",
+            "doc_origem",
+        }
+        assert "servidor" not in dimensoes
+        assert resultado.registros == []
+
+    def test_nunca_altera_a_composicao_ja_homologada_de_executivo_nem_de_detalhado(self):
+        # Confirma que os 2 tipos vizinhos continuam exatamente como já
+        # homologado — a Sprint 21.9 é 100% aditiva.
+        executivo = compor_relatorio(_REGISTROS, "executivo")
+        assert [d.dimensao for d in executivo.distribuicoes] == ["periodo"]
+
+        detalhado = compor_relatorio(_REGISTROS, "detalhado")
+        assert {d.dimensao for d in detalhado.distribuicoes} == {
+            "periodo", "servidor", "municipio", "motivo", "situacao", "origem_destino",
+        }
+        assert detalhado.registros == _REGISTROS

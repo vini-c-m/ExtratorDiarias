@@ -66,6 +66,7 @@ def test_post_planilha_preencher_grava_na_copia_de_teste(monkeypatch, tmp_path, 
             "sei": _DIARIA["sei"],
             "categoria": "inserido",
             "linha": 4,
+            "sei_ja_existente_em_linha": None,
         }
     ]
     assert os.path.isdir(corpo["pasta_resultados"])
@@ -136,6 +137,7 @@ def test_post_planilha_preencher_bug2_duplicidade_na_planilha_informa_linha(
             "sei": sei_ja_existente,
             "categoria": "duplicado_na_planilha",
             "linha": 2,
+            "sei_ja_existente_em_linha": None,
         }
     ]
 

@@ -103,9 +103,9 @@ def test_cabecalho_com_identidade_do_app_presente(tmp_path):
 
     assert "Ministério Público de Pernambuco" not in conteudo
     assert "DIMCAC" not in conteudo
-    assert "Extrator de Diárias" in conteudo
+    assert "Automatizador de Diárias" in conteudo
     assert "Automação Inteligente de Processos" in conteudo
-    assert 'aria-label="Extrator de Diárias"' in conteudo  # logo (mesmo monograma do app)
+    assert 'aria-label="Automatizador de Diárias"' in conteudo  # logo (mesmo monograma do app)
     assert "Gerado em 15/07/2026 14:32:18" in conteudo
     assert "Planilha: planilha.xlsx" in conteudo
 
@@ -124,9 +124,9 @@ def test_rodape_com_identidade_do_app_presente(tmp_path):
     conteudo = open(caminho_relatorio, encoding="utf-8").read()
 
     assert 'class="rodape-marca"' in conteudo
-    assert "Extrator de Diárias" in conteudo
+    assert "Automatizador de Diárias" in conteudo
     assert "Automação Inteligente de Processos" in conteudo
-    assert "Versão 1.0" in conteudo
+    assert "Versão 2.0" in conteudo
     assert "Gerado em 15/07/2026 às 14:32:18" in conteudo
 
 

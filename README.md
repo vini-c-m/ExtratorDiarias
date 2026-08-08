@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="frontend/public/brand/logo-color.svg" width="96" alt="Logo do Extrator de Diárias" />
+  <img src="frontend/public/brand/logo-color.svg" width="96" alt="Logo do Automatizador de Diárias" />
 </p>
 
-<h1 align="center">Extrator de Diárias</h1>
+<h1 align="center">Automatizador de Diárias</h1>
 <p align="center"><strong>Automação Inteligente do Processo de Concessão de Diárias</strong></p>
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" width="680" alt="Demonstração do Extrator de Diárias: Boas-vindas, Hub, Processamento, Central Inteligente de Conferência, Central Analítica e Configurações" />
+  <img src="docs/screenshots/demo.gif" width="680" alt="Demonstração do Automatizador de Diárias: Boas-vindas, Hub, Processamento, Central Inteligente de Conferência, Central Analítica e Configurações" />
 </p>
 
 <p align="center">
@@ -25,7 +25,7 @@
 
 O processo de concessão de diárias do DIMCAC tem três partes. A **primeira** é extrair os dados de cada processo do SEI (Sistema Eletrônico de Informações) — número do processo, CPF, período, cidades de origem e destino, Documento Hábil, valor autorizado — espalhados dentro de um PDF de várias páginas, muitas vezes com documentos repetidos (um requerimento corrigido, uma validação refeita) e pequenas inconsistências de digitação e formatação do próprio SEI. A **segunda**, historicamente inteira manual dentro do Excel, é **conferir** se cada solicitação está apta a virar diária: o servidor está cadastrado? já existe uma diária para o mesmo CPF e período? o processo já pode seguir para as próximas etapas administrativas? A **terceira** é **enxergar o conjunto**: quantas diárias foram pagas em tal período ou cidade, qual o valor total, quais merecem atenção — hoje só possível abrindo a planilha oficial e montando tabelas dinâmicas manualmente.
 
-**O Extrator de Diárias automatiza as três.** Na primeira, você seleciona os PDFs e o aplicativo extrai e valida os campos automaticamente — inclusive resolvendo os casos difíceis (documento substituído por uma versão mais recente, campo partido por quebra de página, erro de digitação no nome do município) — e preenche a planilha oficial existente, sinalizando com clareza o que foi inserido com segurança e o que precisa de revisão manual. Um relatório HTML autossuficiente fecha cada execução com o resumo do lote. Na segunda, a **Central Inteligente de Conferência** consulta a planilha oficial já preenchida e devolve, em segundos, um diagnóstico completo (cadastro, duplicidade, janela operacional) e o texto pronto para registrar no e-Fisco. Na terceira, a **Central Analítica** deixa pesquisar, filtrar e analisar todas as diárias já registradas — com Dashboard, Relatórios exportáveis (PDF/Excel/CSV) e Diagnóstico automático do recorte filtrado. Nenhum dos três módulos decide nada por conta própria: todos só informam, a decisão continua sempre com o servidor.
+**O Automatizador de Diárias automatiza as três.** Na primeira, você seleciona os PDFs e o aplicativo extrai e valida os campos automaticamente — inclusive resolvendo os casos difíceis (documento substituído por uma versão mais recente, campo partido por quebra de página, erro de digitação no nome do município) — e preenche a planilha oficial existente, sinalizando com clareza o que foi inserido com segurança e o que precisa de revisão manual. Um relatório HTML autossuficiente fecha cada execução com o resumo do lote. Na segunda, a **Central Inteligente de Conferência** consulta a planilha oficial já preenchida e devolve, em segundos, um diagnóstico completo (cadastro, duplicidade, janela operacional) e o texto pronto para registrar no e-Fisco. Na terceira, a **Central Analítica** deixa pesquisar, filtrar e analisar todas as diárias já registradas — com Dashboard, Relatórios exportáveis (PDF/Excel/CSV) e Diagnóstico automático do recorte filtrado. Nenhum dos três módulos decide nada por conta própria: todos só informam, a decisão continua sempre com o servidor.
 
 Nenhuma regra deste projeto foi inventada em teoria — cada uma existe por causa de um padrão documental real de processo SEI ou de uma fórmula real da planilha oficial, encontrados durante a homologação e a engenharia reversa (documentados nos comentários do código-fonte, em [`docs/central-conferencia/`](docs/central-conferencia/README.md) e em [`docs/central-analitica/`](docs/central-analitica/README.md), hoje com dados fictícios equivalentes nas fixtures de teste — veja [Dados sintéticos](#dados-sintéticos)).
 
@@ -55,7 +55,7 @@ Nenhuma regra deste projeto foi inventada em teoria — cada uma existe por caus
 | --- | --- |
 | ![Central Analítica — Dashboard](docs/screenshots/11-analitica-dashboard.png) | ![Central Analítica — Relatório](docs/screenshots/12-analitica-relatorio.png) |
 
-| Análise Rápida / Diagnóstico | Configurações |
+| Análise Rápida (Diagnóstico) | Configurações |
 | --- | --- |
 | ![Central Analítica — Diagnóstico](docs/screenshots/13-analitica-diagnostico.png) | ![Alterar Planilha Oficial](docs/screenshots/14-configuracoes.png) |
 
@@ -91,7 +91,7 @@ npm run gif           # regera docs/screenshots/demo.gif
 - **Pesquisa e filtros completos** sobre a Base Local (SQLite, sincronizada automaticamente, somente leitura) — SEI, CPF, servidor, matrícula, origem, destino, trecho, município, motivo, situação do servidor, período e faixa de valor, com paginação, ordenação e busca global.
 - **Dashboard do recorte filtrado** — indicadores (total de diárias, servidores, valor total/médio) e distribuições (evolução por período, valores, ranking de servidores/municípios, motivo, situação), com gráficos próprios que também servem para refinar o filtro com um clique.
 - **Relatórios exportáveis** — PDF, Excel ou CSV, em 6 tipos (executivo, detalhado, financeiro, por servidor, por município, por situação), sempre sobre o mesmo recorte filtrado, nunca reconfigurado do zero.
-- **Análise Rápida / Diagnóstico** — classifica cada diária do recorte (esperado, atenção ou inconsistência) e aponta o campo problemático; inconsistência de negócio nunca é vermelha — vermelho fica reservado a falha técnica real, mesma disciplina de cor da Central de Conferência.
+- **Análise Rápida (Diagnóstico)** — classifica cada diária do recorte (esperado, atenção ou inconsistência) e aponta o campo problemático; inconsistência de negócio nunca é vermelha — vermelho fica reservado a falha técnica real, mesma disciplina de cor da Central de Conferência.
 - **Também puramente consultiva** — a Base Local Analítica nunca é escrita pelo módulo; só leitura, mesmo princípio arquitetural da Central de Conferência.
 
 **Aplicativo**
@@ -234,7 +234,7 @@ Histórico completo, sprint a sprint, em **[`docs/roadmap/`](docs/roadmap/)**.
 
 ## Status atual do projeto
 
-Todas as funcionalidades descritas neste README estão implementadas, testadas (1.287 testes automatizados — 753 backend + 534 frontend) e refletidas fielmente nas capturas de tela e no GIF acima — nenhuma delas é aspiracional. A **Central Analítica V2 está homologada definitivamente** (2026-08-04): este README documenta a versão definitiva do Extrator de Diárias, em preparação para sua primeira publicação pública.
+Todas as funcionalidades descritas neste README estão implementadas, testadas (1.287 testes automatizados — 753 backend + 534 frontend) e refletidas fielmente nas capturas de tela e no GIF acima — nenhuma delas é aspiracional. A **Central Analítica V2 está homologada definitivamente** (2026-08-04): este README documenta a versão definitiva do Automatizador de Diárias, em preparação para sua primeira publicação pública.
 
 ## Dados sintéticos
 

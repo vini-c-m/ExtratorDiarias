@@ -15,6 +15,19 @@ compostos aqui: executivo, detalhado, financeiro, por_servidor,
 por_municipio, por_situacao. "Inconsistências" e "Qualidade dos dados"
 ficam de fora desta Sprint — ambos dependem do catálogo de diagnósticos
 (`app/domain/analitica/diagnostico.py`, Sprint 19.8), que ainda não existe.
+
+Sprint 21.9 (Modo Executivo — PDF executivo, `docs/central-analitica/
+modo-executivo-plano-tecnico.md § 8.2`) acrescenta um 7º tipo,
+`"visao_executiva"` — deliberadamente um tipo NOVO, nunca uma mudança na
+composição de `"executivo"` (já homologado para o fluxo operacional de
+Relatórios desde a Sprint 19.7.1) nem de `"detalhado"` (usado pelo botão
+"Exportar PDF" do Dashboard operacional, `DashboardRecorte.tsx` —
+alterar sua composição divergiria do que a tela já mostra hoje). Reflete
+exatamente as dimensões da grade do Modo Executivo
+(`GradeGraficosExecutivos.tsx`, Sprint 21.3): as 6 já existentes mais as 3
+aditivas da Sprint 21.1 (`categoria_funcional`/`doc_origem`/`transporte`)
+— nunca a dimensão `servidor`, que a grade executiva não usa. Sem tabela,
+mesmo critério de `"executivo"`.
 Risco já registrado no plano técnico (entrada 19.7.1, "Riscos"): se 19.7
 roda antes de 19.8 terminar, esses 2 tipos ficam bloqueados até lá — mesmo
 critério já homologado nas Sprints 19.6.1/19.6.3/19.6.4 para KPIs/dimensões/
@@ -68,6 +81,7 @@ TipoRelatorio = Literal[
     "por_servidor",
     "por_municipio",
     "por_situacao",
+    "visao_executiva",
 ]
 
 
@@ -86,12 +100,22 @@ _DIMENSOES_POR_TIPO: dict[TipoRelatorio, tuple[DimensaoDistribuicao, ...]] = {
     "por_servidor": ("servidor",),
     "por_municipio": ("municipio",),
     "por_situacao": ("situacao",),
+    "visao_executiva": (
+        "periodo",
+        "categoria_funcional",
+        "municipio",
+        "motivo",
+        "situacao",
+        "origem_destino",
+        "transporte",
+        "doc_origem",
+    ),
 }
 
 # Só "detalhado" inclui a tabela completa do recorte (§ 7.1: "tabela
 # completa do recorte") — os demais tipos são compostos só de indicadores/
 # distribuições agregadas, nunca de registro por registro.
-_TIPOS_COM_TABELA: frozenset[TipoRelatorio] = frozenset({"detalhado"})
+TIPOS_COM_TABELA: frozenset[TipoRelatorio] = frozenset({"detalhado"})
 
 
 def compor_relatorio(registros: list[RegistroAnalitico], tipo: TipoRelatorio) -> ConteudoRelatorio:
@@ -101,6 +125,6 @@ def compor_relatorio(registros: list[RegistroAnalitico], tipo: TipoRelatorio) ->
     caso especial aqui."""
     indicadores = calcular_indicadores(registros)
     distribuicoes = [calcular_distribuicao(registros, dimensao) for dimensao in _DIMENSOES_POR_TIPO[tipo]]
-    tabela = list(registros) if tipo in _TIPOS_COM_TABELA else []
+    tabela = list(registros) if tipo in TIPOS_COM_TABELA else []
 
     return ConteudoRelatorio(tipo=tipo, indicadores=indicadores, distribuicoes=distribuicoes, registros=tabela)

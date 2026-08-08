@@ -17,6 +17,7 @@ describe("Hub", () => {
         aoSelecionarProcessamento={vi.fn()}
         aoSelecionarConferencia={vi.fn()}
         aoSelecionarAnalitica={vi.fn()}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
       />,
     );
 
@@ -41,6 +42,7 @@ describe("Hub", () => {
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={aoSelecionarConferencia}
         aoSelecionarAnalitica={aoSelecionarAnalitica}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
       />,
     );
 
@@ -62,6 +64,7 @@ describe("Hub", () => {
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={aoSelecionarConferencia}
         aoSelecionarAnalitica={aoSelecionarAnalitica}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
       />,
     );
 
@@ -83,6 +86,7 @@ describe("Hub", () => {
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={aoSelecionarConferencia}
         aoSelecionarAnalitica={aoSelecionarAnalitica}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
       />,
     );
 
@@ -102,6 +106,7 @@ describe("Hub", () => {
         aoSelecionarProcessamento={aoSelecionarProcessamento}
         aoSelecionarConferencia={vi.fn()}
         aoSelecionarAnalitica={vi.fn()}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
       />,
     );
 
@@ -118,6 +123,7 @@ describe("Hub", () => {
         aoSelecionarProcessamento={vi.fn()}
         aoSelecionarConferencia={vi.fn()}
         aoSelecionarAnalitica={vi.fn()}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
       />,
     );
 

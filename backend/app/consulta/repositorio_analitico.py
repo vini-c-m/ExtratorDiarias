@@ -54,7 +54,7 @@ _COLUNAS_DIARIA = """sei, doc_origem, cpf, periodo_inicial, periodo_final,
                    cidade_origem, cidade_destino, motivo, transporte,
                    valor_total_diarias, linha_planilha,
                    servidor_nome, servidor_cargo, servidor_previdencia,
-                   servidor_matricula, servidor_situacao, dh"""
+                   servidor_matricula, servidor_situacao, dh, categoria_funcional"""
 
 # Mesmo formato de caractere já usado para reconhecer um número de processo
 # SEI em `app/extraction/parsers/sei_parser_v1.py:95` (`r"SEI\s*([\d./-]+)"`)
@@ -96,6 +96,10 @@ class FiltrosDiaria:
     trecho: str | None = None
     valor_minimo: float | None = None
     valor_maximo: float | None = None
+    # Sprint 20 (2026-08-05) — filtro primário "Todos | Membros |
+    # Servidores" do Recorte Analítico; `None`/ausente é "Todos" (nenhuma
+    # condição adicional), mesmo padrão de todo o resto desta dataclass.
+    categoria_funcional: str | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +256,10 @@ def _montar_where(filtros: FiltrosDiaria) -> tuple[str, list]:
         condicoes.append("servidor_situacao = ?")
         parametros.append(filtros.situacao)
 
+    if filtros.categoria_funcional:
+        condicoes.append("categoria_funcional = ?")
+        parametros.append(filtros.categoria_funcional)
+
     # Semântica de interseção (decisão aprovada 2026-07-30): uma diária
     # entra no resultado se seu intervalo tem qualquer sobreposição com o
     # intervalo filtrado — cada limite é independente e opcional.
@@ -313,6 +321,7 @@ def _linha_para_registro(linha: sqlite3.Row) -> RegistroAnalitico:
         linha_planilha=linha["linha_planilha"],
         servidor=servidor,
         dh=linha["dh"],
+        categoria_funcional=linha["categoria_funcional"],
     )
 
 
@@ -527,6 +536,35 @@ def estado_sincronizacao_registrado(caminho_sqlite: Path) -> InfoSincronizacaoCo
         linhas_ignoradas=linha["linhas_ignoradas"],
         total_avisos=total_avisos,
     )
+
+
+def versao_app_registrada(caminho_sqlite: Path) -> str | None:
+    """`versao_app` da sincronização mais recente (2026-08-06, achado real
+    — build empacotado desatualizado, ver `esquema.py` VERSAO_ESQUEMA=4) —
+    isolada de `_linha_sincronizacao_mais_recente`/`estado_sincronizacao_
+    registrado` DE PROPÓSITO: aquele SELECT é o único caminho que `GET
+    /sincronizacao` usa para relatar frescor com segurança mesmo contra um
+    `.sqlite` de uma versão de código anterior (é por isso que ele nunca lê
+    nenhuma coluna que já foi adicionada depois da Sprint 17.3 — só
+    `PRAGMA user_version`, sempre seguro, detecta esse caso). Colocar
+    `versao_app` naquele SELECT compartilhado quebraria essa garantia para
+    QUALQUER endpoint que o reaproveita (`GET /diarias`, `/indicadores`,
+    ...), não só `GET /sincronizacao` — regressão encontrada e corrigida
+    ainda nesta auditoria, antes de ir para produção. `None` (nunca
+    string vazia, que já tem o significado "backend rodou sem Electron")
+    quando a coluna `versao_app` ainda não existe (arquivo de uma
+    instalação anterior a esta versão do schema) — o chamador trata `None`
+    exatamente como "não dá para comparar", mesmo espírito de RN-E."""
+    conexao = _conectar_somente_leitura(caminho_sqlite)
+    try:
+        linha = conexao.execute(
+            "SELECT versao_app FROM sincronizacoes ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        conexao.close()
+    return linha["versao_app"] if linha is not None else None
 
 
 def avisos_paginados(caminho_sqlite: Path, paginacao: ParametrosPaginacao) -> PaginaDeAvisos:

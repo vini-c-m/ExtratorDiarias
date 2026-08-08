@@ -41,7 +41,35 @@ import sqlite3
 # tratar um schema desatualizado exatamente como "possivelmente
 # desatualizado" (mesmo estado de UI já homologado, `IndicadorSincronizacao`
 # — nenhum estado novo, só mais um motivo de disparar o já existente).
-VERSAO_ESQUEMA = 2
+#
+# Versão 3 (2026-08-05, Bloco de Refinamento item 2): nova coluna
+# `categoria_funcional`. Não confundir com `tipo_processo` (rejeitado
+# acima, na docstring do módulo) — `categoria_funcional` não é inferência
+# por heurística sobre um formulário do PDF; é uma classificação
+# determinística e testada sobre `servidor_cargo` (catálogo institucional
+# fechado, `app/domain/analitica/categoria_funcional.py`), a mesma coluna
+# cadastral que já é lida e gravada aqui desde a Sprint 17.3. Sempre
+# populada (nunca `NULL`) — inclusive `"NAO_IDENTIFICADO"` quando não há
+# cadastro (RN-01) ou quando o cargo não bate com nenhum catálogo
+# conhecido (ex.: "Policial Militar", achado real de 2026-08-05 — nunca
+# adivinhado para nenhum dos dois lados).
+#
+# Versão 4 (2026-08-06, achado real — Electron empacotado + Planilha
+# Oficial real): nova coluna `versao_app` em `sincronizacoes`. Achado desta
+# auditoria: o binário empacotado do backend (`extrator_diarias_backend.exe`,
+# PyInstaller) fica congelado no código-fonte do momento em que foi gerado
+# — uma correção de lógica de importação (ex.: `_valor_como_numero`,
+# `base_local.py` `data_only=True`) só chega ao usuário quando o `.exe`
+# instalado é reconstruído e reinstalado, nunca automaticamente. Nem o sinal
+# de conteúdo (`SinalFrescor` — planilha não mudou) nem `VERSAO_ESQUEMA`
+# acima (formato das tabelas não mudou) detectam essa situação: os dois
+# ficam "iguais" entre uma instalação antiga e uma nova mesmo quando a
+# LÓGICA de importação mudou. `versao_app` (gravada a cada reconstrução,
+# lida de `app.getVersion()`/`package.json` via a mesma variável de
+# ambiente que já leva `EXTRATOR_DIARIAS_USER_DATA`) fecha essa lacuna: uma
+# instalação nova (versão diferente) sempre força re-sincronização, mesmo
+# quando planilha e schema de tabelas não mudaram nem um pouco.
+VERSAO_ESQUEMA = 4
 
 SQL_CRIAR_DIARIAS = """
 CREATE TABLE IF NOT EXISTS diarias (
@@ -62,7 +90,8 @@ CREATE TABLE IF NOT EXISTS diarias (
     servidor_cargo TEXT,
     servidor_previdencia TEXT,
     servidor_matricula TEXT,
-    servidor_situacao TEXT
+    servidor_situacao TEXT,
+    categoria_funcional TEXT NOT NULL DEFAULT 'NAO_IDENTIFICADO'
 )
 """
 
@@ -77,7 +106,8 @@ CREATE TABLE IF NOT EXISTS sincronizacoes (
     status TEXT NOT NULL,
     tamanho_bytes_fonte INTEGER NOT NULL,
     mtime_fonte REAL NOT NULL,
-    linhas_controle_diarias_fonte INTEGER NOT NULL
+    linhas_controle_diarias_fonte INTEGER NOT NULL,
+    versao_app TEXT NOT NULL DEFAULT ''
 )
 """
 # As 3 últimas colunas guardam o sinal de frescor de conteúdo (tamanho +
@@ -107,6 +137,7 @@ SQL_CRIAR_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_diarias_servidor_matricula ON diarias (servidor_matricula)",
     "CREATE INDEX IF NOT EXISTS idx_diarias_servidor_situacao ON diarias (servidor_situacao)",
     "CREATE INDEX IF NOT EXISTS idx_diarias_valor_total_diarias ON diarias (valor_total_diarias)",
+    "CREATE INDEX IF NOT EXISTS idx_diarias_categoria_funcional ON diarias (categoria_funcional)",
     "CREATE INDEX IF NOT EXISTS idx_avisos_sincronizacao_id ON avisos_sincronizacao (sincronizacao_id)",
 ]
 

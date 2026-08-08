@@ -18,6 +18,7 @@ const ROTULO_COLUNA_OPCIONAL: Record<ColunaOpcional, string> = {
   cpf: "CPF (mascarado)",
   doc_origem: "Documento de origem",
   transporte: "Transporte",
+  categoria_funcional: "Categoria (Membro/Servidor)",
 };
 
 // Sprint 19.5.7 — popover de configuração de colunas

@@ -11,6 +11,8 @@ from app.schemas.analitica import (
     DiariaCompletaResposta,
     DiariaResumoResposta,
     DistribuicaoResposta,
+    DocumentoHabilPendenteResposta,
+    DocumentosHabeisPendentesResposta,
     EstadoSincronizacaoResposta,
     EstadoSincronizacaoResumidoResposta,
     ExecucaoSincronizacaoResposta,
@@ -21,6 +23,7 @@ from app.schemas.analitica import (
     PaginacaoResposta,
     ParametrosDiagnosticoQuery,
     ParametrosDistribuicaoQuery,
+    ParametrosDocumentosHabeisPendentesQuery,
     ParametrosIndicadoresQuery,
     ParametrosPesquisaDiariasQuery,
     ParametrosRelatorioQuery,
@@ -31,6 +34,7 @@ from app.schemas.analitica import (
     RelatorioGeradoResposta,
     ResultadoPesquisaResposta,
     ResumoDiagnosticoResposta,
+    ResumoDocumentosHabeisPendentesResposta,
     ServidorCompletoResposta,
     ServidorResumoResposta,
     TrechoResposta,
@@ -52,6 +56,7 @@ from app.services.analitica_service import (
     executar_sincronizacao_manual,
     gerar_relatorio,
     listar_avisos_sincronizacao,
+    listar_documentos_habeis_pendentes,
     mascarar_cpf,
     obter_opcoes_filtro,
     pesquisar_diarias,
@@ -70,18 +75,22 @@ def _filtros_da_query(
     | ParametrosIndicadoresQuery
     | ParametrosDistribuicaoQuery
     | FiltrosRelatorioQuery
-    | ParametrosDiagnosticoQuery,
+    | ParametrosDiagnosticoQuery
+    | ParametrosDocumentosHabeisPendentesQuery,
 ) -> FiltrosDiaria:
     """Sprint 19.6.2 — extraído do corpo de `listar_diarias` para ser
     compartilhado com `obter_indicadores` (Sprint 19.6.3 — também com
     `obter_distribuicoes`; Sprint 19.7.2 — também com `gerar_relatorio`,
     via `ParametrosRelatorioQuery.filtros`; Sprint 19.8.2 — também com
-    `obter_diagnostico`): as cinco rotas usam exatamente os mesmos 15
-    campos de filtro (`ParametrosPesquisaDiariasQuery`/
-    `ParametrosIndicadoresQuery`/`ParametrosDistribuicaoQuery`/
-    `FiltrosRelatorioQuery`/`ParametrosDiagnosticoQuery` só diferem em
-    paginação/ordenação/`dimensao`, que esta função nunca lê). Um único
-    ponto de tradução elimina o risco de as rotas divergirem
+    `obter_diagnostico`; correção de foco 2026-08-05 — também com
+    `obter_documentos_habeis_pendentes`, para a contagem exibida no botão
+    sempre respeitar o Recorte Analítico atual, § 7 do pedido): as seis
+    rotas usam exatamente os mesmos 15 campos de filtro
+    (`ParametrosPesquisaDiariasQuery`/`ParametrosIndicadoresQuery`/
+    `ParametrosDistribuicaoQuery`/`FiltrosRelatorioQuery`/
+    `ParametrosDiagnosticoQuery`/`ParametrosDocumentosHabeisPendentesQuery`
+    só diferem em paginação/ordenação/`dimensao`, que esta função nunca
+    lê). Um único ponto de tradução elimina o risco de as rotas divergirem
     silenciosamente se um filtro novo for adicionado só numa delas —
     mesmo espírito da regra já aplicada a
     `repositorio_analitico._montar_where` (nunca duas definições da mesma
@@ -102,6 +111,7 @@ def _filtros_da_query(
         trecho=parametros.trecho,
         valor_minimo=parametros.valor_minimo,
         valor_maximo=parametros.valor_maximo,
+        categoria_funcional=parametros.categoria_funcional,
     )
 
 
@@ -145,6 +155,7 @@ def listar_diarias(
                 doc_origem=registro.doc_origem,
                 transporte=registro.transporte,
                 cpf_mascarado=mascarar_cpf(registro.cpf),
+                categoria_funcional=registro.categoria_funcional,
             )
             for registro in resultado.pagina.itens
         ],
@@ -256,6 +267,48 @@ def obter_diagnostico(
     )
 
 
+@router.get("/documentos-habeis-pendentes", response_model=DocumentosHabeisPendentesResposta)
+def obter_documentos_habeis_pendentes(
+    parametros: Annotated[ParametrosDocumentosHabeisPendentesQuery, Query()],
+) -> DocumentosHabeisPendentesResposta:
+    """Correção de foco (pedido explícito do usuário, 2026-08-05) —
+    substitui a experiência antes exposta pelo botão "Análise Rápida
+    (Diagnóstico)": roda só sobre o recorte filtrado (mesmo critério de
+    `obter_diagnostico`), mas devolve exclusivamente os registros com `dh`
+    vazio, já classificados/ordenados por `documentos_habeis_pendentes_
+    dominio`. `GET /diagnostico` (rota acima) continua existindo sem
+    nenhuma mudança — usado internamente pelo Modo Executivo."""
+    filtros = _filtros_da_query(parametros)
+
+    try:
+        resultado = listar_documentos_habeis_pendentes(filtros)
+    except BaseAnaliticaIndisponivel as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+
+    return DocumentosHabeisPendentesResposta(
+        resumo=ResumoDocumentosHabeisPendentesResposta(
+            aguardando_liberacao=resultado.resumo.aguardando_liberacao,
+            revisao_manual_necessaria=resultado.resumo.revisao_manual_necessaria,
+        ),
+        registros=[
+            DocumentoHabilPendenteResposta(
+                sei=pendente.sei,
+                servidor_nome=pendente.servidor_nome,
+                cpf_mascarado=mascarar_cpf(pendente.cpf),
+                periodo=PeriodoResposta(inicial=pendente.periodo_inicial, final=pendente.periodo_final),
+                destino=pendente.cidade_destino,
+                data_liberacao_prevista=pendente.data_liberacao_prevista,
+                situacao=pendente.situacao,
+                dias_restantes=pendente.dias_restantes,
+                dias_atraso=pendente.dias_atraso,
+                texto_contagem=pendente.texto_contagem,
+                mensagem=pendente.mensagem,
+            )
+            for pendente in resultado.registros
+        ],
+    )
+
+
 @router.post("/relatorios", response_model=RelatorioGeradoResposta)
 def gerar_relatorio_endpoint(parametros: ParametrosRelatorioQuery) -> RelatorioGeradoResposta:
     """Sprint 19.7.2 — corpo JSON (`POST`), não query string: gerar um
@@ -272,6 +325,7 @@ def gerar_relatorio_endpoint(parametros: ParametrosRelatorioQuery) -> RelatorioG
         incluir_tabela=parametros.incluir_tabela,
         incluir_inconsistencias=parametros.incluir_inconsistencias,
         modo=parametros.modo,
+        insights=parametros.insights,
     )
 
     try:
@@ -352,6 +406,7 @@ def obter_diaria(sei: str) -> DiariaCompletaResposta:
             )
             for caso in resultado.diagnosticos
         ],
+        categoria_funcional=registro.categoria_funcional,
     )
 
 

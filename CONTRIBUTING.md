@@ -1,6 +1,6 @@
 # Contribuindo
 
-Obrigado por considerar contribuir com o Extrator de Diárias. Este documento cobre o que você precisa saber antes de abrir um PR.
+Obrigado por considerar contribuir com o Automatizador de Diárias. Este documento cobre o que você precisa saber antes de abrir um PR.
 
 ## Política de dados sintéticos (leitura obrigatória)
 

@@ -1,8 +1,8 @@
 {
   "name": "extrator-diarias-frontend",
-  "productName": "Extrator de Diárias",
+  "productName": "Automatizador de Diárias",
   "private": true,
-  "version": "1.0.0-RC2",
+  "version": "2.0.0",
   "description": "Automação Inteligente de Processos",
   "author": "Vinicius Mendes",
   "main": "dist-electron/main.js",
@@ -14,7 +14,7 @@
     "build:vite": "vite build",
     "build:electron": "tsc -p electron/tsconfig.json",
     "build": "npm run build:vite && npm run build:electron",
-    "build:icon": "node scripts/gerar-icone.mjs",
+    "build:icon": "node scripts/gerar-icone.mjs && node scripts/gerar-icone-instalador.mjs",
     "build:backend": "cd ../backend && .venv\\Scripts\\python.exe -m PyInstaller extrator_diarias_backend.spec --noconfirm --distpath dist --workpath build",
     "release": "npm run build && npm run build:backend && electron-builder --win --x64 --publish=never",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -74,6 +74,7 @@
     ],
     "win": {
       "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
       "target": [
         {
           "target": "nsis",
@@ -89,9 +90,9 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "installerIcon": "build/icon.ico",
+      "installerIcon": "build/icon-installer.ico",
       "uninstallerIcon": "build/icon.ico",
-      "shortcutName": "Extrator de Diárias",
+      "shortcutName": "Automatizador de Diárias",
       "include": "build/installer.nsh"
     }
   }

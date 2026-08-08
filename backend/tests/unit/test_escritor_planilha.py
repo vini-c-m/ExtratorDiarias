@@ -71,6 +71,27 @@ def test_preencher_grava_somente_colunas_esperadas(caminho_planilha_teste):
         assert planilha[f"{coluna}{linha}"].value is None
 
 
+# --- Programa Permanente de QA Evolutivo (2026-08-06) — sufixo de UF em
+# cidade_destino vazando para o TRECHO -------------------------------------
+
+
+def test_preencher_remove_sufixo_de_uf_do_trecho(caminho_planilha_teste):
+    """Processo real SEI 19.20.0001.0001165/2026-47: 'CIDADE(S) DESTINO:
+    Santa Filomena/PE' — o sufixo '/PE' é necessário para a resolução da
+    coluna Q (estado_destino), mas nunca deveria aparecer no TRECHO (coluna
+    J): nenhuma das quase 1900 linhas já existentes na planilha oficial usa
+    esse formato."""
+    caminho = caminho_planilha_teste()
+    diaria = replace(_diaria(), cidade_origem="Ouricuri", cidade_destino="Santa Filomena/PE")
+    processo = Processo(arquivo_origem="arquivo.pdf", status=StatusProcesso.SUCESSO, diaria=diaria)
+
+    preencher(caminho, [processo])
+
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+    assert planilha["J4"].value == "Ouricuri - Santa Filomena"
+
+
 def test_preencher_item_gravado_carrega_a_linha_escrita(caminho_planilha_teste):
     caminho = caminho_planilha_teste()
 

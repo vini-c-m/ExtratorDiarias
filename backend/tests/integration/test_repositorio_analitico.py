@@ -159,6 +159,62 @@ def test_listar_diarias_filtro_situacao_exata(caminho_base):
     assert pagina.itens[0].cpf == "33333333333"
 
 
+def test_listar_diarias_categoria_funcional_calculada_no_recorte_padrao(caminho_base):
+    """Nenhum dos 5 registros de `_REGISTROS` tem cargo de membro
+    (`_SERVIDORES` só usa cargos administrativos, e a 4ª diária não tem
+    cadastro) — sem filtro (`Todos`), a Base Local já classifica cada um
+    corretamente: SERVIDOR para os 4 com cadastro, NAO_IDENTIFICADO para
+    o único sem (RN-01)."""
+    pagina = listar_diarias(caminho_base, _FILTROS_VAZIOS, _PAGINACAO_PADRAO, _ORDENACAO_PADRAO)
+    por_cpf = {registro.cpf: registro.categoria_funcional for registro in pagina.itens}
+    assert por_cpf == {
+        "11111111111": "SERVIDOR",
+        "22222222222": "SERVIDOR",
+        "33333333333": "SERVIDOR",
+        "44444444444": "NAO_IDENTIFICADO",
+        "55555555555": "SERVIDOR",
+    }
+
+
+def test_listar_diarias_filtro_categoria_funcional_servidor(caminho_base):
+    filtros = FiltrosDiaria(categoria_funcional="SERVIDOR")
+    pagina = listar_diarias(caminho_base, filtros, _PAGINACAO_PADRAO, _ORDENACAO_PADRAO)
+    assert pagina.total_itens == 4
+    assert all(registro.categoria_funcional == "SERVIDOR" for registro in pagina.itens)
+
+
+def test_listar_diarias_filtro_categoria_funcional_membro(tmp_path):
+    """Base dedicada com um cadastro de membro real (Promotor de Justiça)
+    para provar que o filtro `MEMBRO` isola exatamente esse registro,
+    sem afetar os demais já cobertos por `caminho_base`."""
+    registros = [
+        *_REGISTROS,
+        _registro(
+            "19.20.0001.0000008/2026-08", "88888888888",
+            date(2026, 8, 1), date(2026, 8, 2), "RECIFE", "CARUARU", "Correição",
+            linha=9,
+        ),
+    ]
+    servidores = {
+        **_SERVIDORES,
+        "88888888888": Servidor(
+            cpf="88888888888", nome="Carlos Mendes",
+            cargo="Promotor de Justiça de 2a. entrância",
+            previdencia="FUNAFIN", matricula="2001", situacao="Em exercício",
+        ),
+    }
+    destino = _construir_base(tmp_path, registros, servidores, nome_arquivo="base_membro.sqlite")
+
+    filtros = FiltrosDiaria(categoria_funcional="MEMBRO")
+    pagina = listar_diarias(destino, filtros, _PAGINACAO_PADRAO, _ORDENACAO_PADRAO)
+    assert pagina.total_itens == 1
+    assert pagina.itens[0].cpf == "88888888888"
+    assert pagina.itens[0].categoria_funcional == "MEMBRO"
+
+    todos = listar_diarias(destino, _FILTROS_VAZIOS, _PAGINACAO_PADRAO, _ORDENACAO_PADRAO)
+    assert todos.total_itens == 6
+
+
 def test_listar_diarias_filtro_periodo_intersecao_exclui_nao_sobreposto(caminho_base):
     filtros = FiltrosDiaria(periodo_inicial=date(2026, 2, 15), periodo_final=date(2026, 3, 10))
     pagina = listar_diarias(caminho_base, filtros, _PAGINACAO_PADRAO, _ORDENACAO_PADRAO)
@@ -765,3 +821,129 @@ def test_agregar_indicadores_base_local_invalida_levanta_erro(tmp_path):
     caminho_invalido.write_bytes(b"isto nao e um banco sqlite")
     with pytest.raises(sqlite3.Error):
         agregar_indicadores(caminho_invalido, _FILTROS_VAZIOS)
+
+
+# --- URGENTE — Central Analítica (2026-08-06): `versao_app_registrada`
+# (achado real do 2º rastreamento — build empacotado desatualizado, ver
+# `esquema.py` VERSAO_ESQUEMA=4). Deliberadamente isolada de
+# `estado_sincronizacao_registrado`/`_linha_sincronizacao_mais_recente`
+# (usada por `GET /diarias`, `/indicadores`, ... — não só `GET
+# /sincronizacao`): uma regressão real foi encontrada e corrigida ainda
+# nesta auditoria — colocar `versao_app` naquele SELECT compartilhado
+# quebrava TODOS esses endpoints (não só o de sincronização) contra um
+# `.sqlite` de uma instalação anterior a esta versão do schema, com
+# `sqlite3.OperationalError: no such column: versao_app`. Os testes abaixo
+# travam essa garantia: a leitura de `versao_app` precisa ficar sempre
+# isolada, tolerante à coluna não existir, sem afetar nenhum outro
+# endpoint. -------------------------------------------------------------
+
+
+def test_versao_app_registrada_devolve_valor_gravado(tmp_path):
+    from app.consulta.repositorio_analitico import versao_app_registrada
+
+    destino = _construir_base(tmp_path, _REGISTROS, _SERVIDORES)
+    conexao = sqlite3.connect(destino)
+    try:
+        conexao.execute("UPDATE sincronizacoes SET versao_app = ?", ("2.1.0",))
+        conexao.commit()
+    finally:
+        conexao.close()
+
+    assert versao_app_registrada(destino) == "2.1.0"
+
+
+def test_versao_app_registrada_devolve_string_vazia_quando_nunca_informada(tmp_path):
+    """`base_local_sqlite.reconstruir` sem Electron grava `""`, nunca
+    `NULL` — `versao_app_registrada` devolve exatamente isso, nunca `None`
+    quando a coluna existe (só `None` quando a coluna em si não existe,
+    ver teste seguinte)."""
+    from app.consulta.repositorio_analitico import versao_app_registrada
+
+    destino = _construir_base(tmp_path, _REGISTROS, _SERVIDORES)
+
+    assert versao_app_registrada(destino) == ""
+
+
+def test_versao_app_registrada_devolve_none_quando_coluna_nao_existe_ainda(tmp_path):
+    """Reproduz um `.sqlite` de uma instalação anterior à Sprint que
+    introduziu `versao_app` (VERSAO_ESQUEMA=3, sem essa coluna em
+    `sincronizacoes`) — cenário genuinamente real: o usuário ainda não
+    rodou "Sincronizar agora" desde que atualizou o app. Nunca propaga
+    `sqlite3.OperationalError`; `None` sinaliza "não dá para comparar",
+    distinto de `""` ("comparável, mas nunca informada")."""
+    from app.consulta.repositorio_analitico import versao_app_registrada
+
+    destino = tmp_path / "base_local_schema_v3.sqlite"
+    conexao = sqlite3.connect(destino)
+    try:
+        # Mesmo DDL de `sincronizacoes` antes da Sprint que adicionou
+        # `versao_app` (VERSAO_ESQUEMA=3) — reproduzido aqui deliberadamente
+        # sem essa coluna, nunca importando `criar_esquema` (que já inclui
+        # a coluna nova por definição).
+        conexao.execute(
+            """
+            CREATE TABLE sincronizacoes (
+                id INTEGER PRIMARY KEY,
+                sincronizado_em TEXT NOT NULL,
+                origem TEXT NOT NULL,
+                linhas_diarias INTEGER NOT NULL,
+                linhas_servidores_lidos INTEGER NOT NULL,
+                linhas_ignoradas INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                tamanho_bytes_fonte INTEGER NOT NULL,
+                mtime_fonte REAL NOT NULL,
+                linhas_controle_diarias_fonte INTEGER NOT NULL
+            )
+            """
+        )
+        conexao.execute(
+            "INSERT INTO sincronizacoes VALUES (1, '2026-08-01T00:00:00', 'teste', 0, 0, 0, 'sucesso', 1, 1.0, 1)"
+        )
+        conexao.execute("PRAGMA user_version = 3")
+        conexao.commit()
+    finally:
+        conexao.close()
+
+    assert versao_app_registrada(destino) is None
+
+
+def test_estado_sincronizacao_registrado_nunca_quebra_contra_sqlite_sem_coluna_versao_app(
+    tmp_path,
+):
+    """A garantia central desta correção: `GET /sincronizacao` (e, por
+    reaproveitar o mesmo SELECT, `GET /diarias`/`/indicadores`/...) precisa
+    continuar lendo normalmente um `.sqlite` de uma instalação anterior à
+    introdução de `versao_app` — a leitura de frescor de versão do app é
+    responsabilidade só de `versao_app_registrada`, nunca deste caminho
+    compartilhado."""
+    destino = tmp_path / "base_local_schema_v3.sqlite"
+    conexao = sqlite3.connect(destino)
+    try:
+        conexao.execute(
+            """
+            CREATE TABLE sincronizacoes (
+                id INTEGER PRIMARY KEY,
+                sincronizado_em TEXT NOT NULL,
+                origem TEXT NOT NULL,
+                linhas_diarias INTEGER NOT NULL,
+                linhas_servidores_lidos INTEGER NOT NULL,
+                linhas_ignoradas INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                tamanho_bytes_fonte INTEGER NOT NULL,
+                mtime_fonte REAL NOT NULL,
+                linhas_controle_diarias_fonte INTEGER NOT NULL
+            )
+            """
+        )
+        conexao.execute(
+            "INSERT INTO sincronizacoes VALUES (1, '2026-08-01T00:00:00', 'teste', 0, 0, 0, 'sucesso', 1, 1.0, 1)"
+        )
+        conexao.execute("CREATE TABLE avisos_sincronizacao (id INTEGER PRIMARY KEY, sincronizacao_id INTEGER)")
+        conexao.execute("PRAGMA user_version = 3")
+        conexao.commit()
+    finally:
+        conexao.close()
+
+    info = estado_sincronizacao_registrado(destino)
+    assert info.sincronizado_em == "2026-08-01T00:00:00"
+    assert info.total_avisos == 0

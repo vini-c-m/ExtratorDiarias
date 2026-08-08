@@ -136,6 +136,21 @@ Cada atalho é só um preenchimento automático dos campos acima — nenhum exig
 | Registros incompletos | = "registros com campos vazios" (§ 3.1) |
 | Registros com possível inconsistência | = "registros com inconsistências" (§ 3.1), mesmo catálogo do Diagnóstico (§ 8) |
 
+> **Decisão de produto (2026-08-06) — controles retirados da interface.**
+> Os atalhos "Registros incompletos" e "Registros com possível inconsistência"
+> foram implementados (Sprint 19.5.6) sempre visíveis, porém permanentemente
+> desabilitados — critério de aceite explícito da época ("nunca escondidos"),
+> por dependerem da resposta do DIMCAC às perguntas 5/6 do § 14, ainda em
+> aberto. O responsável pelo produto decidiu que um controle permanentemente
+> desabilitado, sem nenhum comportamento funcional, não deve ficar exposto na
+> tela de produção — mesmo documentado como planejado. Os dois atalhos foram
+> **removidos de `FiltrosRapidos.tsx`** nessa data; esta tabela e o critério
+> de aceite original permanecem aqui só como registro histórico do
+> planejamento, não como especificação do que está em produção hoje. Nenhuma
+> pergunta do § 14 foi respondida ou antecipada por essa remoção — quando o
+> DIMCAC decidir, os atalhos voltam a ser implementados (desta vez já
+> funcionais, sem passar por um estado desabilitado intermediário).
+
 ### 3.3 Regra de combinação
 
 Mantém a semântica já aprovada e implementada: todos os filtros preenchidos se combinam por **interseção (AND)** — decisão já oficial (`repositorio_analitico.py:222`, "Semântica de interseção, aprovada 2026-07-30"). Esta Sprint não propõe mudar isso.
@@ -219,6 +234,21 @@ Cada botão navega para a respectiva visualização carregando o **mesmo objeto 
 | Origem × Destino | Matriz ou top pares `cidade_origem` → `cidade_destino` |
 | Completos × incompletos | Proporção simples (pizza/barra), mesma base do KPI "registros incompletos" |
 
+> **Decisão de produto (2026-08-06) — controles retirados da interface.**
+> "Total de municípios", "Registros completos", "Registros incompletos",
+> "Aguardando liberação" (§ 6.1) e "Completos × incompletos" (§ 6.2) foram
+> implementados (Sprint 19.6.4) como cartões/painel sempre visíveis, porém
+> permanentemente mostrando "Pendente" — nenhum dos cinco tem regra de
+> negócio homologada, endpoint funcional ou cálculo real hoje: todos
+> dependem das perguntas 2/4/5 do § 14, ainda em aberto com o DIMCAC. O
+> responsável pelo produto decidiu retirá-los de `DashboardRecorte.tsx`
+> nessa data — um elemento que nunca sai do estado "Pendente" não entrega
+> valor imediato, mesmo documentado como planejado. Esta tabela permanece
+> como registro histórico do catálogo completo (§ 6.1 original tinha 9
+> KPIs, § 6.2 tinha 8 gráficos); os 4 KPIs e o gráfico realmente em
+> produção são só os que não estão marcados acima. Quando o DIMCAC decidir,
+> os 5 voltam — desta vez já funcionais.
+
 ### 6.3 Interações
 
 | Interação | Comportamento |
@@ -245,6 +275,21 @@ Cada botão navega para a respectiva visualização carregando o **mesmo objeto 
 | Por situação | Agrupado por `servidor_situacao`. |
 | Inconsistências | Lista só dos registros sinalizados pelo Diagnóstico (§ 8), com a classificação de cada um. |
 | Qualidade dos dados | Visão agregada: % de registros completos/incompletos, contagem por tipo de lacuna — não é sobre uma diária específica, é sobre a saúde do recorte. |
+
+> **Decisão de produto (2026-08-06) — controles retirados da interface.**
+> "Inconsistências" e "Qualidade dos dados" foram implementados (Sprint
+> 19.7.2) em `ModalRelatorio.tsx` como opções sempre visíveis, porém
+> permanentemente desabilitadas — o backend já os recusa hoje com `422`
+> (`TipoRelatorioIndisponivel`), porque `compor_relatorio`/
+> `_construir_secoes` nunca chegaram a compor uma seção real a partir do
+> catálogo de diagnósticos (`diagnostico.py`, existente desde a Sprint
+> 19.8.1, mas nunca conectado a `relatorios.py`). O responsável pelo
+> produto decidiu retirar as duas opções da lista visível nessa data — um
+> tipo de relatório que sempre falha com `422` não entrega valor, mesmo
+> documentado como planejado. Esta tabela permanece como registro
+> histórico do catálogo completo de 8 tipos; os 6 tipos realmente
+> disponíveis hoje são só os 6 primeiros. Quando `compor_relatorio`
+> implementar as duas seções, as opções voltam — desta vez já funcionais.
 
 ### 7.2 Formatos
 
@@ -278,7 +323,8 @@ PDF, Excel (`.xlsx`) e CSV — os três já citados no pedido original (`README.
 
 | Caso | Classificação | Explicação rastreável |
 | --- | --- | --- |
-| **DH (coluna `A`) vazia** | Depende do estágio do processo — ver correção abaixo | `DH` é escrito pelo próprio sistema a partir do Despacho de Validação extraído do PDF (`COLUNA_DH`, `escritor_planilha.py`); a extração já documenta e testa (`test_documento_habil.py::test_processo_sem_nota_de_liquidacao_fica_sem_dh`) que **"processo que ainda não chegou à fase de liquidação — nenhum DH no texto. Isso é esperado, não é um erro."** → classificar como **esperado** quando o processo é recente/ainda em tramitação; **atenção** se o processo é antigo (ex.: > 60 dias, limiar a confirmar com o DIMCAC) e ainda sem DH. |
+| **DH (coluna `A`) vazia** | Depende de evidência objetiva — ver correção de 2026-08-05 abaixo | `DH` é escrito pelo próprio sistema a partir do Despacho de Validação extraído do PDF (`COLUNA_DH`, `escritor_planilha.py`); a extração já documenta e testa (`test_documento_habil.py::test_processo_sem_nota_de_liquidacao_fica_sem_dh`) que **"processo que ainda não chegou à fase de liquidação — nenhum DH no texto. Isso é esperado, não é um erro."** |
+| **Correção de 2026-08-05 (Bloco de Refinamento item 1)** | — | O limiar de "processo antigo demais" (pergunta 3/6, § 9) nunca foi confirmado pelo DIMCAC e continua sem resposta — em vez disso, `_caso_dh_vazio` passou a checar a única evidência documental objetiva já homologada e disponível (a mesma janela RN-06/RN-10 de PASSAR DIA): **esperado** com o texto "Documento Hábil ainda não disponível. Aguardar a data de liberação." quando a janela ainda não abriu; **atenção** com "Documento Hábil ausente. Motivo não identificado automaticamente. Recomenda-se investigação." quando a janela já abriu e o DH continua vazio (nenhuma outra evidência disponível — `DMTC`/`DMOF`/"ESTORNO DE DH" não são ingeridos no SQLite analítico hoje). Proibido explicitamente assumir que todo DH vazio é "aguardar liberação" sem checar essa evidência primeiro. |
 | **Correção necessária ao pedido original** | — | O exemplo do pedido ("DH vazia → aguardando liberação pela data, conforme fórmula da planilha") descreve na verdade a coluna **`V` — PASSAR DIA** (`Vn = Hn - 15`, RN-06), não a coluna `DH`. São duas colunas e duas regras diferentes — `DH` não é fórmula, é escrita direta do sistema após a extração do PDF; `PASSAR DIA` é fórmula de data. Este documento usa a regra real e documentada de cada uma (não inventa uma explicação só para preencher o exemplo do pedido). |
 | **Valores ausentes** (`valor_total_diarias` nulo) | Atenção | `P = R + S`, calculado por fórmula (RN-05) a partir do estado de destino (`Q`) em `Tabela Valores`; nulo pode significar que `Q`/`N`/`O` ainda não foram preenchidos, ou que o estado não bate com nenhuma faixa da `Tabela Valores` — não há regra documentada que diga "vazio aqui é normal", então fica **atenção**, não **esperado**. |
 | **Matrícula ausente** | Depende do CPF ter cadastro em `Dados` | Se o CPF da diária não existe em `Dados`, o servidor é `None` na Central Analítica (já documentado, `RegistroAnalitico.servidor`) — **esperado** só se o próprio cadastro do servidor também estiver ausente (RN-01: `#N/A` no Excel = "servidor ainda não cadastrado"); se o servidor existe mas a matrícula específica está vazia, é **atenção** (dado cadastral incompleto na aba `Dados`, fora do controle da Central Analítica). |
@@ -302,10 +348,10 @@ Antes de qualquer diagnóstico definitivo (§ 8) virar comportamento implementad
 
 1. **Quais colunas têm fórmula, e quais são preenchidas pelo sistema?** — Já mapeado por completo em `docs/central-conferencia/README.md § 2.1`; este documento reaproveita esse mapeamento (não remapeia).
 2. **Quais colunas podem ficar vazias legitimamente, e sob qual condição?** — Parcialmente respondido (`DH`: sim, se o processo ainda não chegou à liquidação; fórmulas de `VLOOKUP`: sim, se o CPF não tem cadastro). Falta confirmar as demais (valor, origem/destino, matrícula) com o DIMCAC.
-3. **Quando o vazio deixa de ser esperado e passa a ser inconsistência?** — Sem limiar definido hoje (ex.: "DH vazio há mais de X dias é atenção"). Precisa de decisão explícita do DIMCAC, não de suposição.
+3. **Quando o vazio deixa de ser esperado e passa a ser inconsistência?** — Sem limiar de "dias" definido pelo DIMCAC (segue em aberto). **Resolvido de forma diferente em 2026-08-05** para o caso de DH: em vez de um limiar de idade, `_caso_dh_vazio` usa a janela RN-06/RN-10 (já homologada) como evidência objetiva — ver § 8.2. Nunca vira "inconsistência" (não há evidência suficiente para acusar um erro), só "esperado" ou "atenção".
 4. **Como a data interfere?** — `PASSAR DIA` (RN-06) já é a regra confirmada para "aguardando liberação por data". Falta decidir se ela deve ser: (a) calculada em tempo de consulta a partir de `periodo_inicial`, ou (b) persistida como coluna derivada no esquema SQLite na sincronização (Sprint 17.3, esquema hoje não tem esse campo).
 5. **Como a "situação" interfere?** — Confirmar com o DIMCAC se `servidor_situacao` (`Dados!H`, cadastral) é de fato o único "situação" relevante para filtro/diagnóstico, ou se existe uma necessidade real de rastrear "situação do processo" (ex.: em tramitação / concluído / cancelado) que hoje **não existe em nenhuma coluna homologada** da planilha.
-6. **Especificamente a coluna `DH`:** confirmar com o DIMCAC o limiar de "processo antigo demais para estar sem DH" (pergunta 3), e se o Diagnóstico deve usar `DMTC`/`DMOF` (colunas `T`/`U`, datas de registro administrativo, ~89% preenchidas) como referência adicional de quando o DH deveria ter sido emitido.
+6. **Especificamente a coluna `DH`:** o limiar de "processo antigo demais" segue sem confirmação do DIMCAC — contornado em 2026-08-05 usando a janela RN-06/RN-10 como evidência (§ 8.2/§ 3 acima), sem precisar desse limiar. Ainda em aberto: se o Diagnóstico deve usar `DMTC`/`DMOF` (colunas `T`/`U`, ~89% preenchidas) como referência adicional — hoje nenhum dos dois é ingerido no SQLite analítico (`RegistroAnalitico` não tem esses campos), então usá-los seria uma ampliação de escopo nova, não decidida nesta correção.
 7. **O que conta como "registro incompleto" para o filtro sintético (§ 3.1)?** — Precisa de uma lista fechada de campos (provável: destino, valor, matrícula, situação) e da regra "quantos precisam estar vazios para contar" (1 já basta, ou um mínimo).
 8. **Existe uma regra real de faixa de valor aceitável por estado (para o diagnóstico "dados incoerentes")?** — Hoje não há nenhuma documentada além do cálculo de RN-05; sem resposta, o diagnóstico correspondente permanece "motivo não determinado automaticamente" (regra obrigatória do pedido).
 

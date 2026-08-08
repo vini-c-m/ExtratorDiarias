@@ -2,6 +2,7 @@ import os
 
 from app.domain.entities.erro_extracao import ErroExtracao
 from app.domain.entities.lote_processamento import LoteProcessamento
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo, StatusProcesso
 from app.domain.rules.validacao_diaria import validar
 from app.extraction import pdf_reader
@@ -9,13 +10,19 @@ from app.extraction.enriquecimento import enriquecer_processo
 from app.extraction.parsers.parser_factory import obter_parser
 
 
-def processar_lote(caminhos: list[str]) -> LoteProcessamento:
+def processar_lote(
+    caminhos: list[str], modo: ModoProcessamento = ModoProcessamento.PADRAO
+) -> LoteProcessamento:
     """Orquestra leitura -> parser -> domínio -> validação para cada PDF do lote.
 
     Um PDF ilegível/corrompido vira um Processo com erro, sem derrubar o resto
     do lote — o objetivo desta Sprint é 'selecionar -> processar -> ver resultado'
     funcionando de verdade, inclusive quando um arquivo é ruim.
-    """
+
+    `modo` (RN-14) — propagado ao enriquecimento; no modo COMPLEMENTO,
+    resolve também a quantidade de diária parcial complementar (ver
+    `app.extraction.enriquecimento.quantidade_complementar`). Nenhum outro
+    comportamento deste service muda entre os dois modos."""
     parser = obter_parser()
     processos: list[Processo] = []
 
@@ -26,7 +33,7 @@ def processar_lote(caminhos: list[str]) -> LoteProcessamento:
             campos = parser.extrair(texto)
             processo = validar(nome_arquivo, campos)
             if processo.status is StatusProcesso.SUCESSO:
-                processo = enriquecer_processo(processo, texto)
+                processo = enriquecer_processo(processo, texto, modo)
             processos.append(processo)
         except Exception as erro:
             processos.append(

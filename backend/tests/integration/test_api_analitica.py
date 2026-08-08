@@ -1,7 +1,7 @@
 import csv
 import logging
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -177,6 +177,58 @@ def test_diarias_com_registro_de_cpf_none_nao_gera_500_e_devolve_cpf_mascarado_n
     assert resposta.status_code == 200
     item = resposta.json()["itens"][0]
     assert item["cpf_mascarado"] is None
+
+
+def test_diarias_categoria_funcional_servidor_por_padrao_para_cargos_administrativos():
+    """Nenhum cargo de `SERVIDORES` é membro (Analista/Técnico) — sem
+    filtro, cada item já vem com `categoria_funcional` calculada; o
+    registro sem cadastro (CPF 44444444444) vem `NAO_IDENTIFICADO`."""
+    _sincronizar_base_sqlite()
+    resposta = client.get("/api/v1/analitica/diarias")
+
+    assert resposta.status_code == 200
+    por_sei = {item["sei"]: item["categoria_funcional"] for item in resposta.json()["itens"]}
+    assert por_sei[REGISTROS[0].sei] == "SERVIDOR"
+    assert por_sei[REGISTROS[3].sei] == "NAO_IDENTIFICADO"
+
+
+def test_diarias_filtro_categoria_funcional_membro_end_to_end():
+    """Filtro primário "Todos | Membros | Servidores" (Sprint 20) —
+    adiciona um cadastro/diária de membro real (Promotor de Justiça) e
+    confirma que `categoria_funcional=MEMBRO` isola só esse registro."""
+    registros = [
+        *REGISTROS,
+        _registro(
+            "19.20.0001.0000005/2026-05", "55555555555",
+            date(2026, 5, 1), date(2026, 5, 2), "RECIFE", "CARUARU", "Correição",
+            linha=6,
+        ),
+    ]
+    servidores = {
+        **SERVIDORES,
+        "55555555555": Servidor(
+            cpf="55555555555", nome="Carlos Mendes", cargo="Procurador de Justiça",
+            previdencia="FUNAFIN", matricula="2001", situacao="Em exercício",
+        ),
+    }
+    _sincronizar_base_sqlite(registros=registros, servidores=servidores)
+
+    resposta = client.get("/api/v1/analitica/diarias", params={"categoria_funcional": "MEMBRO"})
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["paginacao"]["total_itens"] == 1
+    assert corpo["itens"][0]["sei"] == "19.20.0001.0000005/2026-05"
+    assert corpo["itens"][0]["categoria_funcional"] == "MEMBRO"
+
+    resposta_todos = client.get("/api/v1/analitica/diarias")
+    assert resposta_todos.json()["paginacao"]["total_itens"] == len(registros)
+
+
+def test_diarias_filtro_categoria_funcional_invalido_retorna_422():
+    _sincronizar_base_sqlite()
+    resposta = client.get("/api/v1/analitica/diarias", params={"categoria_funcional": "NAO_IDENTIFICADO"})
+    assert resposta.status_code == 422
 
 
 def test_diarias_filtro_sei_end_to_end():
@@ -560,7 +612,7 @@ def test_detalhar_diaria_com_caso_aplicavel_devolve_diagnostico_correspondente()
     diagnosticos = resposta.json()["diagnosticos"]
     assert len(diagnosticos) == 1
     caso = diagnosticos[0]
-    assert caso["titulo"] == "Documento Hábil (DH) ainda não emitido"
+    assert caso["titulo"] == "Documento Hábil ausente — motivo não identificado"
     assert caso["campo"] == "dh"
     assert set(caso.keys()) == {"campo", "titulo", "motivo", "acao_recomendada"}
 
@@ -773,6 +825,77 @@ def test_estado_sincronizacao_schema_desatualizado_reporta_possivelmente_desatua
     corpo = resposta.json()
     assert corpo["status"] == "possivelmente_desatualizado"
     assert corpo["possivelmente_desatualizado"] is True
+
+
+# --- URGENTE — Central Analítica (2026-08-06): achado real do 2º
+# rastreamento — o app instalado ("Automatizador de Diárias") continuou
+# usando o binário empacotado ANTIGO por mais de meia hora depois da
+# correção de código já estar pronta, porque nem o sinal de conteúdo (a
+# Planilha Oficial não mudou) nem `esquema_desatualizado` (formato das
+# tabelas não mudou) detectam "o código de importação mudou, mas os dados
+# de entrada e o formato de saída continuam idênticos". `versao_app`
+# fecha essa lacuna: compara a versão do Electron que gravou a última
+# sincronização com a versão rodando agora. ---------------------------
+
+
+def test_estado_sincronizacao_versao_app_diferente_reporta_possivelmente_desatualizado(monkeypatch):
+    resultado = ResultadoDiariasCompletas(
+        diarias={registro.sei: registro for registro in REGISTROS}, avisos=[], linhas_ignoradas=0
+    )
+    base_local_sqlite.reconstruir(
+        resultado, SERVIDORES, _SINAL_FRESCOR_PADRAO,
+        origem="teste", caminho_destino=base_local_sqlite.caminho_base_local_sqlite(),
+        versao_app="2.0.0",
+    )
+    monkeypatch.setattr(configuracao_app, "resolver_caminho_para_preenchimento", lambda: "planilha.xlsx")
+    monkeypatch.setattr(base_local_sqlite, "capturar_sinal_frescor", lambda caminho: _SINAL_FRESCOR_PADRAO)
+    monkeypatch.setenv(base_local.VAR_AMBIENTE_VERSAO_APP, "2.1.0")
+
+    resposta = client.get("/api/v1/analitica/sincronizacao")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["status"] == "possivelmente_desatualizado"
+    assert corpo["possivelmente_desatualizado"] is True
+
+
+def test_estado_sincronizacao_versao_app_igual_nao_afeta_frescor(monkeypatch):
+    resultado = ResultadoDiariasCompletas(
+        diarias={registro.sei: registro for registro in REGISTROS}, avisos=[], linhas_ignoradas=0
+    )
+    base_local_sqlite.reconstruir(
+        resultado, SERVIDORES, _SINAL_FRESCOR_PADRAO,
+        origem="teste", caminho_destino=base_local_sqlite.caminho_base_local_sqlite(),
+        versao_app="2.1.0",
+    )
+    monkeypatch.setattr(configuracao_app, "resolver_caminho_para_preenchimento", lambda: "planilha.xlsx")
+    monkeypatch.setattr(base_local_sqlite, "capturar_sinal_frescor", lambda caminho: _SINAL_FRESCOR_PADRAO)
+    monkeypatch.setenv(base_local.VAR_AMBIENTE_VERSAO_APP, "2.1.0")
+
+    resposta = client.get("/api/v1/analitica/sincronizacao")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["status"] == "atualizado"
+    assert corpo["possivelmente_desatualizado"] is False
+
+
+def test_estado_sincronizacao_versao_app_ausente_no_ambiente_nunca_e_falso_positivo(monkeypatch):
+    """Backend rodando sem Electron (standalone/dev/teste) nunca conhece
+    `EXTRATOR_DIARIAS_APP_VERSION` — ausência não pode virar
+    `possivelmente_desatualizado=true` por si só (isso derrubaria todo
+    ambiente de desenvolvimento/CI que nunca passa essa variável)."""
+    _sincronizar_base_sqlite()
+    monkeypatch.setattr(configuracao_app, "resolver_caminho_para_preenchimento", lambda: "planilha.xlsx")
+    monkeypatch.setattr(base_local_sqlite, "capturar_sinal_frescor", lambda caminho: _SINAL_FRESCOR_PADRAO)
+    monkeypatch.delenv(base_local.VAR_AMBIENTE_VERSAO_APP, raising=False)
+
+    resposta = client.get("/api/v1/analitica/sincronizacao")
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["status"] == "atualizado"
+    assert corpo["possivelmente_desatualizado"] is False
 
 
 def test_estado_sincronizacao_planilha_nao_configurada_reporta_desatualizado_sem_erro():
@@ -1396,6 +1519,52 @@ def test_distribuicoes_origem_destino_agrupa_por_par_real():
     assert pontos_por_rotulo["OLINDA → RECIFE"] == {"rotulo": "OLINDA → RECIFE", "contagem": 1, "valor": 180.25}
 
 
+def test_distribuicoes_categoria_funcional_agrega_membros_x_servidores():
+    """Sprint 21.1 (Modo Executivo) — gráfico "Membros × Servidores".
+    Nenhum cadastro de `SERVIDORES` é membro (Analista/Técnico); REGISTROS[3]
+    (CPF sem cadastro) cai em NAO_IDENTIFICADO — mesmo recorte já usado
+    pelos demais testes de `/distribuicoes`, sem massa de dado nova."""
+    _sincronizar_base_sqlite()
+    resposta = client.get("/api/v1/analitica/distribuicoes", params={"dimensao": "categoria_funcional"})
+
+    assert resposta.status_code == 200
+    pontos_por_rotulo = {ponto["rotulo"]: ponto for ponto in resposta.json()["pontos"]}
+    assert pontos_por_rotulo["SERVIDOR"]["contagem"] == 3
+    assert pontos_por_rotulo["SERVIDOR"]["valor"] == 550.5
+    assert pontos_por_rotulo["NAO_IDENTIFICADO"]["contagem"] == 1
+    assert pontos_por_rotulo["NAO_IDENTIFICADO"]["valor"] == 180.25
+
+
+def test_distribuicoes_doc_origem_agrega_por_documento_de_origem():
+    """Sprint 21.1 (Modo Executivo) — gráfico "Unidade solicitante
+    (documento de origem)". Todas as `REGISTROS` de teste usam o mesmo
+    `doc_origem` padrão ("PJTESTE") — o teste confirma a agregação, não a
+    variedade de rótulos (já coberta em `test_distribuicoes.py`, unitário)."""
+    _sincronizar_base_sqlite()
+    resposta = client.get("/api/v1/analitica/distribuicoes", params={"dimensao": "doc_origem"})
+
+    assert resposta.status_code == 200
+    pontos_por_rotulo = {ponto["rotulo"]: ponto for ponto in resposta.json()["pontos"]}
+    assert pontos_por_rotulo["PJTESTE"]["contagem"] == len(REGISTROS)
+    assert pontos_por_rotulo["PJTESTE"]["valor"] == 730.75
+
+
+def test_distribuicoes_transporte_agrega_e_agrupa_ausente():
+    """Sprint 21.1 (Modo Executivo) — gráfico "Meio de transporte".
+    REGISTROS[2] não tem transporte — cai no bucket "Transporte não
+    identificado", nunca omitido do total."""
+    _sincronizar_base_sqlite()
+    resposta = client.get("/api/v1/analitica/distribuicoes", params={"dimensao": "transporte"})
+
+    assert resposta.status_code == 200
+    pontos_por_rotulo = {ponto["rotulo"]: ponto for ponto in resposta.json()["pontos"]}
+    assert pontos_por_rotulo["CARRO"]["contagem"] == 2
+    assert pontos_por_rotulo["CARRO"]["valor"] == 380.25
+    assert pontos_por_rotulo["AVIAO"]["contagem"] == 1
+    assert pontos_por_rotulo["Transporte não identificado"]["contagem"] == 1
+    assert sum(ponto["contagem"] for ponto in resposta.json()["pontos"]) == len(REGISTROS)
+
+
 def test_distribuicoes_recorte_vazio_devolve_lista_de_pontos_vazia():
     _sincronizar_base_sqlite()
     resposta = client.get(
@@ -1590,7 +1759,7 @@ def test_diagnostico_classifica_cada_cenario_corretamente():
 
     dh_vazio = por_sei["19.20.0002.0000003/2026-03"]
     assert dh_vazio["classificacao"] == "atencao"
-    assert "Documento Hábil (DH) ainda não emitido" in [c["titulo"] for c in dh_vazio["casos"]]
+    assert "Documento Hábil ausente — motivo não identificado" in [c["titulo"] for c in dh_vazio["casos"]]
 
     periodo_invalido = por_sei["19.20.0002.0000004/2026-04"]
     assert periodo_invalido["classificacao"] == "inconsistencia"
@@ -1614,7 +1783,7 @@ def test_diagnostico_caso_tem_todos_os_campos_do_contrato():
     resposta = client.get("/api/v1/analitica/diagnostico")
 
     dh_vazio = next(r for r in resposta.json()["registros"] if r["sei"] == "19.20.0002.0000003/2026-03")
-    caso = next(c for c in dh_vazio["casos"] if c["titulo"] == "Documento Hábil (DH) ainda não emitido")
+    caso = next(c for c in dh_vazio["casos"] if c["titulo"] == "Documento Hábil ausente — motivo não identificado")
     assert caso["campo"] == "dh"
     assert caso["titulo"]
     assert caso["motivo"]
@@ -1710,6 +1879,245 @@ def test_diagnostico_traduz_cada_filtro_igual_a_diarias_sem_divergencia(params):
     assert resposta_diagnostico.json()["resumo"]["esperado"] + resposta_diagnostico.json()["resumo"]["atencao"] + resposta_diagnostico.json()["resumo"]["inconsistencia"] == resposta_diarias.json()["paginacao"]["total_itens"]
 
 
+# --- Correção de foco (2026-08-05) — GET /documentos-habeis-pendentes ----
+#
+# Substitui a experiência antes exposta pelo botão "Análise Rápida
+# (Diagnóstico)": só registros com `dh` vazio, nunca o catálogo geral de
+# anomalias. Datas relativas a `date.today()` (não absolutas como em
+# `_REGISTROS_DIAGNOSTICO` acima) — os cenários de "aguardando liberação"
+# vs. "revisão manual" dependem de comparar `periodo_inicial - 15 dias`
+# contra o dia real em que a suíte roda, então usar datas fixas do
+# calendário de 2026 tornaria os testes frágeis a partir do dia em que
+# deixarem de estar no "futuro".
+
+_JOAO = Servidor(cpf="22222222222", nome="João Silva", cargo="Técnico", previdencia="RGPS", matricula="1002", situacao="Em exercício")
+_ANA = Servidor(cpf="33333333333", nome="Ana Costa", cargo="Analista", previdencia="RPPS", matricula="1003", situacao="Licença")
+_HOJE_TESTE = date.today()
+
+_REGISTROS_DH_PENDENTES = [
+    # DH preenchido -> nunca aparece nesta lista.
+    _registro(
+        "19.20.0003.0000001/2026-01", "11111111111",
+        _HOJE_TESTE + timedelta(days=1), _HOJE_TESTE + timedelta(days=3),
+        "RECIFE", "GARANHUNS", "Reunião", transporte="CARRO", valor=200.0, linha=2, dh="DH-001",
+    ),
+    # DH vazio, período inicial daqui a 20 dias -> libera em 5 dias (RN-06) -> aguardando_liberacao.
+    _registro(
+        "19.20.0003.0000002/2026-02", "22222222222",
+        _HOJE_TESTE + timedelta(days=20), _HOJE_TESTE + timedelta(days=22),
+        "RECIFE", "ARARIPINA", "Fiscalização", transporte="AVIAO", valor=350.5, linha=3, dh=None,
+    ),
+    # DH vazio, período inicial há 30 dias -> data de liberação (período - 15) há 45 dias, já ultrapassada -> revisao_manual_necessaria.
+    _registro(
+        "19.20.0003.0000003/2026-03", "33333333333",
+        _HOJE_TESTE - timedelta(days=30), _HOJE_TESTE - timedelta(days=28),
+        "CARUARU", "RECIFE", "Reunião", dh=None, linha=4,
+    ),
+]
+_SERVIDORES_DH_PENDENTES = {"11111111111": _MARIA, "22222222222": _JOAO, "33333333333": _ANA}
+
+
+def test_documentos_habeis_pendentes_so_retorna_registros_com_dh_vazio():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    assert resposta.status_code == 200
+    seis = {registro["sei"] for registro in resposta.json()["registros"]}
+    assert seis == {"19.20.0003.0000002/2026-02", "19.20.0003.0000003/2026-03"}
+    assert "19.20.0003.0000001/2026-01" not in seis
+
+
+def test_documentos_habeis_pendentes_nunca_retorna_dh_preenchido_nem_com_filtro_amplo():
+    """Mesmo sem nenhum filtro que isole os 3 registros, o registro com
+    `dh` preenchido nunca aparece — a exclusão é sobre o campo, não sobre
+    o filtro de busca."""
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes", params={"cpf": "11111111111"})
+
+    assert resposta.status_code == 200
+    assert resposta.json()["registros"] == []
+
+
+def test_documentos_habeis_pendentes_classifica_aguardando_liberacao():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    aguardando = next(r for r in resposta.json()["registros"] if r["sei"] == "19.20.0003.0000002/2026-02")
+    assert aguardando["situacao"] == "aguardando_liberacao"
+    assert aguardando["dias_restantes"] == 5
+    assert aguardando["dias_atraso"] is None
+    assert aguardando["texto_contagem"] is not None
+    assert aguardando["mensagem"] == "Documento Hábil ainda não disponível. Aguardar a data de liberação."
+
+
+def test_documentos_habeis_pendentes_classifica_revisao_manual_necessaria():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    revisao = next(r for r in resposta.json()["registros"] if r["sei"] == "19.20.0003.0000003/2026-03")
+    assert revisao["situacao"] == "revisao_manual_necessaria"
+    assert revisao["dias_atraso"] == 45
+    assert revisao["dias_restantes"] is None
+    assert revisao["texto_contagem"] is None
+    assert revisao["mensagem"] == (
+        "Documento Hábil pendente. A data de liberação já foi atingida. Recomenda-se análise manual."
+    )
+
+
+def test_documentos_habeis_pendentes_resumo_bate_com_a_lista():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    corpo = resposta.json()
+    contagem_real = {"aguardando_liberacao": 0, "revisao_manual_necessaria": 0}
+    for registro in corpo["registros"]:
+        contagem_real[registro["situacao"]] += 1
+    assert contagem_real == corpo["resumo"]
+    assert corpo["resumo"] == {"aguardando_liberacao": 1, "revisao_manual_necessaria": 1}
+
+
+def test_documentos_habeis_pendentes_cpf_sempre_mascarado():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    for registro in resposta.json()["registros"]:
+        assert "cpf" not in registro
+        assert registro["cpf_mascarado"] is None or "*" in registro["cpf_mascarado"]
+
+
+def test_documentos_habeis_pendentes_ordenacao_revisao_manual_antes_de_aguardando():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    seis_em_ordem = [registro["sei"] for registro in resposta.json()["registros"]]
+    assert seis_em_ordem == ["19.20.0003.0000003/2026-03", "19.20.0003.0000002/2026-02"]
+
+
+def test_documentos_habeis_pendentes_filtro_motivo_traduzido_corretamente():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes", params={"motivo": "Fiscalização"})
+
+    assert resposta.status_code == 200
+    seis = {registro["sei"] for registro in resposta.json()["registros"]}
+    assert seis == {"19.20.0003.0000002/2026-02"}
+
+
+def test_documentos_habeis_pendentes_filtro_municipio_traduzido_corretamente():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes", params={"municipio": "caruaru"})
+
+    assert resposta.status_code == 200
+    seis = {registro["sei"] for registro in resposta.json()["registros"]}
+    assert seis == {"19.20.0003.0000003/2026-03"}
+
+
+def test_documentos_habeis_pendentes_filtro_periodo_traduzido_corretamente():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get(
+        "/api/v1/analitica/documentos-habeis-pendentes",
+        params={
+            "periodo_inicial": (_HOJE_TESTE + timedelta(days=15)).isoformat(),
+            "periodo_final": (_HOJE_TESTE + timedelta(days=25)).isoformat(),
+        },
+    )
+
+    assert resposta.status_code == 200
+    seis = {registro["sei"] for registro in resposta.json()["registros"]}
+    assert seis == {"19.20.0003.0000002/2026-02"}
+
+
+def test_documentos_habeis_pendentes_filtro_servidor_nome_traduzido_corretamente():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes", params={"servidor_nome": "Ana Costa"})
+
+    assert resposta.status_code == 200
+    seis = {registro["sei"] for registro in resposta.json()["registros"]}
+    assert seis == {"19.20.0003.0000003/2026-03"}
+
+
+def test_documentos_habeis_pendentes_filtro_categoria_funcional_traduzido_corretamente():
+    """`categoria_funcional` (Sprint 20) já é calculada em
+    `base_local_sqlite.reconstruir` a partir do cargo — nenhum registro
+    desta massa tem cargo do catálogo fechado de MEMBRO, então filtrar por
+    "MEMBRO" precisa devolver o recorte vazio, nunca um erro."""
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes", params={"categoria_funcional": "MEMBRO"})
+
+    assert resposta.status_code == 200
+    assert resposta.json()["registros"] == []
+
+
+def test_documentos_habeis_pendentes_recorte_vazio_devolve_resumo_zerado_nunca_erro():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get(
+        "/api/v1/analitica/documentos-habeis-pendentes", params={"motivo": "Motivo Inexistente"}
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["resumo"] == {"aguardando_liberacao": 0, "revisao_manual_necessaria": 0}
+    assert corpo["registros"] == []
+
+
+def test_documentos_habeis_pendentes_base_local_inexistente_retorna_503():
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+    assert resposta.status_code == 503
+
+
+def test_documentos_habeis_pendentes_base_local_invalida_retorna_503():
+    caminho = base_local_sqlite.caminho_base_local_sqlite()
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    caminho.write_bytes(b"isto nao e um banco sqlite")
+
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+    assert resposta.status_code == 503
+
+
+def test_documentos_habeis_pendentes_periodo_final_antes_do_inicial_retorna_422():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get(
+        "/api/v1/analitica/documentos-habeis-pendentes",
+        params={"periodo_inicial": "2026-05-01", "periodo_final": "2026-01-01"},
+    )
+    assert resposta.status_code == 422
+
+
+def test_documentos_habeis_pendentes_valor_maximo_menor_que_valor_minimo_retorna_422():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get(
+        "/api/v1/analitica/documentos-habeis-pendentes",
+        params={"valor_minimo": 300, "valor_maximo": 100},
+    )
+    assert resposta.status_code == 422
+
+
+def test_documentos_habeis_pendentes_nunca_aceita_parametro_de_paginacao_ou_ordenacao():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+
+    resposta_sem = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+    resposta_com = client.get(
+        "/api/v1/analitica/documentos-habeis-pendentes",
+        params={"pagina": 2, "tamanho_pagina": 1, "ordenar_por": "valor"},
+    )
+
+    assert resposta_sem.status_code == 200
+    assert resposta_com.status_code == 200
+    assert resposta_sem.json() == resposta_com.json()
+
+
+def test_documentos_habeis_pendentes_registro_tem_todos_os_campos_do_contrato():
+    _sincronizar_base_sqlite(registros=_REGISTROS_DH_PENDENTES, servidores=_SERVIDORES_DH_PENDENTES)
+    resposta = client.get("/api/v1/analitica/documentos-habeis-pendentes")
+
+    registro = resposta.json()["registros"][0]
+    assert set(registro.keys()) == {
+        "sei", "servidor_nome", "cpf_mascarado", "periodo", "destino",
+        "data_liberacao_prevista", "situacao", "dias_restantes", "dias_atraso",
+        "texto_contagem", "mensagem",
+    }
+    assert "sincronizacao" not in resposta.json()
+
+
 # --- Sprint 19.7.2 — POST /relatorios -----------------------------------
 
 
@@ -1747,7 +2155,95 @@ def test_relatorios_pdf_gera_arquivo_valido_e_abrivel():
     assert "Evolução por período" in texto
 
 
+# --- Sprint 21.9 (Modo Executivo) — tipo "visao_executiva" + insights --
+
+
+def test_relatorios_visao_executiva_contem_as_dimensoes_da_grade_executiva():
+    _sincronizar_base_sqlite()
+    resposta = client.post(
+        "/api/v1/analitica/relatorios", json=_corpo_relatorio(tipo="visao_executiva", formato="pdf")
+    )
+
+    assert resposta.status_code == 200
+    caminho = resposta.json()["caminho_arquivo_temporario"]
+    texto = _extrair_texto_pdf(caminho)
+    assert "Relatório Visão Executiva" in texto
+    assert "Membros" in texto and "Servidores" in texto  # dimensão categoria_funcional
+    assert "Unidade solicitante (documento de origem)" in texto
+    assert "Meio de transporte" in texto
+
+
+def test_relatorios_visao_executiva_com_insights_inclui_a_secao_no_pdf_verbatim():
+    _sincronizar_base_sqlite()
+    insights = [
+        "🔼 Valor total +8% em relação a Julho/2026",
+        "3 de 10 município(s) concentram 82% do valor total",
+    ]
+    resposta = client.post(
+        "/api/v1/analitica/relatorios",
+        json=_corpo_relatorio(tipo="visao_executiva", formato="pdf", insights=insights),
+    )
+
+    assert resposta.status_code == 200
+    texto = _extrair_texto_pdf(resposta.json()["caminho_arquivo_temporario"])
+    assert "Insights" in texto
+    assert "Valor total +8% em relação a Julho/2026" in texto
+    assert "3 de 10 município(s) concentram 82% do valor total" in texto
+
+
+def test_relatorios_sem_insights_nunca_mostra_a_secao_insights():
+    _sincronizar_base_sqlite()
+    resposta = client.post(
+        "/api/v1/analitica/relatorios", json=_corpo_relatorio(tipo="visao_executiva", formato="pdf")
+    )
+
+    texto = _extrair_texto_pdf(resposta.json()["caminho_arquivo_temporario"])
+    assert "Insights" not in texto
+
+
+def test_relatorios_insights_com_caractere_especial_nunca_quebra_o_pdf():
+    # `&`/`<` dentro do texto do insight precisam ser escapados para XML
+    # (mesmo tratamento já dado a `_resumo_filtros`) — nunca uma exceção.
+    _sincronizar_base_sqlite()
+    resposta = client.post(
+        "/api/v1/analitica/relatorios",
+        json=_corpo_relatorio(tipo="visao_executiva", formato="pdf", insights=["Motivo A & B < C"]),
+    )
+
+    assert resposta.status_code == 200
+    texto = _extrair_texto_pdf(resposta.json()["caminho_arquivo_temporario"])
+    assert "Motivo A & B" in texto
+
+
+def test_relatorios_visao_executiva_tipo_ja_disponivel_nunca_retorna_422():
+    # Diferente de "inconsistencias"/"qualidade_dados" (ainda bloqueados),
+    # "visao_executiva" já está implementado desde a Sprint 21.9.
+    _sincronizar_base_sqlite()
+    resposta = client.post(
+        "/api/v1/analitica/relatorios", json=_corpo_relatorio(tipo="visao_executiva", formato="pdf")
+    )
+    assert resposta.status_code == 200
+
+
+def test_relatorios_visao_executiva_nunca_altera_o_pdf_ja_homologado_de_executivo():
+    _sincronizar_base_sqlite()
+    resposta = client.post("/api/v1/analitica/relatorios", json=_corpo_relatorio(tipo="executivo", formato="pdf"))
+
+    assert resposta.status_code == 200
+    texto = _extrair_texto_pdf(resposta.json()["caminho_arquivo_temporario"])
+    assert "Relatório Executivo" in texto
+    assert "Evolução por período" in texto
+    # Continua sem as dimensões novas — composição intocada (Sprint 21.9 é
+    # 100% aditiva, nunca mudou "executivo").
+    assert "Meio de transporte" not in texto
+
+
 def test_relatorios_excel_gera_arquivo_valido_e_abrivel():
+    """Correção de 2026-08-05 (Bloco de Refinamento): o Excel passou a ter
+    uma aba por seção (nunca tudo empilhado numa aba só, causa raiz do
+    truncamento/falta de congelamento e autofiltro úteis relatada) — a
+    aba "Resumo" traz título/indicadores, "Tabela do recorte" é uma aba
+    própria."""
     _sincronizar_base_sqlite()
     resposta = client.post(
         "/api/v1/analitica/relatorios",
@@ -1758,10 +2254,17 @@ def test_relatorios_excel_gera_arquivo_valido_e_abrivel():
     caminho = resposta.json()["caminho_arquivo_temporario"]
     assert caminho.endswith(".xlsx")
 
-    planilha = load_workbook(caminho).active
-    valores = [str(celula.value) for linha in planilha.iter_rows() for celula in linha if celula.value is not None]
-    assert "Indicadores" in valores
-    assert "Tabela do recorte" in valores
+    workbook = load_workbook(caminho)
+    assert workbook.sheetnames == ["Resumo", "Tabela do recorte"]
+
+    valores_resumo = [
+        str(celula.value) for linha in workbook["Resumo"].iter_rows() for celula in linha if celula.value is not None
+    ]
+    assert "Indicadores" in valores_resumo
+
+    aba_tabela = workbook["Tabela do recorte"]
+    assert aba_tabela.freeze_panes == "A2"
+    assert len(aba_tabela.tables) == 1
 
 
 def test_relatorios_csv_gera_arquivo_valido_e_abrivel():

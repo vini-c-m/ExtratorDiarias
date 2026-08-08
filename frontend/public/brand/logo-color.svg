@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Extrator de Diárias">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Automatizador de Diárias">
   <!-- Sprint 07.1 — monograma "ED": silhueta de "D" arredondado com um "E"
        (tronco + 3 braços) revelado em espaço negativo dentro do bojo.
        Mesmo caminho em src/components/layout/Logo.tsx (CAMINHO_MONOGRAMA). -->

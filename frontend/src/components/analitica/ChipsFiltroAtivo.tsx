@@ -32,6 +32,13 @@ const ROTULO_CAMPO: Record<CampoDeFiltro, string> = {
   trecho: "Trecho",
   valor_minimo: "Valor mínimo",
   valor_maximo: "Valor máximo",
+  // Sprint 20 (2026-08-05) — filtro primário "Todos | Membros | Servidores".
+  categoria_funcional: "Categoria",
+};
+
+const ROTULO_CATEGORIA_FUNCIONAL: Record<string, string> = {
+  MEMBRO: "Membros",
+  SERVIDOR: "Servidores",
 };
 
 // Sprint 19.5.8.1 — correção do Bug 1 da Auditoria Técnica (19.5.8
@@ -44,6 +51,7 @@ const ROTULO_CAMPO: Record<CampoDeFiltro, string> = {
 function formatarValor(campo: CampoDeFiltro, valor: string): string {
   if (campo === "periodo_inicial" || campo === "periodo_final") return formatarDataBr(valor);
   if (campo === "cpf") return mascararCpf(valor);
+  if (campo === "categoria_funcional") return ROTULO_CATEGORIA_FUNCIONAL[valor] ?? valor;
   return valor;
 }
 

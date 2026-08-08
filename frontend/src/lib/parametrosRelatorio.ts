@@ -24,5 +24,6 @@ export function filtrosParaRelatorio(filtros: ParametrosPesquisaDiariasQuery): F
     trecho: filtros.trecho,
     valor_minimo: filtros.valor_minimo,
     valor_maximo: filtros.valor_maximo,
+    categoria_funcional: filtros.categoria_funcional,
   };
 }

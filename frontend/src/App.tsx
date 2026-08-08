@@ -9,10 +9,18 @@ import BoasVindas from "./pages/BoasVindas";
 import CentralAnalitica from "./pages/CentralAnalitica";
 import Conferencia from "./pages/Conferencia";
 import ConfiguracaoInicial from "./pages/ConfiguracaoInicial";
+import FinalizarDiarias from "./pages/FinalizarDiarias";
 import Hub from "./pages/Hub";
 import SelecionarProcessar from "./pages/SelecionarProcessar";
 
 type Pagina = "boasvindas" | "hub" | "processamento" | "conferencia" | "analitica";
+// "FINALIZAR DIÁRIAS" (2026-08-07) — terceiro fluxo da área de
+// Processamento, ao lado de Processar/Complemento (que continuam vivendo
+// inteiramente dentro de `SelecionarProcessar`, sem nenhuma alteração —
+// só esta chave de sub-navegação foi adicionada aqui, em `App`). Uma aba
+// simples o bastante para não precisar de `react-router` (mesma decisão já
+// registrada para a navegação principal).
+type SubPaginaProcessamento = "processar" | "finalizar";
 
 export default function App() {
   const status = useBackendStatus();
@@ -41,6 +49,12 @@ export default function App() {
   // persistência — a Boas-vindas aparece a cada abertura do app, de
   // propósito (ver `docs/branding/README.md`).
   const [pagina, setPagina] = useState<Pagina>("boasvindas");
+  const [subPaginaProcessamento, setSubPaginaProcessamento] =
+    useState<SubPaginaProcessamento>("processar");
+  // Alerta global de Documentos Hábeis Pendentes — "Ver Pendências" navega
+  // para a Central Analítica já aberta na lista de pendências, nunca uma
+  // tela nova; entrada normal via card do Hub continua abrindo no padrão.
+  const [analiticaAbreEmDocumentosHabeis, setAnaliticaAbreEmDocumentosHabeis] = useState(false);
   // Sprint 15 — "Configurações" mínima (§11 do doc arquitetural): por
   // enquanto só abre "Alterar Planilha Oficial", acessível de qualquer
   // funcionalidade via o Cabecalho — nenhuma tela dedicada ainda.
@@ -94,14 +108,58 @@ export default function App() {
               backendOnline={status === "conectado"}
               aoSelecionarProcessamento={() => setPagina("processamento")}
               aoSelecionarConferencia={() => setPagina("conferencia")}
-              aoSelecionarAnalitica={() => setPagina("analitica")}
+              aoSelecionarAnalitica={() => {
+                setAnaliticaAbreEmDocumentosHabeis(false);
+                setPagina("analitica");
+              }}
+              aoAbrirDocumentosHabeisPendentes={() => {
+                setAnaliticaAbreEmDocumentosHabeis(true);
+                setPagina("analitica");
+              }}
             />
           )}
           {pagina === "processamento" && (
-            <SelecionarProcessar backendOnline={status === "conectado"} aoMudarEstado={setEstadoApp} />
+            <div>
+              <div className="mx-auto flex max-w-4xl gap-2 px-6 pt-8 md:px-10">
+                <button
+                  type="button"
+                  onClick={() => setSubPaginaProcessamento("processar")}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    subPaginaProcessamento === "processar"
+                      ? "bg-white/10 text-slate-50"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Processar / Complemento de Diárias
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubPaginaProcessamento("finalizar")}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    subPaginaProcessamento === "finalizar"
+                      ? "bg-white/10 text-slate-50"
+                      : "text-slate-400 hover:text-slate-200"
+                  }`}
+                >
+                  Finalizar Diárias
+                </button>
+              </div>
+
+              {subPaginaProcessamento === "processar" && (
+                <SelecionarProcessar backendOnline={status === "conectado"} aoMudarEstado={setEstadoApp} />
+              )}
+              {subPaginaProcessamento === "finalizar" && (
+                <FinalizarDiarias backendOnline={status === "conectado"} />
+              )}
+            </div>
           )}
           {pagina === "conferencia" && <Conferencia backendOnline={status === "conectado"} />}
-          {pagina === "analitica" && <CentralAnalitica backendOnline={status === "conectado"} />}
+          {pagina === "analitica" && (
+            <CentralAnalitica
+              backendOnline={status === "conectado"}
+              abrirEmDocumentosHabeisPendentes={analiticaAbreEmDocumentosHabeis}
+            />
+          )}
         </LimiteDeErro>
       </div>
 

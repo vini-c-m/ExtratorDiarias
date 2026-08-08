@@ -94,16 +94,22 @@ describe("ModalRelatorio", () => {
     expect(screen.getByRole("radio", { name: "PDF" })).toBeChecked();
   });
 
-  it("'Inconsistências'/'Qualidade dos dados' (tipo) vêm desabilitados, com explicação associada para leitor de tela", () => {
+  // Decisão de produto 2026-08-06: os tipos "Inconsistências"/"Qualidade
+  // dos dados" (sempre desabilitados, sem regra de negócio homologada nem
+  // endpoint funcional) foram retirados da lista — não devem mais aparecer.
+  it("não mostra mais os tipos retirados da interface (Inconsistências / Qualidade dos dados)", () => {
     render(<ModalRelatorio {...PROPS_BASE} />);
 
-    const radioInconsistencias = screen.getByRole("radio", { name: "Inconsistências" });
-    expect(radioInconsistencias).toBeDisabled();
-    const idDescricao = radioInconsistencias.getAttribute("aria-describedby");
-    expect(idDescricao).toBeTruthy();
-    expect(document.getElementById(idDescricao!)).toHaveTextContent(/Sprint 19.8/);
+    expect(screen.queryByRole("radio", { name: "Inconsistências" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Qualidade dos dados" })).not.toBeInTheDocument();
+  });
 
-    expect(screen.getByRole("radio", { name: "Qualidade dos dados" })).toBeDisabled();
+  it("todos os 6 tipos de relatório restantes vêm habilitados", () => {
+    render(<ModalRelatorio {...PROPS_BASE} />);
+
+    for (const nome of [/Executivo/, /Detalhado/, /Financeiro/, /Por servidor/, /Por município/, /Por situação/]) {
+      expect(screen.getByRole("radio", { name: nome })).toBeEnabled();
+    }
   });
 
   it("clicar num tipo disponível troca a seleção", () => {
@@ -115,13 +121,10 @@ describe("ModalRelatorio", () => {
     expect(screen.getByRole("radio", { name: /Executivo/ })).not.toBeChecked();
   });
 
-  it("checkbox 'Inconsistências' (conteúdo) sempre desabilitado e desmarcado", () => {
+  it("não mostra mais o checkbox 'Inconsistências' (conteúdo) retirado da interface", () => {
     render(<ModalRelatorio {...PROPS_BASE} />);
 
-    const checkboxes = screen.getAllByRole("checkbox");
-    const inconsistencias = checkboxes.find((c) => c.getAttribute("aria-describedby") === "modal-relatorio-inconsistencias-nota");
-    expect(inconsistencias).toBeDisabled();
-    expect(inconsistencias).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Inconsistências" })).not.toBeInTheDocument();
   });
 
   it("trocar formato para Excel desmarca e desabilita 'Gráficos' automaticamente (regra real do backend)", () => {

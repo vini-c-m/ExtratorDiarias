@@ -26,17 +26,35 @@ totalmente diferentes** — `DH` é escrita direta do sistema após a
 extração do PDF (nunca fórmula); `PASSAR DIA` é fórmula de data (RN-06).
 `_caso_dh_vazio`/`_caso_passar_dia` nunca compartilham `titulo`/`motivo`/
 `campo` — verificado por teste dedicado
-(`test_diagnostico.py::test_dh_e_passar_dia_nunca_compartilham_texto`).
+(`test_diagnostico.py::test_dh_e_passar_dia_nunca_compartilham_texto`) —,
+mesmo depois de `_caso_dh_vazio` passar a citar a mesma janela RN-06/RN-10
+como evidência (Bloco de Refinamento, 2026-08-05): as duas explicações
+continuam sendo textos distintos, nunca uma reimportação literal da outra.
+
+**DH vazio (correção de 2026-08-05 — Bloco de Refinamento item 1):** antes
+desta correção, todo DH vazio recebia uma única explicação genérica,
+independente de qualquer evidência (proibido explicitamente pelo pedido
+que motivou a correção). Agora `_caso_dh_vazio` verifica a única evidência
+documental objetiva e já homologada disponível em `RegistroAnalitico`
+(a mesma janela RN-06/RN-10 de `_caso_passar_dia`): se o processo ainda
+não atingiu a data de liberação, isso já explica objetivamente por que o
+DH não existe ('esperado'); caso contrário, não há hoje nenhum outro
+campo ingerido no SQLite analítico (ex.: "ESTORNO DE DH", coluna AC da
+Planilha Oficial, documentada mas fora de escopo desde a Sprint 11) que
+permita apontar uma causa objetiva diferente — o motivo fica
+explicitamente "não identificado", nunca uma suposição ('atenção'). Uma
+eventual ingestão de novos campos para ampliar essa investigação é uma
+decisão de escopo nova, não tomada nesta correção.
 
 **Casos do catálogo completo (§ 8.2) implementados aqui — 9 dos 10:**
 todos exceto "Dados incoerentes" (valor fora da faixa esperada por
 estado de destino), que não tem NENHUMA condição de disparo definida
 ainda (§ 9, pergunta 8) — diferente de DH (onde a condição de disparo,
-`dh is None`, já é conhecida; só a sub-classificação por idade do
-processo está pendente), aqui não há nem por onde começar sem inventar
-uma faixa aceitável. Omissão aditiva, nunca suposição — mesmo critério já
-homologado em `indicadores.py`/`distribuicoes.py`/`relatorios.py` para
-lacunas equivalentes."""
+`dh is None`, já é conhecida, e agora também a sub-classificação por
+evidência objetiva, ver acima), aqui não há nem por onde começar sem
+inventar uma faixa aceitável. Omissão aditiva, nunca suposição — mesmo
+critério já homologado em `indicadores.py`/`distribuicoes.py`/
+`relatorios.py` para lacunas equivalentes."""
 
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -50,6 +68,19 @@ Classificacao = Literal["esperado", "atencao", "inconsistencia"]
 # documentada/confirmada em `docs/central-conferencia/README.md`,
 # reimplementada aqui por decisão arquitetural (ver docstring do módulo).
 _DIAS_ANTECEDENCIA_PASSAR_DIA = 15
+
+
+def data_liberacao_dh(periodo_inicial: date) -> date:
+    """RN-06 — único lugar que calcula `período_inicial - 15 dias` neste
+    módulo; `_caso_dh_vazio`/`_caso_passar_dia` chamam esta função em vez de
+    cada um repetir a subtração (nunca duas contas divergentes da mesma
+    janela). Pública (sem `_`) para reuso por outros módulos do mesmo
+    domínio Analítica — ex.: `documentos_habeis_pendentes.py` (§ 4/§ 9 da
+    correção "Documentos Hábeis Pendentes") — sem que precisem reimportar
+    `_DIAS_ANTECEDENCIA_PASSAR_DIA` nem reescrever a fórmula. Continua
+    dentro da mesma fronteira arquitetural já decidida (nunca importada de
+    `domain/rules/conferencia.py`)."""
+    return periodo_inicial - timedelta(days=_DIAS_ANTECEDENCIA_PASSAR_DIA)
 
 
 @dataclass(frozen=True)
@@ -196,29 +227,54 @@ def _caso_trecho(registro: RegistroAnalitico) -> CasoDiagnostico | None:
     )
 
 
-def _caso_dh_vazio(registro: RegistroAnalitico) -> CasoDiagnostico | None:
-    """DH é esperado vazio quando o processo ainda não chegou à fase de
-    liquidação — mas sem um limiar de "processo antigo demais" confirmado
-    pelo DIMCAC (`v2-arquitetura-funcional.md` § 9, pergunta 3/6; § 14,
-    pergunta 4), não há como diferenciar "recente" de "antigo"
-    automaticamente. TODO(§ 9, pergunta 3/6): recalcular por idade do
-    processo quando o limiar for definido — até lá, sempre 'atenção',
-    nunca 'esperado' (afirmaria uma certeza que não se tem) nem
-    'inconsistência' (acusaria um erro que pode não existir)."""
+def _caso_dh_vazio(registro: RegistroAnalitico, hoje: date) -> CasoDiagnostico | None:
+    """Correção de 2026-08-05 (Bloco de Refinamento — item 1): antes desta
+    correção, todo DH vazio recebia a MESMA explicação genérica ("pode ser
+    porque o processo não chegou à liquidação"), sem checar nenhuma
+    evidência real — o que o pedido do usuário proíbe explicitamente
+    ("é proibido assumir automaticamente que todo DH vazio significa
+    'aguardar liberação'"). Agora a única evidência documental objetiva e
+    já homologada disponível em `RegistroAnalitico` é reaproveitada (RN-06/
+    RN-10, a mesma fórmula de `_caso_passar_dia`, calculada aqui de novo
+    pela mesma razão arquitetural — nunca importar de
+    `domain/rules/conferencia.py`):
+
+    - `hoje < data_liberacao` (RN-06: `período_inicial - 15 dias`) —
+      evidência objetiva de que o processo ainda nem atingiu a janela
+      mínima para seguir no fluxo administrativo (RN-10), então o DH
+      genuinamente não poderia existir ainda. Classificado 'esperado'
+      (mesmo critério de severidade já usado por `_caso_passar_dia` para a
+      mesma condição de tempo).
+    - Caso contrário (janela já liberada, DH continua vazio) — nenhuma
+      evidência documental disponível nesta Central explica a ausência
+      (não há, hoje, nenhum outro campo ingerido no SQLite analítico —
+      ex.: "ESTORNO DE DH", coluna AC da Planilha Oficial — que permita
+      apontar uma causa objetiva diferente; ver nota de investigação no
+      Bloco de Refinamento). Classificado 'atenção', motivo explicitamente
+      "não identificado", nunca uma suposição.
+
+    Continua reimplementando RN-06 aqui mesmo (não chama
+    `_caso_passar_dia`) para preservar a garantia já testada de que as
+    duas explicações nunca compartilham `titulo`/`motivo`/`campo` — ver
+    `TestDhEPassarDiaNuncaCompartilhamTexto`."""
     if registro.dh is not None:
         return None
+
+    data_liberacao = data_liberacao_dh(registro.periodo_inicial)
+    if hoje < data_liberacao:
+        return CasoDiagnostico(
+            campo="dh",
+            titulo="Documento Hábil ainda não disponível",
+            motivo="Documento Hábil ainda não disponível. Aguardar a data de liberação.",
+            acao_recomendada="Nenhuma ação imediata — aguarde a data de liberação do processo.",
+            classificacao="esperado",
+        )
+
     return CasoDiagnostico(
         campo="dh",
-        titulo="Documento Hábil (DH) ainda não emitido",
-        motivo=(
-            "O Documento Hábil está vazio. Isso é esperado quando o processo ainda não chegou "
-            "à fase de liquidação — mas o limiar que define um processo antigo demais para "
-            "estar sem esse registro ainda não foi confirmado pelo DIMCAC (pendente)."
-        ),
-        acao_recomendada=(
-            "Nenhuma ação imediata; se o processo já é antigo, confira manualmente o "
-            "andamento no SEI."
-        ),
+        titulo="Documento Hábil ausente — motivo não identificado",
+        motivo="Documento Hábil ausente. Motivo não identificado automaticamente. Recomenda-se investigação.",
+        acao_recomendada="Confira manualmente o andamento do processo no SEI.",
         classificacao="atencao",
     )
 
@@ -229,7 +285,7 @@ def _caso_passar_dia(registro: RegistroAnalitico, hoje: date) -> CasoDiagnostico
     docstring do módulo). Só vira um "caso" a reportar enquanto o processo
     ainda está na janela de espera — uma vez liberado, não há mais nada
     de anormal a mostrar."""
-    data_liberacao = registro.periodo_inicial - timedelta(days=_DIAS_ANTECEDENCIA_PASSAR_DIA)
+    data_liberacao = data_liberacao_dh(registro.periodo_inicial)
     if hoje >= data_liberacao:
         return None
     return CasoDiagnostico(
@@ -279,9 +335,9 @@ def _casos_duplicidade(registros: list[RegistroAnalitico]) -> dict[str, CasoDiag
 
 
 # Casos que dependem só do próprio registro (nunca do recorte inteiro) —
-# `_caso_passar_dia` fica de fora desta lista por ter assinatura própria
-# (`hoje`), e `_casos_duplicidade` por operar sobre o recorte inteiro de
-# uma vez, nunca registro a registro.
+# `_caso_passar_dia`/`_caso_dh_vazio` ficam de fora desta lista por terem
+# assinatura própria (`hoje`), e `_casos_duplicidade` por operar sobre o
+# recorte inteiro de uma vez, nunca registro a registro.
 _FUNCOES_POR_REGISTRO = (
     _caso_periodo_invalido,
     _caso_servidor_sem_cadastro,
@@ -289,7 +345,6 @@ _FUNCOES_POR_REGISTRO = (
     _caso_matricula_ausente,
     _caso_situacao_ausente,
     _caso_trecho,
-    _caso_dh_vazio,
 )
 
 _ORDEM_SEVERIDADE: dict[Classificacao, int] = {"esperado": 0, "atencao": 1, "inconsistencia": 2}
@@ -313,6 +368,7 @@ def diagnosticar_registro(registro: RegistroAnalitico, hoje: date) -> list[CasoD
     critério já usado em toda a Central Analítica (recorte vazio nunca
     vira erro nem omissão silenciosa)."""
     casos = [funcao(registro) for funcao in _FUNCOES_POR_REGISTRO]
+    casos.append(_caso_dh_vazio(registro, hoje))
     casos.append(_caso_passar_dia(registro, hoje))
     return [caso for caso in casos if caso is not None]
 

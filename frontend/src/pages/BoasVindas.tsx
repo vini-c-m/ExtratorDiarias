@@ -32,7 +32,7 @@ export default function BoasVindas({ aoComecar }: Props) {
           `subtituloApp` (reservados ao cabeçalho compacto), mesmo peso e
           tratamento de letras, só para esta tela de entrada única. */}
       <h1 className="mt-7 text-[34px] font-extrabold leading-tight tracking-[0.01em] text-slate-50 text-balance">
-        Extrator de Diárias
+        Automatizador de Diárias
       </h1>
       <p className="mt-2 text-[13px] font-medium uppercase tracking-[0.14em] text-slate-400">
         Automação Inteligente do Processo de Concessão de Diárias

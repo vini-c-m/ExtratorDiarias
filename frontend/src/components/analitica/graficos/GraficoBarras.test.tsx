@@ -46,6 +46,37 @@ describe("GraficoBarras", () => {
       const barras = container.querySelectorAll(".rounded-r");
       barras.forEach((barra) => expect(barra).toHaveStyle({ backgroundColor: "#d55181" }));
     });
+
+    // Redesign BI 3.0 (2026-08-07) — "ranking premium" (Municípios):
+    // numeração e destaque do 1º colocado, sem reordenar nada.
+    describe("numerado/destacarPrimeiro", () => {
+      it("sem numerado: não mostra posição", () => {
+        render(<GraficoBarras pontos={PONTOS} orientacao="horizontal" cor="#22d3ee" formatarValor={formatarValor} />);
+        expect(screen.queryByText("1")).not.toBeInTheDocument();
+      });
+
+      it("numerado: mostra a posição de cada linha, na mesma ordem recebida", () => {
+        render(
+          <GraficoBarras pontos={PONTOS} orientacao="horizontal" cor="#22d3ee" formatarValor={formatarValor} numerado />,
+        );
+        expect(screen.getByText("1")).toBeInTheDocument();
+        expect(screen.getByText("2")).toBeInTheDocument();
+      });
+
+      it("destacarPrimeiro: só a primeira linha ganha destaque tipográfico", () => {
+        render(
+          <GraficoBarras
+            pontos={PONTOS}
+            orientacao="horizontal"
+            cor="#22d3ee"
+            formatarValor={formatarValor}
+            destacarPrimeiro
+          />,
+        );
+        expect(screen.getByText("João da Silva")).toHaveClass("font-semibold");
+        expect(screen.getByText("Maria Souza")).not.toHaveClass("font-semibold");
+      });
+    });
   });
 
   describe("orientação vertical (série temporal)", () => {
@@ -60,6 +91,33 @@ describe("GraficoBarras", () => {
       expect(screen.getByText("jan/2026")).toBeInTheDocument();
       expect(screen.getByText("fev/2026")).toBeInTheDocument();
       expect(screen.getByText("mar/2026")).toBeInTheDocument();
+    });
+
+    // Correção de regressão (2026-08-07) — causa real do corte horizontal:
+    // item flex sem `min-w-0` nunca encolhe abaixo do conteúdo (rótulo).
+    it("cada coluna de barra tem min-w-0 (nunca transborda o container, causa real do corte)", () => {
+      const { container } = render(
+        <GraficoBarras pontos={PONTOS} orientacao="vertical" cor="#22d3ee" formatarValor={formatarValor} />,
+      );
+      const colunas = container.querySelectorAll(".flex-1");
+      expect(colunas.length).toBeGreaterThan(0);
+      colunas.forEach((coluna) => expect(coluna).toHaveClass("min-w-0"));
+    });
+
+    it("série longa (>12 pontos): afina rótulos (nunca esconde barras/dados) — sempre mostra o primeiro e o último", () => {
+      const pontosLongos = Array.from({ length: 20 }, (_, i) => ({ rotulo: `mes-${i}`, valor: i + 1 }));
+      const { container } = render(
+        <GraficoBarras pontos={pontosLongos} orientacao="vertical" cor="#22d3ee" formatarValor={formatarValor} />,
+      );
+      // Todas as 20 barras continuam renderizadas — só o texto do rótulo é afinado.
+      const barras = container.querySelectorAll(".rounded-t");
+      expect(barras).toHaveLength(20);
+      expect(screen.getByText("mes-0")).toBeInTheDocument();
+      expect(screen.getByText("mes-19")).toBeInTheDocument();
+      // Nem todos os 20 rótulos ficam visíveis (afinado para legibilidade).
+      const rotulosVisiveis = pontosLongos.filter((p) => screen.queryByText(p.rotulo) !== null);
+      expect(rotulosVisiveis.length).toBeLessThan(20);
+      expect(rotulosVisiveis.length).toBeGreaterThan(0);
     });
 
     it("rotula diretamente só a barra de maior valor (nunca todos os pontos)", () => {

@@ -1,8 +1,13 @@
 import ChipsFiltroAtivo from "./ChipsFiltroAtivo";
+import FiltroCategoriaFuncional from "./FiltroCategoriaFuncional";
 import FiltrosRapidos from "./FiltrosRapidos";
 import PainelFiltrosAvancados from "./PainelFiltrosAvancados";
 import type { CampoDeFiltro } from "../../hooks/useDiarias";
-import type { OpcoesFiltroResposta, ParametrosPesquisaDiariasQuery } from "../../types/analitica";
+import type {
+  CategoriaFuncionalFiltro,
+  OpcoesFiltroResposta,
+  ParametrosPesquisaDiariasQuery,
+} from "../../types/analitica";
 
 interface Props {
   filtros: ParametrosPesquisaDiariasQuery;
@@ -41,6 +46,10 @@ export default function PainelFiltrosPrincipal({
 }: Props) {
   return (
     <div className="space-y-3">
+      <FiltroCategoriaFuncional
+        valor={filtros.categoria_funcional as CategoriaFuncionalFiltro | undefined}
+        onMudarFiltro={onMudarFiltro}
+      />
       <FiltrosRapidos onMudarFiltro={onMudarFiltro} />
       <PainelFiltrosAvancados
         filtros={filtros}

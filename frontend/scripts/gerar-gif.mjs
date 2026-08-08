@@ -307,8 +307,8 @@ async function main() {
     await janela.getByRole("button", { name: "Fechar" }).click();
     await janela.getByRole("dialog", { name: "Gerar relatório" }).waitFor({ state: "hidden", timeout: 10000 });
 
-    await janela.getByRole("button", { name: "Análise Rápida" }).click();
-    await janela.getByText("Analisando o recorte...").waitFor({ state: "hidden", timeout: 15000 });
+    await janela.getByRole("button", { name: "Documentos Hábeis Pendentes" }).click();
+    await janela.getByText("Carregando Documentos Hábeis Pendentes...").waitFor({ state: "hidden", timeout: 15000 });
     await janela.waitForTimeout(300);
     await gravador.capturar(janela, "analitica-diagnostico", 1900);
     await janela.getByRole("button", { name: "← Voltar aos resultados" }).click();

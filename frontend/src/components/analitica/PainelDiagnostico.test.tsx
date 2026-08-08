@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiagnosticoResposta } from "../../types/analitica";
 
@@ -63,7 +64,7 @@ describe("PainelDiagnostico", () => {
     obterDiagnosticoMock.mockResolvedValueOnce(DIAGNOSTICO);
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
 
-    await waitFor(() => expect(screen.getByText("4 registros")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Diagnóstico · 4 registros")).toBeInTheDocument());
   });
 
   it("'← Voltar aos resultados' aciona aoVoltar em qualquer estado", () => {
@@ -88,7 +89,7 @@ describe("PainelDiagnostico", () => {
       obterDiagnosticoMock.mockResolvedValueOnce(DIAGNOSTICO);
       render(<PainelDiagnostico {...PROPS_BASE} />);
 
-      await waitFor(() => expect(screen.getByText("4 registros")).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText("Diagnóstico · 4 registros")).toBeInTheDocument());
       expect(screen.getByText("Esperado 2 (50%)")).toBeInTheDocument();
       expect(screen.getByText("Atenção 1 (25%)")).toBeInTheDocument();
       expect(screen.getByText("Inconsistência 1 (25%)")).toBeInTheDocument();
@@ -180,6 +181,47 @@ describe("PainelDiagnostico", () => {
       );
 
       await waitFor(() => expect(screen.getByText(/01–30\/06\/2026/)).toBeInTheDocument());
+    });
+  });
+
+  // Correção de regressão (2026-08-07) — insight específico do Modo
+  // Executivo (ex.: "8 casos de possível duplicidade") abre esta tela já
+  // filtrada só para aquele caso, nunca a lista inteira do recorte.
+  describe("filtroInicial (correção de regressão, 2026-08-07)", () => {
+    const FILTRO_DH = { titulo: "Documento Hábil (DH) ainda não emitido", rotulo: "DH ainda não emitido" };
+
+    it("com filtroInicial: mostra só os registros com aquele caso, e o indicador 'Filtrado por'", async () => {
+      obterDiagnosticoMock.mockResolvedValueOnce(DIAGNOSTICO);
+      render(<PainelDiagnostico {...PROPS_BASE} filtroInicial={FILTRO_DH} />);
+
+      await waitFor(() => expect(screen.getByText("Diagnóstico · 1 de 4 registro")).toBeInTheDocument());
+      expect(screen.getByText(/Filtrado por:/)).toBeInTheDocument();
+      expect(screen.getByText("DH ainda não emitido")).toBeInTheDocument();
+      expect(screen.getByText("SEI-3")).toBeInTheDocument();
+      expect(screen.queryByText("SEI-1")).not.toBeInTheDocument();
+      expect(screen.queryByText("SEI-4")).not.toBeInTheDocument();
+    });
+
+    it("'Ver todos' remove o filtro e mostra a lista inteira de novo", async () => {
+      const usuario = userEvent.setup();
+      obterDiagnosticoMock.mockResolvedValueOnce(DIAGNOSTICO);
+      render(<PainelDiagnostico {...PROPS_BASE} filtroInicial={FILTRO_DH} />);
+
+      await waitFor(() => expect(screen.getByText("Diagnóstico · 1 de 4 registro")).toBeInTheDocument());
+      await usuario.click(screen.getByRole("button", { name: "Ver todos" }));
+
+      expect(screen.getByText("Diagnóstico · 4 registros")).toBeInTheDocument();
+      expect(screen.queryByText(/Filtrado por:/)).not.toBeInTheDocument();
+      expect(screen.getByText("SEI-1")).toBeInTheDocument();
+      expect(screen.getByText("SEI-4")).toBeInTheDocument();
+    });
+
+    it("sem filtroInicial (comportamento padrão): mostra todos os registros, sem o indicador", async () => {
+      obterDiagnosticoMock.mockResolvedValueOnce(DIAGNOSTICO);
+      render(<PainelDiagnostico {...PROPS_BASE} />);
+
+      await waitFor(() => expect(screen.getByText("Diagnóstico · 4 registros")).toBeInTheDocument());
+      expect(screen.queryByText(/Filtrado por:/)).not.toBeInTheDocument();
     });
   });
 });

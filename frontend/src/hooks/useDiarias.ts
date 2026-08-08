@@ -29,6 +29,8 @@ export const CAMPOS_DE_FILTRO = [
   "trecho",
   "valor_minimo",
   "valor_maximo",
+  // Sprint 20 (2026-08-05) — filtro primário "Todos | Membros | Servidores".
+  "categoria_funcional",
 ] as const satisfies readonly (keyof ParametrosPesquisaDiariasQuery)[];
 
 export type CampoDeFiltro = (typeof CAMPOS_DE_FILTRO)[number];

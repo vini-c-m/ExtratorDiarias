@@ -29,7 +29,17 @@ origem/destino (essa união só é a semântica do *filtro* "Município", § 3.1
 e do KPI pendente "Total de municípios", § 6.1/§ 14 pergunta 2, que
 permanece fora do escopo desta Sprint). A dimensão `origem_destino` agrupa
 por pares reais `cidade_origem → cidade_destino` — nunca uma contagem de
-município único, então não depende dessa mesma pergunta pendente."""
+município único, então não depende dessa mesma pergunta pendente.
+
+Sprint 21.1 (2026-08-05, Modo Executivo — `docs/central-analitica/
+modo-executivo-plano-tecnico.md § 8.2`) acrescenta 3 dimensões, todas
+sobre campos já existentes de `RegistroAnalitico`, nenhuma delas exige
+dado novo: `categoria_funcional` (gráfico "Membros × Servidores", sempre
+visível, independente do fluxo de comparação — decisão de fechamento 11
+de `modo-executivo-arquitetura-funcional.md § 0`), `doc_origem` (gráfico
+"Unidade solicitante (documento de origem)" — decisão 9: é literalmente
+este campo, sem reinterpretação institucional) e `transporte` (gráfico
+"Meio de transporte")."""
 
 from collections import Counter
 from dataclasses import dataclass
@@ -37,7 +47,17 @@ from typing import Literal
 
 from app.domain.entities.registro_analitico import RegistroAnalitico
 
-DimensaoDistribuicao = Literal["periodo", "servidor", "municipio", "motivo", "situacao", "origem_destino"]
+DimensaoDistribuicao = Literal[
+    "periodo",
+    "servidor",
+    "municipio",
+    "motivo",
+    "situacao",
+    "origem_destino",
+    "categoria_funcional",
+    "doc_origem",
+    "transporte",
+]
 
 # Rótulos de bucket para dado ausente — nunca uma string vazia, nunca um
 # valor inventado, sempre uma descrição honesta do que está faltando
@@ -52,6 +72,8 @@ _ROTULO_MUNICIPIO_SEM_DESTINO = "Sem destino informado"
 _ROTULO_SITUACAO_NAO_INFORMADA = "Situação não informada"
 _ROTULO_ORIGEM_AUSENTE = "Sem origem informada"
 _ROTULO_DESTINO_AUSENTE = "Sem destino informado"
+_ROTULO_TRANSPORTE_NAO_IDENTIFICADO = "Transporte não identificado"
+_ROTULO_DOC_ORIGEM_AUSENTE = "Unidade solicitante não informada"
 
 
 @dataclass(frozen=True)
@@ -112,6 +134,27 @@ def _chave_origem_destino(registro: RegistroAnalitico) -> str:
     return f"{origem} → {destino}"
 
 
+def _chave_categoria_funcional(registro: RegistroAnalitico) -> str:
+    """`categoria_funcional` já vem pronta (MEMBRO/SERVIDOR/NAO_IDENTIFICADO,
+    `app/domain/analitica/categoria_funcional.py`) — nunca `None` (default
+    `"NAO_IDENTIFICADO"` na própria entidade), então, diferente das demais
+    dimensões, não precisa de bucket de "ausente" próprio: o valor
+    `NAO_IDENTIFICADO` já é esse bucket."""
+    return registro.categoria_funcional
+
+
+def _chave_doc_origem(registro: RegistroAnalitico) -> str:
+    if not registro.doc_origem:
+        return _ROTULO_DOC_ORIGEM_AUSENTE
+    return registro.doc_origem
+
+
+def _chave_transporte(registro: RegistroAnalitico) -> str:
+    if not registro.transporte:
+        return _ROTULO_TRANSPORTE_NAO_IDENTIFICADO
+    return registro.transporte
+
+
 _EXTRATORES_DE_CHAVE = {
     "periodo": _chave_periodo,
     "servidor": _chave_servidor,
@@ -119,6 +162,9 @@ _EXTRATORES_DE_CHAVE = {
     "motivo": _chave_motivo,
     "situacao": _chave_situacao,
     "origem_destino": _chave_origem_destino,
+    "categoria_funcional": _chave_categoria_funcional,
+    "doc_origem": _chave_doc_origem,
+    "transporte": _chave_transporte,
 }
 
 # `situacao` é a única dimensão "sem sentido financeiro" do catálogo

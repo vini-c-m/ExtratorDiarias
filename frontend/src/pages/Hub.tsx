@@ -1,4 +1,5 @@
 import { BarChart3, FileSpreadsheet, ListChecks } from "lucide-react";
+import AlertaGlobalDocumentosHabeis from "../components/hub/AlertaGlobalDocumentosHabeis";
 import CardFuncionalidade from "../components/hub/CardFuncionalidade";
 import Alerta from "../components/ui/Alerta";
 import { MENSAGENS } from "../lib/mensagens";
@@ -9,6 +10,9 @@ interface Props {
   aoSelecionarProcessamento: () => void;
   aoSelecionarConferencia: () => void;
   aoSelecionarAnalitica: () => void;
+  // Alerta global de Documentos Hábeis Pendentes — mesmo destino de
+  // `aoSelecionarAnalitica`, mas já abrindo direto na lista de pendências.
+  aoAbrirDocumentosHabeisPendentes: () => void;
 }
 
 // Sprint 14 — Hub de funcionalidades: segunda tela do fluxo (Boas-vindas →
@@ -31,6 +35,7 @@ export default function Hub({
   aoSelecionarProcessamento,
   aoSelecionarConferencia,
   aoSelecionarAnalitica,
+  aoAbrirDocumentosHabeisPendentes,
 }: Props) {
   const funcionalidades = [
     {
@@ -73,6 +78,13 @@ export default function Hub({
           <Alerta variante="aviso">{MENSAGENS.aguardandoAplicativo}</Alerta>
         </div>
       )}
+
+      <div className="mx-auto mt-4 max-w-md">
+        <AlertaGlobalDocumentosHabeis
+          backendOnline={backendOnline}
+          aoAbrirPendencias={aoAbrirDocumentosHabeisPendentes}
+        />
+      </div>
 
       <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2">
         {funcionalidades.map((funcionalidade, indice) => (

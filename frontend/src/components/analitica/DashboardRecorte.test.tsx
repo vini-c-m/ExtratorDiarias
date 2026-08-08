@@ -73,6 +73,12 @@ const DISTRIBUICOES: Record<DimensaoDistribuicao, DistribuicaoResposta> = {
       { rotulo: "Recife-PE → Petrolina-PE", contagem: 34, valor: 16320 },
     ],
   },
+  // Sprint 21.1 (Modo Executivo) — não usadas por `DashboardRecorte`
+  // (Dashboard operacional intocado), só presentes para satisfazer o tipo
+  // `Record<DimensaoDistribuicao, ...>` desta fixture de teste.
+  categoria_funcional: { dimensao: "categoria_funcional", pontos: [] },
+  doc_origem: { dimensao: "doc_origem", pontos: [] },
+  transporte: { dimensao: "transporte", pontos: [] },
 };
 
 const PROPS_BASE = {
@@ -267,21 +273,19 @@ describe("DashboardRecorte", () => {
       expect(screen.getAllByText("—")).not.toHaveLength(0);
     });
 
-    it("mostra os 4 KPIs pendentes marcados como 'Pendente', nunca um número inventado", () => {
+    // Decisão de produto 2026-08-06: os 4 KPIs e o 8º gráfico que
+    // dependiam de decisão pendente do DIMCAC (sempre "Pendente", nunca um
+    // número real) foram retirados da interface — não devem mais aparecer.
+    it("não mostra mais os KPIs/gráfico pendentes retirados da interface", () => {
       mockarTodasAsDistribuicoes();
       render(<DashboardRecorte {...PROPS_BASE} indicadores={INDICADORES} />);
 
-      expect(screen.getByText("Total de municípios 🟡")).toBeInTheDocument();
-      expect(screen.getByText("Registros completos 🟡")).toBeInTheDocument();
-      expect(screen.getByText("Registros incompletos 🟡")).toBeInTheDocument();
-      expect(screen.getByText("Aguardando liberação 🟡")).toBeInTheDocument();
-      expect(screen.getAllByText("Pendente")).toHaveLength(4);
-    });
-
-    it("mostra o painel estático pendente de 'Completos × incompletos', o 8º slot de gráfico", () => {
-      mockarTodasAsDistribuicoes();
-      render(<DashboardRecorte {...PROPS_BASE} indicadores={INDICADORES} />);
-      expect(screen.getByText("Completos × incompletos 🟡")).toBeInTheDocument();
+      expect(screen.queryByText("Total de municípios 🟡")).not.toBeInTheDocument();
+      expect(screen.queryByText("Registros completos 🟡")).not.toBeInTheDocument();
+      expect(screen.queryByText("Registros incompletos 🟡")).not.toBeInTheDocument();
+      expect(screen.queryByText("Aguardando liberação 🟡")).not.toBeInTheDocument();
+      expect(screen.queryByText("Completos × incompletos 🟡")).not.toBeInTheDocument();
+      expect(screen.queryByText("Pendente")).not.toBeInTheDocument();
     });
 
     it("cada gráfico mostra 'Carregando...' até a respectiva distribuição resolver, depois mostra o título do cartão", async () => {
@@ -314,7 +318,8 @@ describe("DashboardRecorte", () => {
       render(<DashboardRecorte {...PROPS_BASE} indicadores={INDICADORES} />);
 
       await waitFor(() => expect(screen.getByText("Ranking de servidores")).toBeInTheDocument());
-      const cartao = screen.getByText("Ranking de servidores").closest("div")!.parentElement!;
+      const cartao = screen.getByText("Ranking de servidores").closest('[class*="rounded-card"]') as HTMLElement;
+      fireEvent.click(within(cartao).getByRole("button", { name: "Mais opções" }));
       fireEvent.click(within(cartao).getByRole("button", { name: "Ver como tabela" }));
 
       const linhas = within(cartao).getAllByRole("row");
@@ -330,7 +335,8 @@ describe("DashboardRecorte", () => {
       await waitFor(() => expect(screen.getByText("Distribuição por motivo")).toBeInTheDocument());
       expect(screen.getByText("Outros")).toBeInTheDocument();
 
-      const cartao = screen.getByText("Distribuição por motivo").closest("div")!.parentElement!;
+      const cartao = screen.getByText("Distribuição por motivo").closest('[class*="rounded-card"]') as HTMLElement;
+      fireEvent.click(within(cartao).getByRole("button", { name: "Mais opções" }));
       fireEvent.click(within(cartao).getByRole("button", { name: "Ver como tabela" }));
       expect(within(cartao).getByText("Auditoria")).toBeInTheDocument();
       // A tabela é a distribuição completa — "Auditoria" nunca aparece
@@ -342,7 +348,8 @@ describe("DashboardRecorte", () => {
       render(<DashboardRecorte {...PROPS_BASE} indicadores={INDICADORES} />);
 
       await waitFor(() => expect(screen.getByText("Valores por período")).toBeInTheDocument());
-      const cartao = screen.getByText("Valores por período").closest("div")!.parentElement!;
+      const cartao = screen.getByText("Valores por período").closest('[class*="rounded-card"]') as HTMLElement;
+      fireEvent.click(within(cartao).getByRole("button", { name: "Mais opções" }));
       fireEvent.click(within(cartao).getByRole("button", { name: "Ver como tabela" }));
 
       expect(within(cartao).getByText("R$ 3.200,00")).toBeInTheDocument();
@@ -396,7 +403,7 @@ describe("DashboardRecorte", () => {
       render(<DashboardRecorte {...PROPS_BASE} indicadores={INDICADORES} aoAplicarFiltro={aoAplicarFiltro} />);
 
       await waitFor(() => expect(screen.getByText("Evolução por período")).toBeInTheDocument());
-      const cartao = screen.getByText("Evolução por período").closest("div")!.parentElement!;
+      const cartao = screen.getByText("Evolução por período").closest('[class*="rounded-card"]') as HTMLElement;
       fireEvent.click(within(cartao).getByRole("button", { name: /Filtrar por mai\/2026/ }));
 
       expect(aoAplicarFiltro).toHaveBeenCalledWith({ periodo_inicial: "2026-05-01", periodo_final: "2026-05-31" });
@@ -408,7 +415,7 @@ describe("DashboardRecorte", () => {
       render(<DashboardRecorte {...PROPS_BASE} indicadores={INDICADORES} aoAplicarFiltro={aoAplicarFiltro} />);
 
       await waitFor(() => expect(screen.getByText("Valores por período")).toBeInTheDocument());
-      const cartao = screen.getByText("Valores por período").closest("div")!.parentElement!;
+      const cartao = screen.getByText("Valores por período").closest('[class*="rounded-card"]') as HTMLElement;
       // Só "2026-05" tem valor financeiro na fixture (`comValor` filtra
       // "2026-06", que tem `valor: null`) — índice do clique deve mapear
       // para o ponto certo mesmo com o subconjunto.

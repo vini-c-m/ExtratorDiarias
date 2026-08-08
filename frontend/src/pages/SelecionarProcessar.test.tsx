@@ -403,3 +403,91 @@ describe("SelecionarProcessar — planilha oficial inacessível ou desatualizada
     expect(screen.queryByRole("dialog", { name: "Alterar Planilha Oficial" })).not.toBeInTheDocument();
   });
 });
+
+// RN-14 — Modo Complemento de Diárias: fluxo separado do Processamento
+// normal, mesmo parser/arquitetura já homologados, propagando `modo` para
+// os dois serviços (processar e preencher).
+describe("SelecionarProcessar — Modo Complemento de Diárias (RN-14)", () => {
+  it("botão alterna o rótulo e fica desabilitado depois de processar", async () => {
+    const usuario = userEvent.setup();
+    processarMock.mockResolvedValueOnce({ id: "lote-1", total: 1, sucesso: 1, erro: 0, processos: [] });
+
+    render(<SelecionarProcessar backendOnline />);
+    const botaoModo = screen.getByRole("button", { name: "Modo Complemento de Diárias" });
+    await usuario.click(botaoModo);
+    expect(
+      screen.getByRole("button", { name: "Modo Complemento de Diárias (ativo)" }),
+    ).toBeInTheDocument();
+
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    await screen.findByRole("button", { name: "Preencher planilha" });
+
+    expect(
+      screen.getByRole("button", { name: "Modo Complemento de Diárias (ativo)" }),
+    ).toBeDisabled();
+  });
+
+  it("exibe o aviso explicando o comportamento do modo Complemento", async () => {
+    const usuario = userEvent.setup();
+    render(<SelecionarProcessar backendOnline />);
+
+    await usuario.click(screen.getByRole("button", { name: "Modo Complemento de Diárias" }));
+
+    expect(screen.getByText(/COMPLEMENTO DE DIÁRIAS/)).toBeInTheDocument();
+    expect(screen.getByText(/SEI já existente não impede mais a gravação/)).toBeInTheDocument();
+  });
+
+  it("propaga modo=COMPLEMENTO para processarLoteComProgresso e preencherPlanilha", async () => {
+    const usuario = userEvent.setup();
+    processarMock.mockResolvedValueOnce({ id: "lote-1", total: 1, sucesso: 1, erro: 0, processos: [] });
+    preencherMock.mockResolvedValueOnce({
+      total_gravado: 1,
+      duplicadas_ignoradas: 0,
+      linha_inicial: 4,
+      linha_final: 4,
+      itens: [],
+      pasta_resultados: "C:/res",
+      caminho_planilha_gerada: "C:/res/planilha.xlsx",
+      caminho_relatorio: "C:/res/relatorio.html",
+      caminho_log: "C:/res/log.txt",
+    });
+
+    render(<SelecionarProcessar backendOnline />);
+    await usuario.click(screen.getByRole("button", { name: "Modo Complemento de Diárias" }));
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    const botaoPreencher = await screen.findByRole("button", { name: "Preencher planilha" });
+    await usuario.click(botaoPreencher);
+    await screen.findByRole("button", { name: "Salvar Relatório" });
+
+    expect(processarMock.mock.calls[0][3]).toBe("COMPLEMENTO");
+    expect(preencherMock.mock.calls[0][2]).toBe("COMPLEMENTO");
+  });
+
+  it("sem ativar o modo, propaga PADRAO — zero regressão do fluxo já homologado", async () => {
+    const usuario = userEvent.setup();
+    processarMock.mockResolvedValueOnce({ id: "lote-1", total: 1, sucesso: 1, erro: 0, processos: [] });
+    preencherMock.mockResolvedValueOnce({
+      total_gravado: 1,
+      duplicadas_ignoradas: 0,
+      linha_inicial: 4,
+      linha_final: 4,
+      itens: [],
+      pasta_resultados: "C:/res",
+      caminho_planilha_gerada: "C:/res/planilha.xlsx",
+      caminho_relatorio: "C:/res/relatorio.html",
+      caminho_log: "C:/res/log.txt",
+    });
+
+    render(<SelecionarProcessar backendOnline />);
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    const botaoPreencher = await screen.findByRole("button", { name: "Preencher planilha" });
+    await usuario.click(botaoPreencher);
+    await screen.findByRole("button", { name: "Salvar Relatório" });
+
+    expect(processarMock.mock.calls[0][3]).toBe("PADRAO");
+    expect(preencherMock.mock.calls[0][2]).toBe("PADRAO");
+  });
+});

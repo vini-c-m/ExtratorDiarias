@@ -13,7 +13,7 @@ describe("BoasVindas", () => {
   it("mostra nome, subtítulo institucional e descrição", () => {
     render(<BoasVindas aoComecar={vi.fn()} />);
 
-    expect(screen.getByRole("heading", { name: "Extrator de Diárias" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Automatizador de Diárias" })).toBeInTheDocument();
     expect(
       screen.getByText("Automação Inteligente do Processo de Concessão de Diárias"),
     ).toBeInTheDocument();

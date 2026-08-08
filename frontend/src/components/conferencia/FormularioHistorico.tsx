@@ -8,40 +8,37 @@ import { TIPOGRAFIA } from "../../theme/tipografia";
 
 interface Props {
   sei: string;
-  origem: string;
   destino: string;
   carregando: boolean;
   historico: string | null;
   erro: string | null;
   onMudarSei: (valor: string) => void;
-  onMudarOrigem: (valor: string) => void;
   onMudarDestino: (valor: string) => void;
   onGerar: () => void;
+  // RN-14 — modo Complemento reaproveita este componente com títulos
+  // próprios ("GERAR HISTÓRICO DE COMPLEMENTO"), sem duplicar o formulário.
+  titulo?: string;
+  tituloResultado?: string;
 }
 
 // Sprint 13 — Etapa 2, só renderizada pela página quando o veredito é
 // APTO_PARA_PROCESSAMENTO (nunca antes disso). RN-12: o campo SEI trafega
 // como texto livre, sem nenhuma máscara ou normalização nesta tela.
+// Correção de 2026-08-05: Origem deixou de ser pedida — o histórico do
+// e-Fisco usa apenas o destino.
 export default function FormularioHistorico({
   sei,
-  origem,
   destino,
   carregando,
   historico,
   erro,
   onMudarSei,
-  onMudarOrigem,
   onMudarDestino,
   onGerar,
+  titulo = "Gerar Histórico para o e-Fisco",
+  tituloResultado = "Histórico para o e-Fisco",
 }: Props) {
   const [copiado, setCopiado] = useState(false);
-
-  // Sprint 13.1 — mesma regra já validada pelo backend
-  // (`RequisicaoHistorico._validar`, HTTP 422 caso viole, `casefold()` para
-  // a comparação). Barrada aqui também para o servidor nunca precisar de
-  // uma viagem de rede só para descobrir que repetiu a mesma cidade.
-  const origemIgualDestino =
-    !!origem.trim() && !!destino.trim() && origem.trim().toLowerCase() === destino.trim().toLowerCase();
 
   async function copiar() {
     if (!historico) return;
@@ -58,7 +55,7 @@ export default function FormularioHistorico({
   if (historico) {
     return (
       <div className={`${SUPERFICIE_BASE} p-6`}>
-        <h3 className={TIPOGRAFIA.subtitulo}>Histórico para o e-Fisco</h3>
+        <h3 className={TIPOGRAFIA.subtitulo}>{tituloResultado}</h3>
         <p className={`mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-4 leading-relaxed ${TIPOGRAFIA.texto}`}>
           {historico}
         </p>
@@ -79,7 +76,7 @@ export default function FormularioHistorico({
 
   return (
     <div className={`${SUPERFICIE_BASE} p-6`}>
-      <h3 className={TIPOGRAFIA.subtitulo}>Gerar Histórico para o e-Fisco</h3>
+      <h3 className={TIPOGRAFIA.subtitulo}>{titulo}</h3>
       <p className={`mt-1.5 ${TIPOGRAFIA.textoAuxiliar}`}>Só o que ainda não existe na planilha oficial.</p>
 
       <div className="mt-4 space-y-4">
@@ -89,25 +86,15 @@ export default function FormularioHistorico({
           value={sei}
           onChange={(evento: ChangeEvent<HTMLInputElement>) => onMudarSei(evento.target.value)}
         />
-        <div className="grid grid-cols-2 gap-3">
-          <Campo
-            rotulo="Origem"
-            value={origem}
-            onChange={(evento: ChangeEvent<HTMLInputElement>) => onMudarOrigem(evento.target.value)}
-          />
-          <Campo
-            rotulo="Destino"
-            value={destino}
-            onChange={(evento: ChangeEvent<HTMLInputElement>) => onMudarDestino(evento.target.value)}
-          />
-        </div>
-        {origemIgualDestino && (
-          <Alerta variante="erro">Origem e destino não podem ser iguais.</Alerta>
-        )}
+        <Campo
+          rotulo="Destino"
+          value={destino}
+          onChange={(evento: ChangeEvent<HTMLInputElement>) => onMudarDestino(evento.target.value)}
+        />
         <Botao
           variante="primaria"
           onClick={onGerar}
-          disabled={!sei.trim() || !origem.trim() || !destino.trim() || origemIgualDestino}
+          disabled={!sei.trim() || !destino.trim()}
           carregando={carregando}
         >
           {!carregando && <FileText aria-hidden="true" className="h-4 w-4" />}

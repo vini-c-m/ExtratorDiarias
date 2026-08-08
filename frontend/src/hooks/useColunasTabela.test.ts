@@ -42,7 +42,7 @@ describe("useColunasTabela", () => {
     expect(result.current.colunasAtivas.has("matricula")).toBe(true);
   });
 
-  it("COLUNAS_OPCIONAIS_DISPONIVEIS lista as 8 colunas do wireframe (Sprint 19.5.7.1)", () => {
+  it("COLUNAS_OPCIONAIS_DISPONIVEIS lista as 8 colunas do wireframe (Sprint 19.5.7.1) + categoria_funcional (Sprint 20)", () => {
     expect(COLUNAS_OPCIONAIS_DISPONIVEIS).toEqual([
       "motivo",
       "matricula",
@@ -52,6 +52,7 @@ describe("useColunasTabela", () => {
       "cpf",
       "doc_origem",
       "transporte",
+      "categoria_funcional",
     ]);
   });
 

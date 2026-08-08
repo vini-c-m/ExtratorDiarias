@@ -25,3 +25,17 @@ export function formatarPeriodoBr(inicial: string, final: string): string {
   }
   return `${inicialFormatada} – ${finalFormatada}`;
 }
+
+const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+/** Formata uma chave de período mensal (`YYYY-MM`, mesmo rótulo devolvido
+ * pela dimensão `periodo` de `GET /distribuicoes`) como "jul/2026" — única
+ * implementação (BI 4.0, extraída de `GradeGraficosExecutivos.formatarPeriodo`,
+ * reaproveitada também por `insightsExecutivos.ts`, que é um módulo puro sem
+ * acesso a componentes React). Entrada malformada devolve o mês bruto, nunca
+ * lança (mesmo critério de `formatarDataBr`). */
+export function formatarPeriodoMensal(chavePeriodo: string): string {
+  const [ano, mes] = chavePeriodo.split("-");
+  const indice = Number(mes) - 1;
+  return `${MESES_ABREV[indice] ?? mes}/${ano}`;
+}

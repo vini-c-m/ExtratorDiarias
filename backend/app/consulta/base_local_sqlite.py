@@ -24,6 +24,7 @@ from openpyxl import load_workbook
 
 from app.consulta import base_local
 from app.consulta.repositorio_diarias import ResultadoDiariasCompletas
+from app.domain.analitica.categoria_funcional import classificar_categoria_funcional
 from app.domain.entities.aviso_linha_ignorada import AvisoLinhaIgnorada
 from app.domain.entities.servidor import Servidor
 from app.infra.db.esquema import VERSAO_ESQUEMA, criar_esquema
@@ -198,8 +199,14 @@ def reconstruir(
     *,
     origem: str,
     caminho_destino: Path,
+    versao_app: str = "",
 ) -> ResumoSincronizacao:
-    """Reconstrução total da Base Local em SQLite. `diarias` é
+    """Reconstrução total da Base Local em SQLite. `versao_app` (Sprint
+    2026-08-06, achado real — build empacotado desatualizado) — a versão do
+    Electron que disparou esta sincronização (`EXTRATOR_DIARIAS_APP_VERSION`,
+    resolvida em `base_local.sincronizar`); `""` quando ausente (ex.: backend
+    rodando standalone em desenvolvimento/testes, sem Electron) — nunca
+    inventada, só o que a variável de ambiente realmente trouxe. `diarias` é
     denormalizada — os campos de servidor vêm inline em cada linha (via
     `servidores.get(cpf)`), sem uma tabela `servidores` separada: a
     reconstrução é sempre total, então não existe o cenário que
@@ -231,8 +238,8 @@ def reconstruir(
                     cidade_origem, cidade_destino, motivo, transporte,
                     valor_total_diarias, linha_planilha,
                     servidor_nome, servidor_cargo, servidor_previdencia,
-                    servidor_matricula, servidor_situacao
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    servidor_matricula, servidor_situacao, categoria_funcional
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     registro.dh,
@@ -252,6 +259,7 @@ def reconstruir(
                     servidor.previdencia if servidor else None,
                     servidor.matricula if servidor else None,
                     servidor.situacao if servidor else None,
+                    classificar_categoria_funcional(servidor.cargo if servidor else None),
                 ),
             )
 
@@ -261,8 +269,8 @@ def reconstruir(
             INSERT INTO sincronizacoes (
                 sincronizado_em, origem, linhas_diarias, linhas_servidores_lidos,
                 linhas_ignoradas, status, tamanho_bytes_fonte, mtime_fonte,
-                linhas_controle_diarias_fonte
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                linhas_controle_diarias_fonte, versao_app
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sincronizado_em,
@@ -274,6 +282,7 @@ def reconstruir(
                 sinal_frescor.tamanho_bytes,
                 sinal_frescor.mtime,
                 sinal_frescor.linhas_controle_diarias,
+                versao_app,
             ),
         )
         sincronizacao_id = cursor.lastrowid

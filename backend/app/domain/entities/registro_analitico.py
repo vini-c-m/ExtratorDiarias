@@ -41,3 +41,11 @@ class RegistroAnalitico:
     linha_planilha: int
     servidor: Servidor | None
     dh: str | None = None
+    # Sprint 20 (2026-08-05) — classificação determinística MEMBRO/SERVIDOR/
+    # NAO_IDENTIFICADO sobre `servidor.cargo` (catálogo fechado,
+    # `app/domain/analitica/categoria_funcional.py`), já calculada e gravada
+    # na Base Local em SQLite (`base_local_sqlite.reconstruir`) — lida aqui
+    # pronta, nunca recalculada nesta entidade. `default="NAO_IDENTIFICADO"`
+    # pelo mesmo motivo de `dh` acima: não quebrar `RegistroAnalitico(...)`
+    # já existente em testes homologados que não passam este campo.
+    categoria_funcional: str = "NAO_IDENTIFICADO"

@@ -175,6 +175,49 @@ def test_diarias_completas_valor_texto_formato_brasileiro():
     assert resultado.diarias[_SEI_PADRAO].valor_total_diarias == 652.96
 
 
+# --- URGENTE — Central Analítica (2026-08-06): achados reais da auditoria
+# de integridade financeira. `_valor_como_numero` cobria só o formato
+# brasileiro puro (`"652,96"`); a Planilha Oficial real tem 3 linhas com o
+# símbolo da moeda também no texto (`"R$ 154,09"`) e 1 linha com texto sem
+# relação nenhuma com valor (`"DIMOT"`, provavelmente colado por engano de
+# outra coluna) — os dois casos precisam de cobertura permanente. -------
+
+
+def test_diarias_completas_valor_texto_com_prefixo_moeda():
+    _, planilha = _nova_planilha()
+    _escrever_linha_diaria(planilha, 2, valor_diarias="R$ 154,09")
+
+    resultado = diarias_completas(planilha)
+
+    assert resultado.diarias[_SEI_PADRAO].valor_total_diarias == 154.09
+
+
+def test_diarias_completas_valor_texto_nao_numerico_permanece_none():
+    _, planilha = _nova_planilha()
+    _escrever_linha_diaria(planilha, 2, valor_diarias="DIMOT")
+
+    resultado = diarias_completas(planilha)
+
+    assert resultado.diarias[_SEI_PADRAO].valor_total_diarias is None
+
+
+def test_diarias_completas_valor_como_texto_de_formula_nunca_e_interpretado_como_numero():
+    """Reproduz o que `openpyxl` devolve para uma célula de fórmula quando
+    o workbook é aberto sem `data_only=True` (a causa raiz do achado real
+    desta auditoria, corrigida em `app/consulta/base_local.py`): o texto
+    cru da fórmula (`"=R2+S2"`), nunca o valor calculado. Mesmo com `R`/`S`
+    presentes na fórmula, o parser nunca deve tentar interpretar esse
+    texto como número — ele não é decifrável sem executar a fórmula, e
+    "inventar" o cálculo aqui violaria a regra de nunca estimar valor
+    (quem resolve a fórmula é o Excel, nunca este parser)."""
+    _, planilha = _nova_planilha()
+    _escrever_linha_diaria(planilha, 2, valor_diarias="=R2+S2")
+
+    resultado = diarias_completas(planilha)
+
+    assert resultado.diarias[_SEI_PADRAO].valor_total_diarias is None
+
+
 def test_diarias_completas_periodo_invalido_gera_aviso_e_ignora_linha():
     _, planilha = _nova_planilha()
     _escrever_linha_diaria(planilha, 2)

@@ -154,7 +154,7 @@ export default function Cabecalho({ status, estadoApp, aoVoltarAoHub, aoAbrirCon
           <Logo variante="cor" className="h-20 w-20" />
         </span>
         <div className="text-left leading-tight">
-          <h1 className={TIPOGRAFIA.tituloApp}>Extrator de Diárias</h1>
+          <h1 className={TIPOGRAFIA.tituloApp}>Automatizador de Diárias</h1>
           <p className={`mt-1.5 ${TIPOGRAFIA.subtituloApp}`}>Automação Inteligente de Processos</p>
         </div>
       </div>

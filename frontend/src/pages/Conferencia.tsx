@@ -2,11 +2,19 @@ import { useState } from "react";
 import ChecklistConferencia from "../components/conferencia/ChecklistConferencia";
 import FormularioConferencia from "../components/conferencia/FormularioConferencia";
 import FormularioHistorico from "../components/conferencia/FormularioHistorico";
+import PainelContinuidadeProcessual from "../components/conferencia/PainelContinuidadeProcessual";
 import Alerta from "../components/ui/Alerta";
+import Botao from "../components/ui/Botao";
+import { SUPERFICIE_BASE } from "../theme/estilos";
 import { mensagemAmigavel } from "../lib/mensagens";
-import { conferir, gerarHistorico } from "../services/api";
+import {
+  buscarCandidatosComplemento,
+  conferir,
+  gerarHistorico,
+  gerarHistoricoComplemento,
+} from "../services/api";
 import { TIPOGRAFIA } from "../theme/tipografia";
-import type { ResultadoConferencia } from "../types/conferencia";
+import type { CandidatoDiariaOriginal, ResultadoConferencia } from "../types/conferencia";
 
 interface Props {
   backendOnline: boolean;
@@ -34,30 +42,47 @@ const VEREDITO_BANNER: Record<
 
 // Sprint 13 — implementação do fluxo aprovado na Sprint 12: Etapa 1
 // (formulário mínimo → diagnóstico com veredito único) e Etapa 2 (Gerar
-// Histórico), que só existe na árvore quando `resultado.veredito ===
-// "APTO_PARA_PROCESSAMENTO"` — não é um bloco escondido por CSS, é
-// condicionalmente ausente do JSX.
+// Histórico). A Etapa 2 é condicionalmente ausente do JSX (não um bloco
+// escondido por CSS) quando o veredito é REVISAR — exceto no caso de
+// pendência exclusiva da janela do Documento Hábil (bloco de refinamento
+// de 2026-08-06): aí a Central oferece "Voltar" ou "Prosseguir mesmo
+// assim", puramente de UX — nenhuma regra de negócio muda e o backend de
+// geração do histórico já não depende do veredito.
 export default function Conferencia({ backendOnline }: Props) {
   const [cpf, setCpf] = useState("");
   const [periodoInicial, setPeriodoInicial] = useState("");
   const [periodoFinal, setPeriodoFinal] = useState("");
 
+  // RN-14 — Modo Complemento de Diárias: escolha explícita do usuário
+  // (botão), mesmo padrão aditivo do "Modo Executivo" da Central Analítica.
+  const [modoComplemento, setModoComplemento] = useState(false);
+
   const [carregandoConferencia, setCarregandoConferencia] = useState(false);
   const [resultado, setResultado] = useState<ResultadoConferencia | null>(null);
   const [erroConferencia, setErroConferencia] = useState<string | null>(null);
+  const [prosseguirMesmoAssim, setProsseguirMesmoAssim] = useState(false);
 
   const [sei, setSei] = useState("");
-  const [origem, setOrigem] = useState("");
   const [destino, setDestino] = useState("");
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
   const [historico, setHistorico] = useState<string | null>(null);
   const [erroHistorico, setErroHistorico] = useState<string | null>(null);
+
+  const [candidatos, setCandidatos] = useState<CandidatoDiariaOriginal[]>([]);
+  const [carregandoCandidatos, setCarregandoCandidatos] = useState(false);
 
   function limparDiagnostico() {
     setResultado(null);
     setErroConferencia(null);
     setHistorico(null);
     setErroHistorico(null);
+    setProsseguirMesmoAssim(false);
+    setCandidatos([]);
+  }
+
+  function alternarModoComplemento() {
+    setModoComplemento((atual) => !atual);
+    limparDiagnostico();
   }
 
   function mudarCpf(valor: string) {
@@ -80,10 +105,31 @@ export default function Conferencia({ backendOnline }: Props) {
     setErroConferencia(null);
     setHistorico(null);
     setErroHistorico(null);
+    setProsseguirMesmoAssim(false);
+    setCandidatos([]);
 
     try {
-      const resposta = await conferir(cpf, periodoInicial, periodoFinal);
+      const resposta = await conferir(
+        cpf,
+        periodoInicial,
+        periodoFinal,
+        modoComplemento ? "COMPLEMENTO" : "PADRAO",
+      );
       setResultado(resposta);
+
+      if (modoComplemento) {
+        setCarregandoCandidatos(true);
+        try {
+          const encontrados = await buscarCandidatosComplemento(cpf, periodoInicial, periodoFinal);
+          setCandidatos(encontrados);
+        } catch {
+          // Continuidade Processual é só informativa — uma falha aqui não
+          // impede o restante da conferência de ser exibido.
+          setCandidatos([]);
+        } finally {
+          setCarregandoCandidatos(false);
+        }
+      }
     } catch (erro) {
       setResultado(null);
       setErroConferencia(mensagemAmigavel(erro, "Não foi possível concluir a conferência."));
@@ -99,7 +145,9 @@ export default function Conferencia({ backendOnline }: Props) {
     setErroHistorico(null);
 
     try {
-      const texto = await gerarHistorico(cpf, periodoInicial, periodoFinal, sei, origem, destino);
+      const texto = modoComplemento
+        ? await gerarHistoricoComplemento(cpf, periodoInicial, periodoFinal, sei, destino)
+        : await gerarHistorico(cpf, periodoInicial, periodoFinal, sei, destino);
       setHistorico(texto);
     } catch (erro) {
       setErroHistorico(mensagemAmigavel(erro, "Não foi possível gerar o histórico."));
@@ -110,12 +158,47 @@ export default function Conferencia({ backendOnline }: Props) {
 
   const banner = resultado ? VEREDITO_BANNER[resultado.veredito] : null;
 
+  // A única pendência que não impede o servidor de continuar, conscientemente,
+  // é a janela do Documento Hábil ainda não ter sido liberada (cadastro
+  // localizado e sem duplicidade) — cadastro ausente ou duplicidade
+  // encontrada continuam bloqueando a Etapa 2, sem opção de prosseguir.
+  const cadastroOk = !!resultado?.checklist.find((item) => item.item === "cadastro_localizado")?.ok;
+  const duplicidadeOk = !!resultado?.checklist.find((item) => item.item === "duplicidade")?.ok;
+  const janelaOk = !!resultado?.checklist.find((item) => item.item === "janela_processamento")?.ok;
+  const apenasJanelaPendente =
+    resultado?.veredito === "REVISAR" && cadastroOk && duplicidadeOk && !janelaOk;
+  const mostrarEtapaHistorico =
+    resultado?.veredito === "APTO_PARA_PROCESSAMENTO" || (apenasJanelaPendente && prosseguirMesmoAssim);
+
   return (
     <div className="mx-auto max-w-2xl animate-entrada-conteudo px-6 py-14 md:px-10">
-      <h2 className={TIPOGRAFIA.titulo}>Central de Conferência</h2>
-      <p className={`mt-2 ${TIPOGRAFIA.texto}`}>
-        Informe os dados da diária. Nada é gravado — a Central só consulta e informa.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className={TIPOGRAFIA.titulo}>Central de Conferência</h2>
+          <p className={`mt-2 ${TIPOGRAFIA.texto}`}>
+            Informe os dados da diária. Nada é gravado — a Central só consulta e informa.
+          </p>
+        </div>
+        {/* RN-14 — mesmo padrão aditivo do "Modo Executivo" da Central
+            Analítica: um botão que troca o modo do fluxo já existente,
+            nunca uma tela separada. */}
+        <Botao
+          variante={modoComplemento ? "primaria" : "secundaria"}
+          disabled={carregandoConferencia}
+          onClick={alternarModoComplemento}
+        >
+          {modoComplemento ? "Modo Complemento de Diárias (ativo)" : "Modo Complemento de Diárias"}
+        </Botao>
+      </div>
+
+      {modoComplemento && (
+        <div className="mt-4">
+          <Alerta variante="aviso">
+            Modo Complemento de Diárias: duplicidade deixa de bloquear o resultado, mas continua
+            sendo exibida — confirme manualmente qual é a diária original antes de gerar o histórico.
+          </Alerta>
+        </div>
+      )}
 
       <div className="mt-8">
         <FormularioConferencia
@@ -159,18 +242,40 @@ export default function Conferencia({ backendOnline }: Props) {
 
           <ChecklistConferencia resultado={resultado} />
 
-          {resultado.veredito === "APTO_PARA_PROCESSAMENTO" && (
+          {apenasJanelaPendente && !prosseguirMesmoAssim && (
+            <div className={`${SUPERFICIE_BASE} p-6`}>
+              <h3 className={TIPOGRAFIA.subtitulo}>O Documento Hábil ainda não foi liberado</h3>
+              <p className={`mt-1.5 ${TIPOGRAFIA.textoAuxiliar}`}>
+                Você pode voltar e aguardar a data prevista, ou prosseguir mesmo assim, conscientemente,
+                para a geração do Histórico do e-Fisco.
+              </p>
+              <div className="mt-4 flex gap-3">
+                <Botao variante="secundaria" onClick={limparDiagnostico}>
+                  Voltar
+                </Botao>
+                <Botao variante="primaria" onClick={() => setProsseguirMesmoAssim(true)}>
+                  Prosseguir mesmo assim
+                </Botao>
+              </div>
+            </div>
+          )}
+
+          {modoComplemento && (
+            <PainelContinuidadeProcessual candidatos={candidatos} carregando={carregandoCandidatos} />
+          )}
+
+          {mostrarEtapaHistorico && (
             <FormularioHistorico
               sei={sei}
-              origem={origem}
               destino={destino}
               carregando={carregandoHistorico}
               historico={historico}
               erro={erroHistorico}
               onMudarSei={setSei}
-              onMudarOrigem={setOrigem}
               onMudarDestino={setDestino}
               onGerar={gerarHistoricoClique}
+              titulo={modoComplemento ? "Gerar Histórico de Complemento" : undefined}
+              tituloResultado={modoComplemento ? "Histórico de Complemento para o e-Fisco" : undefined}
             />
           )}
         </div>

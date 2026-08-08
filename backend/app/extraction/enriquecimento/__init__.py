@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 from app.domain.entities.fonte_transporte import FonteTransporte
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo
 from app.domain.entities.tipo_processo import TipoProcesso
 from app.extraction.enriquecimento.documento_habil import extrair_documento_habil
@@ -8,16 +9,22 @@ from app.extraction.enriquecimento.local_destino import (
     identificar_estado_destino,
     identificar_municipio_final_destino,
 )
+from app.extraction.enriquecimento.quantidade_complementar import (
+    resolver_quantidade_parcial_complementar,
+)
 from app.extraction.enriquecimento.tipo_processo import identificar_tipo_processo
 from app.extraction.enriquecimento.transporte import (
     AVISO_TRANSPORTE_NAO_IDENTIFICADO,
     identificar_transporte,
 )
+from app.extraction.enriquecimento.fontes_secundarias import aplicar_fontes_secundarias
 from app.extraction.enriquecimento.transporte_regra_operacional import aplicar_regra_operacional
 from app.extraction.enriquecimento.valor_diarias_membro import extrair_valor_diarias_membro
 
 
-def enriquecer_processo(processo: Processo, texto: str) -> Processo:
+def enriquecer_processo(
+    processo: Processo, texto: str, modo: ModoProcessamento = ModoProcessamento.PADRAO
+) -> Processo:
     """Acrescenta Documento Hábil, transporte, estado do destino e tipo do
     processo a uma Diária já validada — sem alterar SEI, CPF, datas ou
     qualquer campo já validado nas Sprints anteriores. Cada campo só é
@@ -33,7 +40,15 @@ def enriquecer_processo(processo: Processo, texto: str) -> Processo:
     absoluta — a regra operacional de fallback só entra em jogo quando
     `identificar_transporte` não encontrou NENHUMA evidência (não quando ela
     é conflitante ou fora de CARRO/AVIÃO, casos em que o processo continua
-    sinalizado para revisão manual, como sempre)."""
+    sinalizado para revisão manual, como sempre).
+
+    Fontes Secundárias de Evidência (2026-08-05,
+    `fontes_secundarias/`): depois de a fonte primária (Solicitação de
+    Diária) e as regras acima resolverem tudo que conseguem, documentos
+    auxiliares do mesmo processo (ex.: "CMFC - Validação de Diária -
+    Servidores") são consultados só para os campos que ainda ficaram
+    indefinidos — nunca sobrescrevem um valor já resolvido. Ver
+    `fontes_secundarias.aplicar_fontes_secundarias`."""
     assert processo.diaria is not None
 
     documento_habil, aviso_dh = extrair_documento_habil(texto)
@@ -64,6 +79,17 @@ def enriquecer_processo(processo: Processo, texto: str) -> Processo:
         if aviso_valor:
             avisos.append(aviso_valor)
 
+    quantidade_diaria_parcial_complementar: int | None = None
+    fonte_quantidade_complementar: str | None = None
+    if modo is ModoProcessamento.COMPLEMENTO:
+        quantidade_diaria_parcial_complementar, fonte_quantidade_complementar = (
+            resolver_quantidade_parcial_complementar(texto)
+        )
+        avisos.append(
+            f"Modo Complemento de Diárias — quantidade de diária parcial complementar "
+            f"resolvida: {quantidade_diaria_parcial_complementar}. {fonte_quantidade_complementar}"
+        )
+
     diaria_enriquecida = replace(
         processo.diaria,
         documento_habil=documento_habil,
@@ -72,5 +98,11 @@ def enriquecer_processo(processo: Processo, texto: str) -> Processo:
         estado_destino=estado_destino,
         tipo_processo=tipo_processo,
         valor_total_diarias=valor_total_diarias,
+        quantidade_diaria_parcial_complementar=quantidade_diaria_parcial_complementar,
+        fonte_quantidade_complementar=fonte_quantidade_complementar,
     )
-    return replace(processo, diaria=diaria_enriquecida, avisos=avisos)
+
+    diaria_final, avisos_fontes_secundarias = aplicar_fontes_secundarias(diaria_enriquecida, texto)
+    avisos.extend(avisos_fontes_secundarias)
+
+    return replace(processo, diaria=diaria_final, avisos=avisos)

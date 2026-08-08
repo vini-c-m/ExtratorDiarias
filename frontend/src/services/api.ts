@@ -3,6 +3,7 @@ import type {
   DiagnosticoResposta,
   DiariaCompletaResposta,
   DistribuicaoResposta,
+  DocumentosHabeisPendentesResposta,
   EstadoSincronizacaoResposta,
   ExecucaoSincronizacaoResposta,
   IndicadoresResposta,
@@ -10,6 +11,7 @@ import type {
   PaginaAvisosResposta,
   ParametrosDiagnosticoQuery,
   ParametrosDistribuicaoQuery,
+  ParametrosDocumentosHabeisPendentesQuery,
   ParametrosIndicadoresQuery,
   ParametrosPesquisaDiariasQuery,
   ParametrosRelatorioQuery,
@@ -17,9 +19,15 @@ import type {
   ResultadoPesquisaResposta,
 } from "../types/analitica";
 import type { ConfiguracaoAtiva, EstadoConfiguracao } from "../types/configuracao";
-import type { ResultadoConferencia } from "../types/conferencia";
+import type { CandidatoDiariaOriginal, ModoConferencia, ResultadoConferencia } from "../types/conferencia";
+import type {
+  ItemParaConfirmar,
+  RespostaAnaliseFinalizacao,
+  RespostaConfirmacaoFinalizacao,
+} from "../types/finalizacao";
 import type {
   LoteProcessamento,
+  ModoProcessamento,
   Processo,
   ResultadoPreenchimento,
 } from "../types/processamento";
@@ -29,11 +37,12 @@ export const BACKEND_URL = "http://127.0.0.1:8756";
 export async function processarLote(
   caminhos: string[],
   signal?: AbortSignal,
+  modo: ModoProcessamento = "PADRAO",
 ): Promise<LoteProcessamento> {
   const resposta = await fetch(`${BACKEND_URL}/api/v1/processamento`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ arquivos: caminhos }),
+    body: JSON.stringify({ arquivos: caminhos, modo }),
     signal,
   });
 
@@ -88,6 +97,7 @@ export async function processarLoteComProgresso(
   caminhos: string[],
   onProgresso?: (progresso: ProgressoProcessamento) => void,
   signal?: AbortSignal,
+  modo: ModoProcessamento = "PADRAO",
 ): Promise<LoteProcessamento> {
   const total = caminhos.length;
   const processos: Processo[] = [];
@@ -108,7 +118,7 @@ export async function processarLoteComProgresso(
     }
 
     try {
-      const loteDoArquivo = await processarLote([caminho], signal);
+      const loteDoArquivo = await processarLote([caminho], signal, modo);
       processos.push(...loteDoArquivo.processos);
     } catch (erro) {
       if (signal?.aborted) {
@@ -147,6 +157,7 @@ export async function processarLoteComProgresso(
 export async function preencherPlanilha(
   processos: Processo[],
   tempoProcessamentoMs?: number | null,
+  modo: ModoProcessamento = "PADRAO",
 ): Promise<ResultadoPreenchimento> {
   const itens = processos
     .filter((processo) => processo.status === "sucesso" && processo.diaria)
@@ -176,6 +187,7 @@ export async function preencherPlanilha(
       // Sprint 05.1 — só para o "Tempo de processamento" do resumo
       // executivo do relatório HTML; não afeta nenhuma regra de negócio.
       tempo_processamento_ms: tempoProcessamentoMs ?? null,
+      modo,
     }),
   });
 
@@ -226,6 +238,7 @@ export async function conferir(
   cpf: string,
   periodoInicial: string,
   periodoFinal: string,
+  modo: ModoConferencia = "PADRAO",
 ): Promise<ResultadoConferencia> {
   const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia`, {
     method: "POST",
@@ -234,6 +247,7 @@ export async function conferir(
       cpf,
       periodo_inicial: periodoInicial,
       periodo_final: periodoFinal,
+      modo,
     }),
   });
 
@@ -253,7 +267,6 @@ export async function gerarHistorico(
   periodoInicial: string,
   periodoFinal: string,
   sei: string,
-  origem: string,
   destino: string,
 ): Promise<string> {
   const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/historico`, {
@@ -264,7 +277,6 @@ export async function gerarHistorico(
       periodo_inicial: periodoInicial,
       periodo_final: periodoFinal,
       sei,
-      origem,
       destino,
     }),
   });
@@ -279,6 +291,112 @@ export async function gerarHistorico(
 
   const dados: { texto: string } = await resposta.json();
   return dados.texto;
+}
+
+/** GERAR HISTÓRICO DE COMPLEMENTO (RN-14/RN-16) — mesmo modelo institucional
+ * do histórico normal (RN-13); só a quantidade de diária parcial varia (0
+ * por padrão institucional, já que a Central não lê o texto do processo).
+ * Central de Conferência continua só consultiva: nunca grava nada. */
+export async function gerarHistoricoComplemento(
+  cpf: string,
+  periodoInicial: string,
+  periodoFinal: string,
+  sei: string,
+  destino: string,
+): Promise<string> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/historico-complemento`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cpf,
+      periodo_inicial: periodoInicial,
+      periodo_final: periodoFinal,
+      sei,
+      destino,
+    }),
+  });
+
+  if (resposta.status === 503) {
+    throw new ErroConferenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  const dados: { texto: string } = await resposta.json();
+  return dados.texto;
+}
+
+/** Continuidade Processual (RN-15) — só encontra e explica candidatos a
+ * "diária original"; nunca vincula nem grava nada. `cidadeDestino`/`sei`/
+ * `textoProcesso` são opcionais (a Central de Conferência normalmente só
+ * tem CPF+período nesta etapa). */
+export async function buscarCandidatosComplemento(
+  cpf: string,
+  periodoInicial: string,
+  periodoFinal: string,
+  opcoes?: { cidadeDestino?: string; sei?: string; textoProcesso?: string },
+): Promise<CandidatoDiariaOriginal[]> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/complemento/candidatos`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cpf,
+      periodo_inicial: periodoInicial,
+      periodo_final: periodoFinal,
+      cidade_destino: opcoes?.cidadeDestino ?? null,
+      sei: opcoes?.sei ?? null,
+      texto_processo: opcoes?.textoProcesso ?? "",
+    }),
+  });
+
+  if (resposta.status === 503) {
+    throw new ErroConferenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  const dados: { candidatos: CandidatoDiariaOriginal[] } = await resposta.json();
+  return dados.candidatos;
+}
+
+// "FINALIZAR DIÁRIAS" (2026-08-07) — mesmo padrão das demais funções deste
+// módulo: `fetch` + `mensagemDoErro422`, sem estado. Usa a mesma planilha
+// oficial já configurada (§7.1) — o backend é a única autoridade sobre o
+// caminho, nenhum caminho viaja no corpo da requisição.
+export async function analisarFinalizacao(caminhos: string[]): Promise<RespostaAnaliseFinalizacao> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/finalizacao/analisar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ arquivos: caminhos }),
+  });
+
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+export async function confirmarFinalizacao(
+  itens: ItemParaConfirmar[],
+): Promise<RespostaConfirmacaoFinalizacao> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/finalizacao/confirmar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ itens }),
+  });
+
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
 }
 
 export async function checarSaudeBackend(): Promise<boolean> {
@@ -552,6 +670,30 @@ export async function obterDiagnostico(
 ): Promise<DiagnosticoResposta> {
   const resposta = await fetch(
     `${BACKEND_URL}/api/v1/analitica/diagnostico${construirQueryString(parametros)}`,
+  );
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Correção de foco (2026-08-05) — `GET /documentos-habeis-pendentes`.
+ * `parametros` traz só os 15 campos de filtro (sem paginação/ordenação —
+ * o endpoint sempre opera sobre o recorte inteiro, mesmo critério de
+ * `obterDiagnostico`). Substitui a experiência antes exposta pelo botão
+ * "Análise Rápida (Diagnóstico)" — `obterDiagnostico` acima continua
+ * existindo, usada internamente pelo Modo Executivo. */
+export async function obterDocumentosHabeisPendentes(
+  parametros: ParametrosDocumentosHabeisPendentesQuery,
+): Promise<DocumentosHabeisPendentesResposta> {
+  const resposta = await fetch(
+    `${BACKEND_URL}/api/v1/analitica/documentos-habeis-pendentes${construirQueryString(parametros)}`,
   );
 
   if (resposta.status === 503) {

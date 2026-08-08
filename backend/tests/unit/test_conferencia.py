@@ -39,44 +39,87 @@ def test_cadastro_nao_encontrado() -> None:
     assert "cadastro" in resultado.providencia.lower()
 
 
-def test_duplicidade_exata_cpf_periodo_inicial_e_final() -> None:
-    registro = RegistroDiariaExistente(
-        linha=547,
-        sei="19.20.0902.0004521/2026-11",
-        cpf="12345678901",
-        periodo_inicial=date(2026, 7, 21),
-        periodo_final=date(2026, 7, 23),
-        trecho="RECIFE - GARANHUNS",
-    )
+_REGISTRO_EXISTENTE = RegistroDiariaExistente(
+    linha=547,
+    sei="19.20.0902.0004521/2026-11",
+    cpf="12345678901",
+    periodo_inicial=date(2026, 7, 21),
+    periodo_final=date(2026, 7, 23),
+    trecho="RECIFE - GARANHUNS",
+)
+
+
+def test_duplicidade_quando_as_duas_datas_coincidem() -> None:
     resultado = conferir(
         cpf="12345678901",
         periodo_inicial=date(2026, 7, 21),
         periodo_final=date(2026, 7, 23),
         servidor=_SERVIDOR,
-        registros_do_cpf=[registro],
+        registros_do_cpf=[_REGISTRO_EXISTENTE],
         hoje=date(2026, 7, 21),
     )
     assert resultado.veredito is Veredito.REVISAR
-    assert resultado.duplicidade == registro
+    assert resultado.duplicidade == _REGISTRO_EXISTENTE
 
 
-def test_mesmo_cpf_periodo_diferente_nao_e_duplicidade() -> None:
-    """RN-02 — a chave é exata nas 3 partes; um único limite de período
-    diferente já não é considerado duplicidade."""
-    registro = RegistroDiariaExistente(
-        linha=547,
-        sei="19.20.0902.0004521/2026-11",
-        cpf="12345678901",
-        periodo_inicial=date(2026, 7, 21),
-        periodo_final=date(2026, 7, 23),
-        trecho="RECIFE - GARANHUNS",
-    )
+def test_duplicidade_quando_apenas_a_data_inicial_coincide() -> None:
+    """RN-02 (correção de 2026-08-05) — caso real que motivou a correção:
+    diária existente 21/07 a 23/07; consulta usa a mesma data inicial mas um
+    período final totalmente diferente. Antes da correção isso não era
+    sinalizado (exigia as duas datas simultâneas); agora precisa ser."""
     resultado = conferir(
         cpf="12345678901",
-        periodo_inicial=date(2026, 7, 21),
-        periodo_final=date(2026, 7, 24),  # período final diferente
+        periodo_inicial=date(2026, 7, 21),  # coincide com o período inicial existente
+        periodo_final=date(2026, 8, 1),
         servidor=_SERVIDOR,
-        registros_do_cpf=[registro],
+        registros_do_cpf=[_REGISTRO_EXISTENTE],
+        hoje=date(2026, 7, 21),
+    )
+    assert resultado.veredito is Veredito.REVISAR
+    assert resultado.duplicidade == _REGISTRO_EXISTENTE
+
+
+def test_duplicidade_quando_apenas_a_data_final_coincide() -> None:
+    resultado = conferir(
+        cpf="12345678901",
+        periodo_inicial=date(2026, 7, 18),
+        periodo_final=date(2026, 7, 23),  # coincide com o período final existente
+        servidor=_SERVIDOR,
+        registros_do_cpf=[_REGISTRO_EXISTENTE],
+        hoje=date(2026, 7, 18),
+    )
+    assert resultado.veredito is Veredito.REVISAR
+    assert resultado.duplicidade == _REGISTRO_EXISTENTE
+
+
+def test_nenhuma_data_coincide_nao_e_duplicidade() -> None:
+    resultado = conferir(
+        cpf="12345678901",
+        periodo_inicial=date(2026, 8, 10),
+        periodo_final=date(2026, 8, 12),
+        servidor=_SERVIDOR,
+        registros_do_cpf=[_REGISTRO_EXISTENTE],
+        hoje=date(2026, 8, 10),
+    )
+    assert resultado.duplicidade is None
+    assert resultado.veredito is Veredito.APTO_PARA_PROCESSAMENTO
+
+
+def test_data_coincidente_mas_cpf_diferente_nao_e_duplicidade() -> None:
+    """A checagem de data isolada continua exigindo o mesmo CPF —
+    `registros_do_cpf` já chega filtrado pelo CPF consultado (ver
+    `app/services/conferencia_service.py`); um registro de outro CPF nunca
+    deveria estar nesta lista, mas o teste documenta explicitamente que,
+    mesmo que estivesse, esta função não teria como saber — a garantia real
+    de isolamento por CPF vive na indexação (`repositorio_diarias.diarias_por_cpf`),
+    coberta em `tests/integration/test_repositorio_diarias.py`. Aqui,
+    simplesmente, a lista de registros não contém o outro CPF."""
+    resultado = conferir(
+        cpf="99999999999",
+        periodo_inicial=date(2026, 7, 21),  # mesma data do registro do OUTRO cpf
+        periodo_final=date(2026, 7, 23),
+        servidor=_SERVIDOR,
+        registros_do_cpf=[],  # nada indexado para este CPF
         hoje=date(2026, 7, 21),
     )
     assert resultado.duplicidade is None

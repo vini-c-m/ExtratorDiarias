@@ -25,6 +25,18 @@ _PALAVRAS_CARRO = [
     "ABASTECIMENTO DE VEICULO",
     "QUILOMETRAGEM",
     "TRANSPORTE RODOVIARIO OFICIAL",
+    # Correção de 2026-08-05 (caso real: SEI 19.20.0001.0014476/2026-35) —
+    # anexo "Requisição de Veículo - Viagem" (formulário do chatbot que
+    # solicita um veículo oficial e um motorista para a viagem). As duas
+    # frases abaixo são inequívocas por si só (nunca aparecem descrevendo
+    # outra coisa que não uso de veículo oficial) e deliberadamente NÃO
+    # incluem a palavra genérica "VIAGEM" nem a palavra solta "MOTORISTA"
+    # (que também aparece como CARGO de um servidor, ex. "Motorista Fixo" —
+    # usar só "MOTORISTA" geraria falso positivo em toda diária de um
+    # servidor cujo cargo seja motorista, independente do meio de transporte
+    # realmente usado naquela viagem específica).
+    "REQUISICAO DE VEICULO",
+    "CONDUZIR O VEICULO",
 ]
 
 # Evidência de um meio de transporte real, mas fora dos dois únicos valores

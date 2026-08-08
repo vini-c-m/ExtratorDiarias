@@ -144,19 +144,50 @@ class TestTrecho:
 
 
 class TestDhVazio:
+    """Correção de 2026-08-05 (Bloco de Refinamento item 1): DH vazio deixa
+    de ter uma única explicação genérica — passa a checar a evidência
+    documental objetiva já homologada (janela RN-06/RN-10, mesma fórmula
+    de PASSAR DIA) antes de escolher entre as duas explicações possíveis.
+    Proibido explicitamente pelo pedido: assumir que todo DH vazio
+    significa 'aguardar liberação' sem checar essa evidência primeiro."""
+
     def test_dh_preenchido_nao_gera_caso(self):
         registro = _registro(dh="12345")
-        assert "Documento Hábil (DH) ainda não emitido" not in _titulos(diagnosticar_registro(registro, _HOJE))
+        titulos = _titulos(diagnosticar_registro(registro, _HOJE))
+        assert "Documento Hábil ainda não disponível" not in titulos
+        assert "Documento Hábil ausente — motivo não identificado" not in titulos
 
-    def test_dh_vazio_gera_sempre_atencao(self):
-        """Sem limiar de 'processo antigo' definido (§ 9, pergunta 3/6),
-        a classificação é sempre 'atenção' — nunca 'esperado' nem
-        'inconsistência'."""
-        registro = _registro(dh=None)
+    def test_dh_vazio_dentro_da_janela_de_liberacao_gera_esperado(self):
+        """Evidência objetiva encontrada: a janela RN-06/RN-10 ainda não
+        abriu, então o DH genuinamente não poderia existir ainda."""
+        registro = _registro(dh=None, periodo_inicial=_HOJE + timedelta(days=16))
         casos = diagnosticar_registro(registro, _HOJE)
-        caso = next(c for c in casos if c.titulo == "Documento Hábil (DH) ainda não emitido")
+        caso = next(c for c in casos if c.titulo == "Documento Hábil ainda não disponível")
+        assert caso.classificacao == "esperado"
+        assert caso.campo == "dh"
+        assert caso.motivo == "Documento Hábil ainda não disponível. Aguardar a data de liberação."
+
+    def test_dh_vazio_apos_janela_liberada_gera_atencao_com_motivo_nao_identificado(self):
+        """Sem evidência objetiva disponível (janela já liberada há tempo,
+        DH continua vazio) — motivo explicitamente 'não identificado',
+        nunca uma suposição."""
+        registro = _registro(dh=None, periodo_inicial=date(2026, 1, 1))
+        casos = diagnosticar_registro(registro, _HOJE)
+        caso = next(c for c in casos if c.titulo == "Documento Hábil ausente — motivo não identificado")
         assert caso.classificacao == "atencao"
         assert caso.campo == "dh"
+        assert caso.motivo == (
+            "Documento Hábil ausente. Motivo não identificado automaticamente. "
+            "Recomenda-se investigação."
+        )
+
+    def test_dh_vazio_no_limite_exato_da_liberacao_gera_motivo_nao_identificado(self):
+        """RN-10: limite inclusivo — no próprio dia da liberação, a janela
+        já está aberta, então deixa de ser evidência objetiva para DH."""
+        registro = _registro(dh=None, periodo_inicial=_HOJE + timedelta(days=15))
+        casos = diagnosticar_registro(registro, _HOJE)
+        assert "Documento Hábil ainda não disponível" not in _titulos(casos)
+        assert "Documento Hábil ausente — motivo não identificado" in _titulos(casos)
 
 
 class TestPassarDia:
@@ -183,13 +214,19 @@ class TestPassarDia:
 
 class TestDhEPassarDiaNuncaCompartilhamTexto:
     """Critério de aceite explícito da 19.8.1 — a única checagem
-    considerada a mais arriscada de todo o plano técnico."""
+    considerada a mais arriscada de todo o plano técnico. Continua válida
+    depois da correção de 2026-08-05 (`_caso_dh_vazio` passou a citar a
+    mesma janela RN-06/RN-10 como evidência) — as duas explicações
+    continuam sendo textos distintos, nunca uma reimportação literal da
+    outra (ver também `TestDhVazio.test_dh_vazio_dentro_da_janela_de_liberacao_gera_esperado`,
+    que cobre o caso em que a evidência de `_caso_dh_vazio` É a mesma
+    janela — texto ainda assim diferente do de `_caso_passar_dia`)."""
 
     def test_dh_e_passar_dia_nunca_compartilham_texto(self):
         registro_dh_vazio = _registro(dh=None, periodo_inicial=date(2026, 1, 1))
         registro_passar_dia = _registro(dh="12345", periodo_inicial=_HOJE + timedelta(days=16))
 
-        caso_dh = next(c for c in diagnosticar_registro(registro_dh_vazio, _HOJE) if c.titulo == "Documento Hábil (DH) ainda não emitido")
+        caso_dh = next(c for c in diagnosticar_registro(registro_dh_vazio, _HOJE) if c.titulo == "Documento Hábil ausente — motivo não identificado")
         caso_passar_dia = next(c for c in diagnosticar_registro(registro_passar_dia, _HOJE) if c.titulo == "Aguardando liberação")
 
         assert caso_dh.titulo != caso_passar_dia.titulo
@@ -211,13 +248,35 @@ class TestDhEPassarDiaNuncaCompartilhamTexto:
     def test_um_registro_pode_disparar_os_dois_casos_ao_mesmo_tempo_sem_se_confundirem(self):
         """Um processo pode legitimamente estar sem DH E ainda na janela
         de PASSAR DIA ao mesmo tempo — os dois casos coexistem na mesma
-        lista, cada um com seu próprio texto, nunca fundidos num só."""
+        lista, cada um com seu próprio texto, nunca fundidos num só. Este
+        é justamente o cenário em que `_caso_dh_vazio` cita a MESMA janela
+        de `_caso_passar_dia` como evidência — o teste seguinte confirma
+        que, mesmo assim, os textos continuam distintos."""
         registro = _registro(dh=None, periodo_inicial=_HOJE + timedelta(days=16))
         casos = diagnosticar_registro(registro, _HOJE)
         titulos = _titulos(casos)
-        assert "Documento Hábil (DH) ainda não emitido" in titulos
+        assert "Documento Hábil ainda não disponível" in titulos
         assert "Aguardando liberação" in titulos
         assert len([c for c in casos if c.titulo in titulos]) == len(casos)
+
+    def test_dh_esperado_e_passar_dia_tambem_nunca_compartilham_texto(self):
+        """Caso mais arriscado desta correção: quando `_caso_dh_vazio`
+        está no sub-caso 'esperado' (janela ainda não liberada), a
+        evidência que ele cita é literalmente a mesma de `_caso_passar_dia`
+        — os dois textos continuam, ainda assim, distintos (nunca a
+        reimportação literal um do outro)."""
+        registro = _registro(dh=None, periodo_inicial=_HOJE + timedelta(days=16))
+        casos = diagnosticar_registro(registro, _HOJE)
+
+        caso_dh = next(c for c in casos if c.titulo == "Documento Hábil ainda não disponível")
+        caso_passar_dia = next(c for c in casos if c.titulo == "Aguardando liberação")
+
+        assert caso_dh.titulo != caso_passar_dia.titulo
+        assert caso_dh.motivo != caso_passar_dia.motivo
+        assert caso_dh.campo != caso_passar_dia.campo
+        assert "15 dias" not in caso_dh.motivo
+        assert "RN-06" not in caso_dh.motivo
+        assert "Documento Hábil" not in caso_passar_dia.motivo
 
 
 class TestDuplicidade:

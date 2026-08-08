@@ -8,6 +8,14 @@ from app.domain.entities.processo import Processo, StatusProcesso
 _FORMATO_DATA = "%d/%m/%Y"
 _TAMANHO_CPF = 11
 
+# Programa Permanente de QA Evolutivo (2026-08-06) — maior período real já
+# encontrado nas ~1900 linhas da planilha oficial é de 14 dias; 60 dias dá
+# margem generosa (mais de 4x o maior caso real) sem arriscar bloquear
+# nenhuma diária legítima, e ainda assim pega com folga um erro de
+# digitação de dígito no ano (diferença de anos vira diferença de milhares
+# de dias).
+_MAXIMO_DIAS_PERIODO_PLAUSIVEL = 60
+
 
 def _parsear_data(valor: str | None) -> date | None:
     if not valor:
@@ -59,6 +67,34 @@ def validar(arquivo: str, campos: CamposExtraidos) -> Processo:
         motivos.append("Período final não encontrado")
     elif periodo_final is None:
         motivos.append(f"Período final não é uma data válida: {campos.periodo_final!r}")
+
+    # Programa Permanente de QA Evolutivo (2026-08-06) — caso real SEI
+    # 19.20.100000001.0014710/2026-08: o próprio Requerimento tinha um erro
+    # de digitação ("DATA INICIAL: 06/08/2006", vinte anos ANTES de "DATA DE
+    # RETORNO: 07/08/2026" — datas em ordem cronológica correta, só que
+    # absurdamente distantes). As duas datas, isoladamente, são válidas
+    # (passam em `_parsear_data`) e já estão na ordem certa, então nada
+    # detectava essa inconsistência, e a diária ia para a planilha oficial
+    # com um período de milhares de dias. Mesmo princípio de "nunca
+    # adivinha" já usado em todo o projeto: não tenta corrigir a data (não
+    # há como saber, só olhando o PDF, se o erro é no ano, no dia ou no mês)
+    # — só bloqueia e devolve para revisão manual, mesmo tratamento já dado
+    # a um CPF corrompido. Cobre os dois sentidos (inicial depois do final,
+    # ou span implausivelmente longo) com a mesma checagem de duração.
+    if periodo_inicial is not None and periodo_final is not None:
+        duracao_dias = (periodo_final - periodo_inicial).days
+        if duracao_dias < 0:
+            motivos.append(
+                f"Período inicial ({campos.periodo_inicial}) é posterior ao período final "
+                f"({campos.periodo_final}) — provável erro de digitação no processo, requer revisão manual"
+            )
+        elif duracao_dias > _MAXIMO_DIAS_PERIODO_PLAUSIVEL:
+            motivos.append(
+                f"Período entre {campos.periodo_inicial} e {campos.periodo_final} tem "
+                f"{duracao_dias} dias — muito acima do maior período real já visto "
+                f"({_MAXIMO_DIAS_PERIODO_PLAUSIVEL} dias de margem), provável erro de "
+                "digitação no processo, requer revisão manual"
+            )
 
     if motivos:
         return Processo(

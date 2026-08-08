@@ -1,6 +1,7 @@
 from app.extraction.enriquecimento.local_destino import (
     identificar_estado_destino,
     identificar_municipio_final_destino,
+    remover_sufixo_uf,
 )
 
 
@@ -617,3 +618,64 @@ def test_pj_sem_remover_prefixo_ficaria_nao_reconhecida_regressao_do_bug():
     valor, aviso = identificar_estado_destino("PJ Xyzabcinexistente")
     assert valor is None
     assert "não reconhecida" in aviso
+
+
+# --- Correção de 2026-08-05 (Programa de Validação Evolutiva) — "Promotoria"/
+# "Procuradoria" sem o complemento "de Justiça" ----------------------------
+
+
+def test_promotoria_sem_de_justica_seguida_do_municipio():
+    """Processo real SEI 19.20.0001.0014871/2026-40: 'CIDADE(S) DESTINO:
+    PROMOTORIA PALMARES' — mesmo padrão de 'PJ Palmares' (Caso 4), só que
+    escrito por extenso e sem o complemento 'de Justiça'."""
+    valor, aviso = identificar_estado_destino("PROMOTORIA PALMARES")
+    assert valor == "PERNAMBUCO"
+    assert aviso is None
+
+
+def test_procuradoria_sem_de_justica_seguida_do_municipio():
+    valor, aviso = identificar_estado_destino("PROCURADORIA GARANHUNS")
+    assert valor == "PERNAMBUCO"
+    assert aviso is None
+
+
+def test_promotoria_sem_de_justica_com_conector_de():
+    valor, aviso = identificar_estado_destino("Promotoria de Garanhuns")
+    assert valor == "PERNAMBUCO"
+    assert aviso is None
+
+
+def test_promotoria_de_justica_por_extenso_continua_funcionando_apos_a_correcao():
+    """Regressão: a forma completa 'Promotoria de Justiça de <cidade>'
+    (já homologada) precisa continuar reconhecida depois de 'DE JUSTIÇA'
+    virar opcional."""
+    valor, aviso = identificar_estado_destino("Promotoria de Justiça de Limoeiro")
+    assert valor == "PERNAMBUCO"
+    assert aviso is None
+
+
+# --- Programa Permanente de QA Evolutivo (2026-08-06) — sufixo de UF
+# vazando para o TRECHO exibido na planilha --------------------------------
+
+
+def test_remover_sufixo_uf_remove_uf_valida():
+    """Processo real SEI 19.20.0001.0001165/2026-47: 'CIDADE(S) DESTINO:
+    Santa Filomena/PE' — usado tal como veio do PDF para resolver a coluna Q
+    (o sufixo desambigua), mas vazava para o TRECHO (coluna J), onde nenhuma
+    das quase 1900 linhas já existentes na planilha oficial usa esse
+    formato."""
+    assert remover_sufixo_uf("Santa Filomena/PE") == "Santa Filomena"
+
+
+def test_remover_sufixo_uf_preserva_nome_sem_sufixo():
+    assert remover_sufixo_uf("Recife") == "Recife"
+
+
+def test_remover_sufixo_uf_nao_remove_sufixo_que_nao_e_uf_valida():
+    """Só remove quando as duas letras finais são mesmo uma UF brasileira —
+    nunca 'adivinha' que qualquer coisa depois de '/' é descartável."""
+    assert remover_sufixo_uf("Cidade/XX") == "Cidade/XX"
+
+
+def test_remover_sufixo_uf_preserva_none():
+    assert remover_sufixo_uf(None) is None

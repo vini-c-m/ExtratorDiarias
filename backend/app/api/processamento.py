@@ -2,6 +2,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter
 
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.schemas.processamento import (
     DiariaResposta,
     ErroExtracaoResposta,
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/api/v1", tags=["processamento"])
 
 @router.post("/processamento", response_model=LoteProcessamentoResposta)
 def iniciar_processamento(requisicao: RequisicaoProcessamento) -> LoteProcessamentoResposta:
-    lote = processar_lote(requisicao.arquivos)
+    lote = processar_lote(requisicao.arquivos, ModoProcessamento(requisicao.modo))
 
     return LoteProcessamentoResposta(
         id=lote.id,

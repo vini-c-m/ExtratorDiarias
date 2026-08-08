@@ -60,6 +60,52 @@ def test_erro_quando_data_nao_e_valida():
     assert any("não é uma data válida" in m for m in processo.erro.motivos)
 
 
+# --- Programa Permanente de QA Evolutivo (2026-08-06) — período inicial
+# posterior ao período final -----------------------------------------------
+
+
+def test_erro_quando_periodo_inicial_e_posterior_ao_periodo_final():
+    processo = validar(
+        "arquivo.pdf", _campos(periodo_inicial="08/08/2026", periodo_final="07/08/2026")
+    )
+
+    assert processo.status is StatusProcesso.ERRO
+    assert any("posterior ao período final" in m for m in processo.erro.motivos)
+
+
+def test_erro_quando_periodo_tem_duracao_implausivel():
+    """Processo real SEI 19.20.100000001.0014710/2026-08 (reprodução
+    sintética — Política de Dados Sintéticos, `CONTRIBUTING.md`): o próprio
+    Requerimento trazia "DATA INICIAL: 06/08/2006" (vinte anos ANTES de
+    "DATA DE RETORNO: 07/08/2026") — erro de digitação no processo, não na
+    extração; as datas já estão na ordem cronológica certa, só que
+    absurdamente distantes. Nada detectava essa inconsistência antes desta
+    correção, e a diária ia para a planilha oficial com um período de
+    milhares de dias."""
+    processo = validar(
+        "arquivo.pdf", _campos(periodo_inicial="06/08/2006", periodo_final="07/08/2026")
+    )
+
+    assert processo.status is StatusProcesso.ERRO
+    assert any("dias" in m and "período" in m.lower() for m in processo.erro.motivos)
+
+
+def test_periodo_inicial_igual_ao_final_continua_valido():
+    """Regressão: a maioria das diárias reais é de um único dia (período
+    inicial == período final)."""
+    processo = validar("arquivo.pdf", _campos(periodo_inicial="12/09/2025", periodo_final="12/09/2025"))
+
+    assert processo.status is StatusProcesso.SUCESSO
+
+
+def test_periodo_de_14_dias_continua_valido():
+    """Regressão: 14 dias é o maior período já visto nas ~1900 linhas reais
+    da planilha oficial — precisa continuar passando com folga."""
+    processo = validar("arquivo.pdf", _campos(periodo_inicial="01/03/2026", periodo_final="15/03/2026"))
+
+    assert processo.status is StatusProcesso.SUCESSO
+
+
 def test_erro_acumula_varios_motivos_de_uma_vez():
     processo = validar("arquivo.pdf", _campos(sei=None, cpf=None))
 

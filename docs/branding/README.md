@@ -1,6 +1,6 @@
 # Identidade Visual
 
-Identidade visual própria do Extrator de Diárias (Design System "Neon Tech UI", v2.0+), desenhada para uma interface desktop escura, técnica e discreta — sem qualquer referência a uma instituição específica.
+Identidade visual própria do Automatizador de Diárias (Design System "Neon Tech UI", v2.0+), desenhada para uma interface desktop escura, técnica e discreta — sem qualquer referência a uma instituição específica.
 
 Fonte única de verdade: [`frontend/src/theme/`](../../frontend/src/theme/) (`cores.ts`, `tipografia.ts`, `theme.css`). Este documento é a leitura humana desses tokens — para alterar a identidade visual do app, edite os arquivos em `theme/`, nunca hardcode um valor num componente.
 
@@ -9,7 +9,7 @@ Fonte única de verdade: [`frontend/src/theme/`](../../frontend/src/theme/) (`co
 Monograma "ED" — um "D" arredondado com um "E" (tronco + 3 braços) revelado em espaço negativo dentro do bojo, preenchido pelo gradiente de marca.
 
 <p align="center">
-  <img src="../../frontend/public/brand/logo-color.svg" width="120" alt="Logo do Extrator de Diárias" />
+  <img src="../../frontend/public/brand/logo-color.svg" width="120" alt="Logo do Automatizador de Diárias" />
 </p>
 
 | Arquivo | Uso |

@@ -41,7 +41,7 @@ const COR_PREENCHIMENTO: Record<Variante, string> = {
 
 export default function Logo({ variante = "cor", className }: Props) {
   return (
-    <svg viewBox="0 0 100 100" role="img" aria-label="Extrator de Diárias" className={className}>
+    <svg viewBox="0 0 100 100" role="img" aria-label="Automatizador de Diárias" className={className}>
       {variante === "cor" && (
         <defs>
           {/* Degradê vertical (azul → ciano → roxo), conforme a identidade

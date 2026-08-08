@@ -17,6 +17,18 @@ from pydantic import BaseModel, Field, model_validator
 CampoOrdenacao = Literal["sei", "periodo", "servidor", "destino", "valor"]
 DirecaoOrdenacao = Literal["asc", "desc"]
 
+# Sprint 20 (2026-08-05) — filtro primário "Todos | Membros | Servidores"
+# do Recorte Analítico (`app/domain/analitica/categoria_funcional.py`).
+# Só `MEMBRO`/`SERVIDOR` são valores de filtro válidos — "Todos" é a
+# ausência do parâmetro (`None`), mesmo padrão de todo filtro opcional
+# desta API; `NAO_IDENTIFICADO` nunca é um valor de filtro selecionável
+# (não é uma categoria que o usuário escolhe ver, é a falta de dado).
+CategoriaFuncionalFiltro = Literal["MEMBRO", "SERVIDOR"]
+
+# Já a resposta (tabela/detalhamento) precisa dos 3 valores — inclusive
+# `NAO_IDENTIFICADO`, para a origem da classificação nunca ser escondida.
+CategoriaFuncionalResposta = Literal["MEMBRO", "SERVIDOR", "NAO_IDENTIFICADO"]
+
 
 class ParametrosPesquisaDiariasQuery(BaseModel):
     """Injetado via `Annotated[ParametrosPesquisaDiariasQuery, Query()]`
@@ -42,6 +54,7 @@ class ParametrosPesquisaDiariasQuery(BaseModel):
     trecho: str | None = None
     valor_minimo: float | None = None
     valor_maximo: float | None = None
+    categoria_funcional: CategoriaFuncionalFiltro | None = None
     pagina: int = Field(default=1, ge=1)
     tamanho_pagina: int = Field(default=25, ge=1, le=100)
     ordenar_por: CampoOrdenacao = "periodo"
@@ -100,6 +113,7 @@ class ParametrosIndicadoresQuery(BaseModel):
     trecho: str | None = None
     valor_minimo: float | None = None
     valor_maximo: float | None = None
+    categoria_funcional: CategoriaFuncionalFiltro | None = None
 
     @model_validator(mode="after")
     def _periodo_valido(self) -> "ParametrosIndicadoresQuery":
@@ -133,7 +147,21 @@ class ParametrosIndicadoresQuery(BaseModel):
 # Omissão 100% aditiva: adicionar `"completude"` a este `Literal` quando a
 # definição existir não quebra nenhum cliente já integrado, porque
 # `Literal` só restringe valores aceitos — nunca uma mudança de shape.
-DimensaoDistribuicao = Literal["periodo", "servidor", "municipio", "motivo", "situacao", "origem_destino"]
+#
+# Sprint 21.1 (2026-08-05, Modo Executivo) acrescenta `categoria_funcional`/
+# `doc_origem`/`transporte` — mesmo critério aditivo, espelha 1:1
+# `app/domain/analitica/distribuicoes.py::DimensaoDistribuicao`.
+DimensaoDistribuicao = Literal[
+    "periodo",
+    "servidor",
+    "municipio",
+    "motivo",
+    "situacao",
+    "origem_destino",
+    "categoria_funcional",
+    "doc_origem",
+    "transporte",
+]
 
 
 class ParametrosDistribuicaoQuery(BaseModel):
@@ -166,6 +194,7 @@ class ParametrosDistribuicaoQuery(BaseModel):
     trecho: str | None = None
     valor_minimo: float | None = None
     valor_maximo: float | None = None
+    categoria_funcional: CategoriaFuncionalFiltro | None = None
     dimensao: DimensaoDistribuicao
 
     @model_validator(mode="after")
@@ -249,6 +278,10 @@ class DiariaResumoResposta(BaseModel):
     doc_origem: str | None = None
     transporte: str | None = None
     cpf_mascarado: str | None = None
+    # Sprint 20 (2026-08-05) — classificação MEMBRO/SERVIDOR/NAO_IDENTIFICADO
+    # já calculada na Base Local (`categoria_funcional`), exibida na tabela
+    # para a origem da classificação nunca ficar implícita.
+    categoria_funcional: CategoriaFuncionalResposta = "NAO_IDENTIFICADO"
 
 
 class ServidorCompletoResposta(BaseModel):
@@ -344,6 +377,7 @@ class DiariaCompletaResposta(BaseModel):
     referencia_administrativa: ReferenciaAdministrativaResposta
     sincronizacao: EstadoSincronizacaoResumidoResposta
     diagnosticos: list[CasoDiagnosticoResposta]
+    categoria_funcional: CategoriaFuncionalResposta = "NAO_IDENTIFICADO"
 
 
 class PaginacaoResposta(BaseModel):
@@ -439,6 +473,10 @@ class PaginaAvisosResposta(BaseModel):
 # `422` — nunca uma composição inventada (mesmo critério já homologado na
 # 19.7.1 para `app.domain.analitica.relatorios.TipoRelatorio`, que só
 # declara os 6 já implementados).
+#
+# Sprint 21.9 (Modo Executivo — PDF executivo) acrescenta
+# `"visao_executiva"` — 9º valor, espelha 1:1
+# `app.domain.analitica.relatorios.TipoRelatorio` (mesma Sprint).
 TipoRelatorio = Literal[
     "executivo",
     "detalhado",
@@ -448,6 +486,7 @@ TipoRelatorio = Literal[
     "por_situacao",
     "inconsistencias",
     "qualidade_dados",
+    "visao_executiva",
 ]
 FormatoRelatorio = Literal["pdf", "excel", "csv"]
 ModoRelatorio = Literal["previsualizacao", "final"]
@@ -482,6 +521,7 @@ class FiltrosRelatorioQuery(BaseModel):
     trecho: str | None = None
     valor_minimo: float | None = None
     valor_maximo: float | None = None
+    categoria_funcional: CategoriaFuncionalFiltro | None = None
 
     @model_validator(mode="after")
     def _periodo_valido(self) -> "FiltrosRelatorioQuery":
@@ -515,7 +555,16 @@ class ParametrosRelatorioQuery(BaseModel):
     quais blocos do conteúdo já composto por `tipo` (`v2-demonstracao-
     visual.md § 7`, "Conteúdo a incluir") entram no artefato final; todos
     `True` por padrão, mesmo estado inicial do formulário no mockup (todos
-    marcados)."""
+    marcados).
+
+    `insights` (Sprint 21.9, Modo Executivo) — só usado por
+    `tipo="visao_executiva"`; cada string já vem pronta do cliente
+    (`app/domain/analitica.../insightsExecutivos.ts` no frontend, fórmulas
+    determinísticas sobre dado já calculado pelo backend) — este contrato
+    nunca recalcula nem interpreta o texto, só o inclui verbatim no PDF
+    (mesma fronteira já estabelecida para `RegistroAnalitico`/mascaramento
+    de CPF: cálculo de um lado, apresentação do outro). Lista vazia por
+    padrão — nenhum tipo de relatório existente muda de comportamento."""
 
     filtros: FiltrosRelatorioQuery
     tipo: TipoRelatorio
@@ -525,6 +574,7 @@ class ParametrosRelatorioQuery(BaseModel):
     incluir_tabela: bool = True
     incluir_inconsistencias: bool = True
     modo: ModoRelatorio
+    insights: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _graficos_apenas_em_pdf(self) -> "ParametrosRelatorioQuery":
@@ -581,6 +631,7 @@ class ParametrosDiagnosticoQuery(BaseModel):
     trecho: str | None = None
     valor_minimo: float | None = None
     valor_maximo: float | None = None
+    categoria_funcional: CategoriaFuncionalFiltro | None = None
 
     @model_validator(mode="after")
     def _periodo_valido(self) -> "ParametrosDiagnosticoQuery":
@@ -621,3 +672,90 @@ class DiagnosticoResposta(BaseModel):
 
     resumo: ResumoDiagnosticoResposta
     registros: list[RegistroDiagnosticadoResposta]
+
+
+# Correção de foco — "Documentos Hábeis Pendentes" (pedido explícito do
+# usuário, 2026-08-05): substitui a experiência antes exposta pelo botão
+# "Análise Rápida (Diagnóstico)" por uma tela exclusiva de `dh` vazio.
+# `GET /diagnostico` (schemas acima) continua existindo, sem nenhuma
+# mudança de contrato — usado internamente pelo Modo Executivo.
+
+SituacaoDocumentoHabilPendente = Literal["aguardando_liberacao", "revisao_manual_necessaria"]
+
+
+class ParametrosDocumentosHabeisPendentesQuery(BaseModel):
+    """Entrada de `GET /documentos-habeis-pendentes` — os mesmos 15 campos
+    de filtro de `ParametrosDiagnosticoQuery` (mesmo motivo: opera sobre o
+    recorte inteiro, nunca uma página dele), para a contagem exibida no
+    botão/badge sempre respeitar o Recorte Analítico atual."""
+
+    q: str | None = None
+    sei: str | None = None
+    cpf: str | None = None
+    servidor_nome: str | None = None
+    servidor_matricula: str | None = None
+    municipio: str | None = None
+    motivo: str | None = None
+    situacao: str | None = None
+    periodo_inicial: date | None = None
+    periodo_final: date | None = None
+    origem: str | None = None
+    destino: str | None = None
+    trecho: str | None = None
+    valor_minimo: float | None = None
+    valor_maximo: float | None = None
+    categoria_funcional: CategoriaFuncionalFiltro | None = None
+
+    @model_validator(mode="after")
+    def _periodo_valido(self) -> "ParametrosDocumentosHabeisPendentesQuery":
+        if (
+            self.periodo_inicial is not None
+            and self.periodo_final is not None
+            and self.periodo_final < self.periodo_inicial
+        ):
+            raise ValueError("Período final não pode ser anterior ao período inicial.")
+        return self
+
+    @model_validator(mode="after")
+    def _valor_valido(self) -> "ParametrosDocumentosHabeisPendentesQuery":
+        if (
+            self.valor_minimo is not None
+            and self.valor_maximo is not None
+            and self.valor_maximo < self.valor_minimo
+        ):
+            raise ValueError("Valor máximo não pode ser menor que o valor mínimo.")
+        return self
+
+
+class DocumentoHabilPendenteResposta(BaseModel):
+    """Um registro com `dh` vazio já classificado — lista objetiva, só os
+    campos úteis para ação (nunca a tabela completa de `DiariaResumoResposta`).
+    `cpf_mascarado` segue a mesma regra vinculante de `DiariaResumoResposta`
+    (CPF completo nunca sai desta lista). `dias_restantes`/`texto_contagem`
+    só vêm preenchidos quando `situacao == "aguardando_liberacao"`;
+    `dias_atraso` só quando `situacao == "revisao_manual_necessaria"`."""
+
+    sei: str
+    servidor_nome: str | None
+    cpf_mascarado: str | None
+    periodo: PeriodoResposta
+    destino: str | None
+    data_liberacao_prevista: date
+    situacao: SituacaoDocumentoHabilPendente
+    dias_restantes: int | None
+    dias_atraso: int | None
+    texto_contagem: str | None
+    mensagem: str
+
+
+class ResumoDocumentosHabeisPendentesResposta(BaseModel):
+    aguardando_liberacao: int
+    revisao_manual_necessaria: int
+
+
+class DocumentosHabeisPendentesResposta(BaseModel):
+    """Resposta de `GET /documentos-habeis-pendentes` — sem `sincronizacao`
+    embutida, mesmo critério já usado em `DiagnosticoResposta`."""
+
+    resumo: ResumoDocumentosHabeisPendentesResposta
+    registros: list[DocumentoHabilPendenteResposta]

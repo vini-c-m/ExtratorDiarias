@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analitica, conferencia, configuracao, planilha, processamento, saude
+from app.api import analitica, conferencia, configuracao, finalizacao, planilha, processamento, saude
 
-app = FastAPI(title="Extrator de Diárias SEI")
+app = FastAPI(title="Automatizador de Diárias SEI")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,3 +21,4 @@ app.include_router(planilha.router)
 app.include_router(conferencia.router)
 app.include_router(configuracao.router)
 app.include_router(analitica.router)
+app.include_router(finalizacao.router)

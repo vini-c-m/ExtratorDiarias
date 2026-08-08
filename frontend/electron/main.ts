@@ -51,9 +51,18 @@ function subirBackend(): void {
   // de caminho (ver `app/consulta/base_local.py`, que cai para
   // `%APPDATA%/ExtratorDiarias` quando esta variável não está definida —
   // ex.: backend rodando standalone em desenvolvimento/testes).
+  // 2026-08-06 (achado real — build empacotado desatualizado): mesmo
+  // padrão de `EXTRATOR_DIARIAS_USER_DATA` acima — `app.getVersion()`
+  // repassada ao backend para gravar em `sincronizacoes.versao_app`
+  // (`app/consulta/base_local.py`), o 3º eixo de frescor de `GET
+  // /sincronizacao` (`app/services/analitica_service.py`). Sem isso, uma
+  // atualização do app (novo instalador) que muda só a lógica de
+  // importação — nunca a Planilha Oficial nem o formato das tabelas —
+  // ficava invisível para a verificação de frescor.
   const variaveisAmbiente = {
     ...process.env,
     EXTRATOR_DIARIAS_USER_DATA: app.getPath("userData"),
+    EXTRATOR_DIARIAS_APP_VERSION: app.getVersion(),
   };
 
   backendProcess = spawn(comando, argumentos, { cwd, windowsHide: true, env: variaveisAmbiente });

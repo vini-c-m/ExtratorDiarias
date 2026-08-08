@@ -43,6 +43,7 @@ describe("conferir", () => {
       cpf: "12345678901",
       periodo_inicial: "2026-07-21",
       periodo_final: "2026-07-23",
+      modo: "PADRAO",
     });
   });
 
@@ -68,7 +69,7 @@ describe("conferir", () => {
 });
 
 describe("gerarHistorico", () => {
-  it("envia SEI/origem/destino e devolve o texto gerado", async () => {
+  it("envia SEI/destino (sem origem) e devolve o texto gerado", async () => {
     const fetchMock = vi.fn(async (_url: string, _opcoes?: RequestInit) =>
       respostaOk({ texto: "TEXTO DO HISTÓRICO" }),
     );
@@ -79,7 +80,6 @@ describe("gerarHistorico", () => {
       "2026-07-21",
       "2026-07-23",
       "19.20.0000.0000000/2026-00",
-      "Recife",
       "Garanhuns",
     );
 
@@ -90,7 +90,6 @@ describe("gerarHistorico", () => {
       periodo_inicial: "2026-07-21",
       periodo_final: "2026-07-23",
       sei: "19.20.0000.0000000/2026-00",
-      origem: "Recife",
       destino: "Garanhuns",
     });
   });
@@ -100,16 +99,16 @@ describe("gerarHistorico", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      gerarHistorico("12345678901", "2026-07-21", "2026-07-23", "sei", "Recife", "Garanhuns"),
+      gerarHistorico("12345678901", "2026-07-21", "2026-07-23", "sei", "Garanhuns"),
     ).rejects.toBeInstanceOf(ErroConferenciaIndisponivel);
   });
 
   it("422 do FastAPI (detail em lista) vira mensagem legível, não '[object Object]'", async () => {
-    const fetchMock = vi.fn(async () => resposta422("Origem e destino não podem ser iguais."));
+    const fetchMock = vi.fn(async () => resposta422("Destino é obrigatório para gerar o histórico."));
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      gerarHistorico("12345678901", "2026-07-21", "2026-07-23", "sei", "Recife", "Recife"),
-    ).rejects.toThrow("Origem e destino não podem ser iguais.");
+      gerarHistorico("12345678901", "2026-07-21", "2026-07-23", "sei", "  "),
+    ).rejects.toThrow("Destino é obrigatório para gerar o histórico.");
   });
 });

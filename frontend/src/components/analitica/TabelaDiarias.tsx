@@ -2,6 +2,7 @@ import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Inbox, Search } from "lu
 import type { KeyboardEvent } from "react";
 import ConfiguracaoColunas from "./ConfiguracaoColunas";
 import Alerta from "../ui/Alerta";
+import Badge from "../ui/Badge";
 import Botao from "../ui/Botao";
 import { formatarPeriodoBr } from "../../lib/datas";
 import { algumFiltroAplicado } from "../../hooks/useDiarias";
@@ -58,6 +59,24 @@ const ROTULO_COLUNA_OPCIONAL: Record<ColunaOpcional, string> = {
   cpf: "CPF (mascarado)",
   doc_origem: "Documento de origem",
   transporte: "Transporte",
+  categoria_funcional: "Categoria (Membro/Servidor)",
+};
+
+/** Sprint 20 (2026-08-05) — nunca vermelho ("erro"/"critico"): a
+ * classificação em si não é um veredito de conformidade (mesma regra já
+ * aplicada ao veredito da Central de Conferência), só uma categoria.
+ * "aviso" (âmbar) para `NAO_IDENTIFICADO` segue o mesmo padrão de
+ * `CelulaVazia` — dado ausente, não uma falha. */
+const VARIANTE_CATEGORIA_FUNCIONAL: Record<string, "info" | "neutro" | "aviso"> = {
+  MEMBRO: "info",
+  SERVIDOR: "neutro",
+  NAO_IDENTIFICADO: "aviso",
+};
+
+const ROTULO_CATEGORIA_FUNCIONAL: Record<string, string> = {
+  MEMBRO: "Membro",
+  SERVIDOR: "Servidor",
+  NAO_IDENTIFICADO: "Não identificado",
 };
 
 /** Sprint 19.5.7 — vazio nunca é apresentado silenciosamente: mesmo
@@ -128,6 +147,14 @@ function renderizarCelulaOpcional(coluna: ColunaOpcional, item: DiariaResumoResp
       return item.doc_origem || <CelulaVazia />;
     case "transporte":
       return item.transporte ?? <CelulaVazia />;
+    case "categoria_funcional": {
+      const categoria = item.categoria_funcional ?? "NAO_IDENTIFICADO";
+      return (
+        <Badge variante={VARIANTE_CATEGORIA_FUNCIONAL[categoria]}>
+          {ROTULO_CATEGORIA_FUNCIONAL[categoria]}
+        </Badge>
+      );
+    }
   }
 }
 

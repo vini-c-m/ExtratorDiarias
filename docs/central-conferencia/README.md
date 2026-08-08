@@ -47,6 +47,9 @@ esta tabela é só o resumo executivo, com a versão completa da decisão.
 | 10 | Novo princípio arquitetural | **RN-11** — a Central Inteligente é um módulo exclusivamente consultivo: nunca aprova, rejeita ou altera registros da planilha oficial; interpreta regras, apresenta diagnósticos e auxilia a decisão, que continua sempre com o servidor. Complementa a RN-08. | [RN-11](#rn-11--princípio-arquitetural-a-central-inteligente-é-um-módulo-exclusivamente-consultivo) |
 | 11 | Formato do número do SEI na Etapa 2 | Confirmado com o DIMCAC (2026-07-22, durante a Sprint 13): o SEI é preservado exatamente como digitado (pontos, barra, hífen), nunca normalizado — tratado como texto livre, usado só para compor o histórico. | [RN-12](#rn-12--preservação-do-número-do-processo-sei) |
 | 12 | Template de texto do histórico do e-Fisco | Confirmado com o DIMCAC (2026-07-22, durante a Sprint 13), a partir de exemplos reais: 3 casos conforme a quantidade de diárias integrais (0, 1, 2+), com frases distintas para cada um. | [RN-13](#rn-13--template-de-texto-do-histórico-do-e-fisco) |
+| 13 | Correção da chave de duplicidade (item 1 desta tabela) | Confirmado em 2026-08-05: não exige mais correspondência simultânea de período inicial E final. Basta que QUALQUER uma das duas datas informadas já conste (como inicial ou final) em uma diária existente do mesmo CPF. Não é sobreposição de intervalo — só as datas literais. | [RN-02](#rn-02-detecção-de-duplicidade-de-diária) |
+| 14 | Etapa 2 (Geração do Histórico) deixa de pedir Origem | Confirmado em 2026-08-05: o formulário passa a pedir apenas SEI e Destino — o histórico do e-Fisco usa apenas o destino. Texto final sempre em CAIXA ALTA (exigência do e-Fisco). | [RN-13](#rn-13--template-de-texto-do-histórico-do-e-fisco) |
+| 15 | **Revisão institucional da decisão do item 2** — Modo Complemento de Diárias | Confirmado em 2026-08-07: a decisão de 2026-07-21 (item 2 acima) fica **substituída**. Após investigação de processos reais e da rotina administrativa da CMFC, o Complemento de Diárias é reconhecido como fluxo administrativo próprio, recorrente, que passa a ter tratamento estruturado — tanto no Processamento de PDFs (gravação de nova linha) quanto na Central de Conferência (conferência com regras adaptadas + geração de Histórico do e-Fisco específico). A Central continua 100% consultiva (RN-11 inalterado) — quem grava é sempre o Processamento. | [RN-07](#rn-07--exceção-operacional-complemento-de-diária) (correção), [RN-14](#rn-14--modo-complemento-de-diárias), [RN-15](#rn-15--continuidade-processual), [RN-16](#rn-16--histórico-de-complemento-mesmo-modelo-institucional-quantidade-variável) |
 
 Com os itens 8, 9 e 10, **todas as pendências da primeira versão deste
 documento foram respondidas e o princípio arquitetural do módulo está
@@ -211,10 +214,25 @@ enriquecimento do retorno é responsabilidade nova do sistema, não uma cópia
 literal da fórmula.
 
 **✅ Decisão oficial (2026-07-21):** confirmado — a chave de duplicidade da
-Central de Conferência é exatamente **CPF + Período Inicial + Período
-Final**, sem nenhuma variação baseada em data única. A tela de conferência
-pedirá as duas datas do período, não apenas uma "data da viagem". Ver
-[§ 0](#0-decisões-oficiais-2026-07-21) item 1.
+Central de Conferência é **CPF + Período**, sem nenhuma variação baseada em
+data única. A tela de conferência pedirá as duas datas do período, não
+apenas uma "data da viagem". Ver [§ 0](#0-decisões-oficiais-2026-07-21)
+item 1.
+
+**⚠️ Correção (2026-08-05):** a formulação original desta decisão (item 1)
+exigia correspondência **simultânea** das duas datas (período inicial E
+período final iguais aos de um registro existente) para o mesmo CPF. Um
+teste manual real mostrou que isso deixava passar como "Apto" um caso que
+deveria ser sinalizado: diária existente 30/07/2026 a 30/07/2026; consulta
+30/07/2026 a 01/08/2026 (mesma data inicial, final diferente) não era
+sinalizada. A regra foi corrigida: para o mesmo CPF, basta que **qualquer
+uma** das duas datas informadas pelo usuário já conste — como período
+inicial OU período final — em uma diária existente, para o resultado não
+poder ser "Apto para Processamento". Isto **não** é uma regra de
+sobreposição de intervalos (não compara se os dois períodos se cruzam) —
+continua sendo uma comparação exata das datas literais, agora item a item
+em vez de exigir as duas ao mesmo tempo. Ver item 13 de
+[§ 0](#0-decisões-oficiais-2026-07-21).
 
 ⚠️ Ver [RN-07](#rn-07-exceção-operacional--complemento-de-diária) e
 [RN-08](#rn-08--princípio-arquitetural-a-central-inteligente-apenas-auxilia-a-decisão)
@@ -352,6 +370,25 @@ continua sendo exclusivamente administrativa, do servidor do DIMCAC. Ver
 [RN-08](#rn-08--princípio-arquitetural-a-central-inteligente-apenas-auxilia-a-decisão)
 e [§ 0](#0-decisões-oficiais-2026-07-21) item 2.
 
+⚠️ **Correção (2026-08-07) — decisão substituída:** a decisão acima fica
+**oficialmente revista**, mantida aqui só como registro histórico do que
+valeu entre 2026-07-21 e 2026-08-07. Investigação de dois processos SEI
+reais (um caso "erro do DIMCAC"/valor faltante, outro "erro de outro
+setor"/correção de período) e inspeção direta da Planilha Oficial real
+confirmaram que o Complemento de Diárias é um fluxo administrativo real,
+recorrente e não pontual — a CMFC já registra manualmente esses casos há
+anos (mesmo achado desta regra), e o processo também exige gerar um
+Histórico do e-Fisco próprio, coisa que a decisão de 2026-07-21 não previa.
+**Nova decisão vigente:** o Processamento de PDFs ganha um modo Complemento
+de Diárias (RN-14), que grava a nova linha; a Central de Conferência também
+ganha um modo Complemento (RN-14) — adapta a regra de duplicidade (deixa de
+bloquear o veredito, mas continua exibindo o achado) e habilita "GERAR
+HISTÓRICO DE COMPLEMENTO" (RN-16). A Central **continua** sem nenhum campo
+que grave "isto é um complemento legítimo" na planilha oficial — quem grava
+é sempre o Processamento (RN-11 inalterado); a Central nunca aprova nem
+reconhece um complemento sozinha (RN-08 inalterado). Ver
+[§ 0](#0-decisões-oficiais-2026-07-21) item 15.
+
 ### RN-08 — Princípio arquitetural: "a Central Inteligente apenas auxilia a decisão"
 
 **Origem:** não é uma fórmula da planilha — é uma decisão operacional
@@ -384,6 +421,15 @@ regra futura do backlog. Ver
 [RN-11](#rn-11--princípio-arquitetural-a-central-inteligente-é-um-módulo-exclusivamente-consultivo)
 — complementar a esta regra, torna explícito que a Central também nunca
 escreve na planilha oficial.
+
+**Nota (2026-08-07) — modo Complemento (RN-14):** o princípio "a Central
+nunca decide sozinha" continua valendo integralmente depois da revisão
+institucional da RN-07. No modo Complemento, a Central deixa de exigir
+ausência de duplicidade para o veredito `apto`, mas isso é só uma
+adaptação de regra — ela continua nunca aprovando, nunca marcando um
+registro como "complemento legítimo" e nunca gravando nada. Reconhecer um
+candidato de Continuidade Processual (RN-15) como a diária original
+continua sendo decisão exclusivamente humana, feita fora desta tela.
 
 ### RN-09 — Datas de registro administrativo (DMTC e DMOF)
 
@@ -498,10 +544,13 @@ implementação da Sprint 13. Complementa RN-03 (quantidade de diárias
 integrais, `N`) e RN-04 (quantidade de diárias parciais, `O`, sempre `1`).
 
 **Em linguagem de negócio:** o histórico é sempre uma única frase, em texto
-contínuo (sem título, sem quebra de linha, sem formatação), no formato:
+contínuo (sem título, sem quebra de linha, sem formatação), integralmente em
+**CAIXA ALTA** (exigência do próprio e-Fisco, que só aceita texto em
+maiúsculas — inclusive nome do servidor e destino, mesmo quando digitados
+originalmente em minúsculas ou mistas), no formato:
 
 ```
-{SEI, exatamente como digitado — RN-12} {NOME DO SERVIDOR EM MAIÚSCULAS} {trecho de diárias} DEST. {ORIGEM} - {DESTINO}, NO PERÍODO DE {período inicial dd/mm/aaaa} A {período final dd/mm/aaaa}.
+{SEI, exatamente como digitado — RN-12} {NOME DO SERVIDOR EM MAIÚSCULAS} {trecho de diárias} DEST. {DESTINO EM MAIÚSCULAS}, NO PERÍODO DE {período inicial dd/mm/aaaa} A {período final dd/mm/aaaa}.
 ```
 
 O "trecho de diárias" (a parte que descreve a quantidade) depende de `N`
@@ -514,25 +563,20 @@ então "UMA PARCIAL" nunca varia. Três casos, confirmados por exemplos reais:
 | `1` (uma noite) | `01 (UMA) DIÁRIA INTEGRAL E UMA PARCIAL,` — singular, "DIÁRIA INTEGRAL" |
 | `2` ou mais | `{N com dois dígitos} ({N por extenso, feminino plural}) DIÁRIAS INTEGRAIS E UMA PARCIAL,` — plural, ex.: `02 (DUAS) DIÁRIAS INTEGRAIS E UMA PARCIAL,` |
 
-**Exemplos confirmados pelo DIMCAC:**
+**Exemplo (formato original, confirmado pelo DIMCAC em 2026-07-22):**
 
 ```
 19.20.0903.0030720/2024-36 JOÃO DA SILVA UMA DIÁRIA PARCIAL, DEST. RECIFE-CARUARU, NO PERÍODO DE 21/07/2026 A 21/07/2026.
-
-{SEI} {NOME} 01 (UMA) DIÁRIA INTEGRAL E UMA PARCIAL, DEST. {ORIGEM} - {DESTINO}, NO PERÍODO DE {inicial} A {final}.
-
-{SEI} {NOME} 02 (DUAS) DIÁRIAS INTEGRAIS E UMA PARCIAL, DEST. {ORIGEM} – {DESTINO}, NO PERÍODO DE 21/07/2026 A 23/07/2026.
 ```
 
-⚠️ **Decisão técnica de padronização (Sprint 13, não confirmada por um quarto
-exemplo):** os exemplos acima usam separadores diferentes entre origem e
-destino (`RECIFE-CARUARU` sem espaço, `RECIFE – GARANHUNS` com espaços e
-travessão). Para não introduzir um caractere novo no sistema, a
-implementação desta Sprint padroniza no **mesmo formato que a coluna
-`TRECHO` já grava na planilha oficial hoje** (`app/planilha/escritor_planilha.py`,
-"{origem} - {destino}", hífen simples com espaços) — decisão sinalizada aqui
-para validação explícita do DIMCAC, mesma disciplina das demais pendências
-deste documento.
+⚠️ **Correção (2026-08-05):** a Etapa 2 (formulário de Geração do Histórico)
+deixou de pedir Origem — passa a pedir apenas **SEI** e **Destino**. O
+histórico do e-Fisco usa apenas o destino (`DEST. {DESTINO}`), sem mais
+concatenar origem e destino com hífen. Nesta mesma correção, o texto final
+passou a ser forçado para CAIXA ALTA em toda a frase (antes, só o nome do
+servidor era forçado para maiúsculas) — exigência do próprio e-Fisco, que
+não aceita texto em minúsculas. Ver item 14 de
+[§ 0](#0-decisões-oficiais-2026-07-21).
 
 **Relação com o sistema futuro:** este template é usado exclusivamente na
 Etapa 2 (Geração do Histórico), depois que o diagnóstico da Etapa 1 já
@@ -540,6 +584,143 @@ retornou 🟢 Apto para Processamento — nunca antes disso. A geração do
 histórico não é uma regra de conferência (não entra no checklist nem no
 veredito da Etapa 1) — é uma funcionalidade de composição de texto, isolada
 das regras RN-01 a RN-11.
+
+### RN-14 — Modo Complemento de Diárias
+
+**Origem:** decisão institucional revisada em 2026-08-07 (ver correção da
+RN-07 e item 15 de [§ 0](#0-decisões-oficiais-2026-07-21)), a partir de dois
+processos SEI reais investigados a fundo (SEI 19.20.0001.0004758/2026-36 —
+erro do DIMCAC/valor faltante; SEI 19.20.0001.0006579/2026-48 — erro de
+outro setor/correção de período) e de inspeção direta da Planilha Oficial
+real via `openpyxl` (célula a célula e fórmula a fórmula).
+
+**Em linguagem de negócio:** Complemento de Diárias é uma exceção
+administrativa real e recorrente (erro do DIMCAC, erro de outro setor,
+correção de período, pagamento parcial, quantidade errada de diárias,
+retificação posterior) — a solução administrativa é **sempre uma nova
+linha** na Planilha Oficial; a linha original **nunca é alterada**. O modo
+é uma escolha explícita do usuário (botão), nunca detectada automaticamente
+do conteúdo do PDF.
+
+**Processamento de PDFs** (`ModoProcessamento.COMPLEMENTO`,
+`app/planilha/escritor_planilha.py`):
+- Coluna `AVISO ` (`AA`) recebe o texto fixo `"COMPLEMENTO DE DIÁRIAS"`,
+  sobrescrevendo a fórmula `VLOOKUP` nativa — mesma ação que hoje um humano
+  da CMFC já faz manualmente ao reconhecer um complemento legítimo.
+- Coluna `QUANT. DIÁRIA PARCIAL` (`O`) pode ser escrita pelo backend
+  **só neste modo** (no modo Padrão continua nunca sendo tocada — é
+  preenchimento manual humano, como sempre foi). Ver RN-04 (quantidade
+  fixa `1` para diária Padrão) — o modo Complemento tem sua **própria**
+  regra, não altera RN-04.
+- Duplicidade por SEI deixa de ser bloqueante **só neste modo** (achado
+  real: complementos podem repetir ou trocar de SEI livremente — SEI nunca
+  é chave obrigatória). A linha é gravada normalmente; o SEI repetido fica
+  visível no resultado (`sei_ja_existente_em_linha`), nunca escondido.
+- Auditoria obrigatória antes de gravar: a linha livre encontrada precisa
+  já ter as fórmulas de `N/P/R/S/V/Z/AA` pré-copiadas (confirmado por
+  auditoria real: amostra de linhas da planilha real, 100% corretas). Se
+  faltar, a gravação daquele item é abortada — nunca grava um complemento
+  incompleto.
+- `N/P/R/S/V/Z` continuam **sempre** fórmula — o backend nunca calcula nem
+  escreve valor financeiro (R$) em nenhuma hipótese; só período (`H`/`I`,
+  já escrito no modo Padrão) e quantidade parcial (`O`) alimentam o
+  cálculo que a própria Planilha Oficial já faz.
+
+**Central de Conferência** (`ModoConferencia="COMPLEMENTO"`,
+`app/domain/rules/conferencia.py::conferir`): a duplicidade (RN-02) deixa
+de contar para o veredito `apto`, mas continua populando
+`checklist`/`duplicidade` normalmente — a Central nunca decide sozinha se é
+um complemento legítimo (RN-08 inalterado). Habilita "GERAR HISTÓRICO DE
+COMPLEMENTO" (RN-16) e o painel de Continuidade Processual (RN-15).
+Continua 100% consultiva — nunca grava na planilha (RN-11 inalterado).
+
+**Relação com o sistema futuro:** este modo é ortogonal a `TipoProcesso`
+(PADRAO/DIARIA_MEMBRO, RN de Sprint 04) — uma diária de Membro em
+Complemento segue as duas regras combinadas, sem conflito, porque atuam em
+colunas diferentes.
+
+### RN-15 — Continuidade Processual
+
+**Origem:** decisão institucional revisada em 2026-08-07, junto com a
+RN-14. Nome do componente sugerido pelo usuário na investigação original —
+responde à pergunta "este processo representa uma continuação
+administrativa de uma diária já registrada?".
+
+**Em linguagem de negócio:** ao processar um Complemento de Diárias, o
+sistema busca, entre as diárias já lançadas do MESMO CPF, candidatos a
+"diária original" que aquele complemento provavelmente está corrigindo —
+e apresenta os candidatos encontrados ao usuário, com a evidência
+documental de cada um, **para confirmação manual**. O sistema nunca
+vincula um candidato automaticamente, nunca usa probabilidade/score, e
+nunca exige que o SEI coincida.
+
+**Como busca (`app/domain/continuidade_processual.py`):** CPF é a única
+âncora obrigatória. Entre as diárias desse CPF já lançadas (lidas da Base
+Local em SQLite, `app/consulta/repositorio_analitico.py`), um registro só
+vira candidato se tiver pelo menos um sinal, sempre relatado em texto
+simples:
+- período igual ou próximo (sobreposição, ou até 60 dias de distância —
+  heurística de apresentação, nunca de decisão automática);
+- mesmo destino;
+- Documento Hábil da diária já lançada citado no texto do processo do
+  complemento;
+- mesmo SEI (nunca obrigatório — só mais uma evidência, quando presente);
+- pistas textuais no texto do processo de complemento ("complemento",
+  "valor faltante", "desconsiderar", "corrigir", "retificar") — só reforça
+  candidatos que já têm outro sinal, nunca aponta um candidato sozinha.
+
+Mesmo CPF, sozinho, nunca é suficiente — uma pessoa pode ter dezenas de
+diárias não relacionadas ao complemento em questão.
+
+**Relação com o sistema futuro:** exposto via `POST /api/v1/conferencia/complemento/candidatos`
+(somente leitura, RN-11), reaproveitado tanto pela Central de Conferência
+(papel: conferência) quanto pelo Processamento de PDFs (papel: gravação,
+usa a mesma busca só para informar o usuário antes de confirmar a
+gravação). Reutilizável para futuros fluxos administrativos de mesma
+natureza (retificação, substituição, nova liquidação) sem alteração de
+arquitetura — só uma nova chamada com os mesmos princípios.
+
+### RN-16 — Histórico de Complemento: mesmo modelo institucional, quantidade variável
+
+**Origem:** decisão institucional revisada em 2026-08-07, junto com a
+RN-14/RN-15. **Esclarecimento direto do usuário (2026-08-07):** não existe
+— e não deve ser criado — um segundo modelo de histórico. Na prática
+administrativa da CMFC, o histórico do e-Fisco continua sendo exatamente o
+mesmo template (RN-13); o que muda no Complemento é só a
+quantidade/modalidade de diárias sendo registrada naquele lançamento
+específico.
+
+**Implementação (`app.domain.rules.historico_efisco.montar_historico`):**
+a RN-13 foi generalizada — `quantidade_diaria_parcial` passa a ser um
+parâmetro explícito (default `1`, preservando integralmente RN-04 "sempre
+1" para todo o fluxo Padrão, sem nenhuma mudança de comportamento) em vez
+de fixo no código. O modo Complemento passa a quantidade realmente
+identificada nos documentos (0 por padrão institucional — RN-14 —, ou o
+valor comprovado). Exemplos confirmados pelo usuário:
+- só integrais, sem parcial: `"01 (UMA) DIÁRIA INTEGRAL,"` ou
+  `"02 (DUAS) DIÁRIAS INTEGRAIS,"` — nenhuma menção a "PARCIAL";
+- com parcial comprovada por documento: `"...E UMA PARCIAL,"`, igual ao
+  RN-13 original — não é uma regra absoluta, o sistema respeita o
+  documento quando ele comprovar parcial.
+
+Exposto via `POST /api/v1/conferencia/historico-complemento` ("GERAR
+HISTÓRICO DE COMPLEMENTO", mesma disciplina de RN-12/RN-13: SEI literal,
+texto sempre em CAIXA ALTA). Central de Conferência não lê o texto do
+processo (diferente do Processamento de PDFs), então usa o padrão
+institucional (`0`) quando quem chama não informa outro valor — se um dia
+precisar refletir a quantidade já resolvida pelo Processamento para o
+mesmo complemento, o campo `quantidade_diaria_parcial` do endpoint já
+aceita isso explicitamente.
+
+**Nota histórica (não normativa):** o único exemplo real disponível (SEI
+19.20.0001.0004758/2026-36, Nota de Liquidação 2026LE900069/Ordem Bancária
+2026OB900069) tem a observação `"...NO PERÍODO DE 17/03 A 19/03 DE 2026
+(COMPLEMENTO DE VALOR FALTANTE)"` — um sufixo parentético que uma versão
+anterior desta regra havia generalizado para `"(COMPLEMENTO DE
+DIÁRIAS)"`. Essa abordagem foi **descartada a pedido do usuário** (não
+criar um segundo modelo); se um marcador textual identificando o
+lançamento como complemento vier a ser necessário, é uma pequena adaptação
+a ser proposta e confirmada separadamente — não implementada hoje.
 
 ### Observação — inconsistência de nomenclatura em `Dados!A`
 
@@ -645,6 +826,20 @@ negócio documentada aqui. Ver [§ 0](#0-decisões-oficiais-2026-07-21) item 6.
 | `pages/Conferencia.tsx` | Nova página — CPF + data, botão "Conferir", checklist de resultado |
 | `services/api.ts` (`conferir(...)`) | Chamada HTTP, mesmo padrão de `preencherPlanilha` |
 | `components/conferencia/ChecklistConferencia.tsx` | Lista de itens ✔/✖ + veredito final, reaproveitando `ui/Badge.tsx` e `ui/Cartao.tsx` |
+
+⚠️ **Adendo (2026-08-07) — RN-14/RN-15/RN-16:** módulos novos do modo
+Complemento, no mesmo espírito de reaproveitamento desta tabela:
+`app/domain/entities/modo_processamento.py` (`ModoProcessamento`),
+`app/extraction/enriquecimento/quantidade_complementar.py` (resolve a
+quantidade de diária parcial complementar), `app/domain/continuidade_processual.py`
+(`localizar_candidatos_diaria_original`, RN-15), `app/domain/rules/historico_efisco.py::montar_historico`
+generalizada com o parâmetro `quantidade_diaria_parcial` (RN-16 — não é
+uma função nova, é a mesma RN-13 parametrizada), e o endpoint
+`app/api/conferencia.py::candidatos_complemento`
+(`POST /api/v1/conferencia/complemento/candidatos`). Frontend:
+`components/conferencia/PainelContinuidadeProcessual.tsx`, reaproveitado
+pelas duas telas (`Conferencia.tsx`, `SelecionarProcessar.tsx`), mesmo
+padrão aditivo de "Modo Executivo" da Central Analítica.
 
 Reaproveitamento deliberado: mesma normalização de CPF já existente em
 `escritor_planilha._cpf_normalizado` (o CPF aparece ora como número, ora como
@@ -766,6 +961,12 @@ classDiagram
 
 `data_liberacao_processamento` e `liberado_para_processamento` implementam
 RN-10 (janela de processamento, derivada de RN-06 — coluna `V`).
+
+⚠️ **Adendo (2026-08-07) — RN-15:** nova entidade
+`CandidatoDiariaOriginal` (`app/domain/entities/candidato_diaria_original.py`),
+embrulhando `RegistroAnalitico` (já existente, Base Local em SQLite) +
+`evidencias: list[str]` (texto simples, nunca uma nota numérica). Usada só
+pela busca de Continuidade Processual — nunca persistida, nunca gravada.
 
 ---
 

@@ -74,24 +74,17 @@ const ATALHOS_DE_PERIODO: Atalho[] = [
 // escopo literal da Sprint 19.5.6 (`v2-plano-tecnico.md` § 18), que define
 // exatamente estes 8 atalhos. Não antecipado aqui.
 
-// "Registros incompletos"/"Possível inconsistência" — dependem de decisão
-// ainda pendente do DIMCAC (perguntas 5/6, `v2-arquitetura-funcional.md`
-// § 14) e do filtro sintético bloqueado na Sprint 19.5.4. Aparecem sempre
-// desabilitados, nunca escondidos (critério de aceite explícito).
-const ATALHOS_PENDENTES = ["Registros incompletos", "Possível inconsistência"];
-const MOTIVO_PENDENTE =
-  "Pendente de definição do DIMCAC — ver v2-arquitetura-funcional.md § 14, perguntas 5 e 6.";
-
-/** Sprint 19.5.6.1 — achado da auditoria da 19.5.6: `title` sozinho não é
- * suficiente (suporte inconsistente entre leitores de tela, inexistente em
- * toque). Cada atalho pendente ganha um texto irmão `sr-only` (mesmo padrão
- * já usado em `TabelaDiarias`/`BotaoArquivo` — nenhuma classe nova),
- * associado ao botão via `aria-describedby`; `title` é mantido como
- * complemento visual para quem usa mouse, nunca como única via de acesso à
- * explicação. */
-function idDescricaoPendente(rotulo: string): string {
-  return `filtro-rapido-pendente-${rotulo.toLowerCase().replace(/\s+/g, "-")}`;
-}
+// "Registros incompletos"/"Possível inconsistência" — decisão de produto
+// 2026-08-06 (`docs/central-analitica/v2-arquitetura-funcional.md` § 3.2,
+// bloco "Decisão de produto — controles retirados da interface"): os dois
+// atalhos que existiam aqui, sempre desabilitados,
+// dependiam de uma decisão do DIMCAC ainda pendente (perguntas 5/6,
+// `v2-arquitetura-funcional.md` § 14) — o responsável pelo produto decidiu
+// que um controle permanentemente desabilitado não deve ficar exposto na
+// tela de produção, mesmo documentado como planejado; a exposição
+// antecipada foi removida até a regra de negócio ser homologada. O
+// planejamento original (critério "nunca escondidos") permanece registrado
+// só nos documentos históricos, nunca revertido silenciosamente aqui.
 
 export default function FiltrosRapidos({ onMudarFiltro }: Props) {
   return (
@@ -101,19 +94,6 @@ export default function FiltrosRapidos({ onMudarFiltro }: Props) {
           {atalho.rotulo}
         </Botao>
       ))}
-      {ATALHOS_PENDENTES.map((rotulo) => {
-        const idDescricao = idDescricaoPendente(rotulo);
-        return (
-          <span key={rotulo}>
-            <Botao variante="secundaria" disabled title={MOTIVO_PENDENTE} aria-describedby={idDescricao}>
-              {rotulo}
-            </Botao>
-            <span id={idDescricao} className="sr-only">
-              {MOTIVO_PENDENTE}
-            </span>
-          </span>
-        );
-      })}
     </div>
   );
 }

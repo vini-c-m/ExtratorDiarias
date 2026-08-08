@@ -64,6 +64,56 @@ _RODAPE_SEI_OPCIONAL = r"(?:[ \t]*\n[^\n]*SEI\s+[\d./\-]+\s*/\s*pg\.\s*\d+[^\n]*
 # desnecessariamente em revisão manual por causa deste separador específico.
 _PADRAO_VALOR_CPF = r"(\d{3}[.\- ]?\d{3}[.\- ]?\d{3}[.\- ]?\d{2})"
 
+# Correção de 2026-08-05 — Programa de Validação Evolutiva do Parser, caso
+# real SEI 19.20.100000001.0014706/2026-11: um anexo "EXTERNO CONFIRMAÇÃO DE
+# SERVIÇO ASSINADA VIA GOV.BR" reproduz o cabeçalho/corpo da própria
+# Solicitação (mesmo id do documento, "1523645"), fazendo `ultimo_segmento`
+# reabrir o segmento a partir dessa reprodução e arrastar para dentro dele
+# conteúdo bem posterior do mesmo processo (no caso, o texto de um Diário
+# Oficial Eletrônico anexado). Esse Diário Oficial cita, em prosa
+# ("...atestada nos autos do SEI 19.20.0001.0004702/2026-93..."), o número de
+# um processo TOTALMENTE DIFERENTE (a base legal orçamentária de uma
+# Instrução Normativa) — e `re.search(r"SEI\s*([\d./-]+)")`, sem nenhuma
+# âncora além da palavra "SEI", casava com essa citação alheia antes de
+# alcançar o rodapé verdadeiro da própria Solicitação, mais adiante no
+# mesmo segmento bloat.
+#
+# A defesa não mexe em `segmentacao_documentos.py` (módulo compartilhado,
+# cujos testes já homologados tratam o id do título como não-significativo
+# para a ordenação de versões — mudar esse contrato ali teria alcance maior
+# e mais arriscado do que o necessário). Em vez disso, o SEI passa a
+# preferir o padrão estrutural que o próprio sistema SEI grava em TODA
+# página de TODO documento, sem exceção — o rodapé "SEI <NUP> / pg. <N>"
+# (mesmo padrão já reconhecido por `_RODAPE_SEI_OPCIONAL`, acima) — porque
+# uma citação avulsa a outro processo, dentro de um texto qualquer, nunca
+# vem seguida de "/ pg. N": só o rodapé de página do próprio sistema SEI
+# tem esse sufixo. Continua caindo de volta no padrão solto original
+# (`_PADRAO_SEI_SOLTO`) quando não há nenhum rodapé nesse formato — layouts
+# antigos, já homologados antes desta correção, continuam funcionando
+# exatamente como antes.
+_PADRAO_SEI_RODAPE = re.compile(r"SEI\s+([\d./-]+)\s*/\s*pg\.\s*\d+", re.IGNORECASE)
+_PADRAO_SEI_SOLTO = re.compile(r"SEI\s*([\d./-]+)")
+
+# Programa Permanente de QA Evolutivo (2026-08-06) — caso real SEI
+# 19.20.0001.0001165/2026-47: "FINALIDADE DA VIAGEM" é o único campo deste
+# formulário que é texto livre, então é o único que ocasionalmente quebra em
+# mais de uma linha no PDF ("...entrega de ofício à\nmunicipalidade."). O
+# padrão de valor padrão de `_buscar_campo` (`(.*)`, sem DOTALL) para no
+# primeiro "\n" — perdia silenciosamente tudo depois da quebra, sem sinalizar
+# erro nem aviso. Os demais campos deste form (LOTAÇÃO, CPF, CIDADE ORIGEM
+# etc.) são valores curtos de uma linha só e não precisam deste tratamento.
+#
+# A correção ancora no próximo rótulo conhecido deste form (nunca "qualquer
+# linha em caixa alta", que arriscaria engolir a seção seguinte inteira) —
+# mesmo princípio de nunca adivinhar já usado em todo o parser.
+_PROXIMOS_ROTULOS_APOS_FINALIDADE = (
+    r"CIDADE ORIGEM|CIDADE\(S\) DESTINO|SA[ÍI]DA PREVISTA PARA|"
+    r"RETORNO PREVISTO PARA|DATA INICIAL|DATA DE RETORNO|OBSERVA[ÇC][ÕO]ES"
+)
+_PADRAO_VALOR_MULTILINHA_ATE_PROXIMO_ROTULO = (
+    rf"([\s\S]*?)(?=\n(?:{_PROXIMOS_ROTULOS_APOS_FINALIDADE})\s*:|\n_{{5,}}|\Z)"
+)
+
 
 def _buscar_campo(rotulo: str, texto: str, padrao_valor: str = "(.*)") -> "re.Match[str] | None":
     """`re.search` para 'RÓTULO: valor', tolerando que o rodapé de página do
@@ -92,7 +142,7 @@ class SeiParserV1(ParserSei):
 
         texto_requerimento = ultimo_segmento(texto, _PADRAO_TITULO_REQUERIMENTO) or texto
 
-        sei = re.search(r"SEI\s*([\d./-]+)", texto_requerimento)
+        sei = _PADRAO_SEI_RODAPE.search(texto_requerimento) or _PADRAO_SEI_SOLTO.search(texto_requerimento)
 
         doc_origem = _buscar_campo("LOTAÇÃO", texto_requerimento)
         if not doc_origem:
@@ -100,7 +150,9 @@ class SeiParserV1(ParserSei):
 
         cpf = _buscar_campo("CPF", texto_requerimento, _PADRAO_VALOR_CPF)
 
-        motivo = _buscar_campo("FINALIDADE DA VIAGEM", texto_requerimento)
+        motivo = _buscar_campo(
+            "FINALIDADE DA VIAGEM", texto_requerimento, _PADRAO_VALOR_MULTILINHA_ATE_PROXIMO_ROTULO
+        )
 
         origem = _buscar_campo("CIDADE ORIGEM", texto_requerimento)
         destino = _buscar_campo(r"CIDADE\(S\) DESTINO", texto_requerimento)
@@ -124,5 +176,5 @@ class SeiParserV1(ParserSei):
             periodo_final=data_retorno.group(1).strip() if data_retorno else None,
             cidade_origem=origem.group(1).strip() if origem else None,
             cidade_destino=destino.group(1).strip() if destino else None,
-            motivo=motivo.group(1).strip() if motivo else None,
+            motivo=re.sub(r"\s+", " ", motivo.group(1)).strip() if motivo else None,
         )

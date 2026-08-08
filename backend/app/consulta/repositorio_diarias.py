@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -114,20 +115,37 @@ def diarias_por_cpf(planilha: Worksheet) -> ResultadoIndexacaoDiarias:
     return ResultadoIndexacaoDiarias(diarias=diarias, avisos=avisos)
 
 
+# Achado real (URGENTE — Central Analítica, 2026-08-06): 3 linhas da
+# Planilha Oficial real têm a coluna P digitada manualmente como texto
+# com o símbolo da moeda (`"R$ 154,09"`), não só o formato brasileiro puro
+# (`"652,96"`) que este parser já cobria — o prefixo sozinho já derrubava
+# `float()`. Removido só o prefixo `R$`/espaços, nunca dígitos: uma linha
+# genuinamente não-numérica (ex. `"DIMOT"`, achado real na mesma auditoria
+# — texto de outro campo colado por engano na coluna de valor) continua
+# `None` depois da remoção, porque o restante do texto ainda não é um
+# número válido.
+_PREFIXO_MOEDA = re.compile(r"^\s*R\$\s*", re.IGNORECASE)
+
+
 def _valor_como_numero(valor: object) -> float | None:
     """Simétrica a `_como_data`: desfaz o que
     `escritor_planilha._escrever_celula(..., moeda=True)` grava. Uma linha
     escrita pelo próprio sistema já vem como `float` puro do openpyxl (o
     escritor reatribui `celula.value` antes de salvar, `escritor_planilha.
     py:338`); uma linha digitada manualmente pode vir como texto no formato
-    brasileiro (`"652,96"`). Nunca propaga exceção — `None` sinaliza "não
-    foi possível ler como número", nunca inventa um valor."""
+    brasileiro (`"652,96"`) ou, achado real desta auditoria, com o prefixo
+    `R$` (`"R$ 154,09"`). Nunca propaga exceção — `None` sinaliza "não foi
+    possível ler como número", nunca inventa um valor: uma fórmula com erro
+    (`#REF!`, `#VALUE!`, `#N/A` — também achados reais, erro genuíno na
+    Planilha Oficial) ou um texto sem relação com valor nenhum (`"DIMOT"`)
+    permanecem `None`, nunca viram `0` nem um número adivinhado."""
     if isinstance(valor, (int, float)):
         return float(valor)
     if valor in (None, ""):
         return None
+    texto = _PREFIXO_MOEDA.sub("", str(valor)).strip()
     try:
-        return float(str(valor).replace(".", "").replace(",", "."))
+        return float(texto.replace(".", "").replace(",", "."))
     except ValueError:
         return None
 

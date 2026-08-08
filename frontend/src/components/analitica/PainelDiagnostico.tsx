@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { CORES_STATUS } from "../../theme/cores";
 import { SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
@@ -17,6 +18,17 @@ interface Props {
    * uma tela nova; quem monta os dois (`CentralAnalitica.tsx`) decide
    * como conectar este callback ao `sei` selecionado. */
   aoSelecionarRegistro: (sei: string) => void;
+  /** Correção de regressão (2026-08-07) — quando a tela é aberta a partir
+   * de um insight específico do Modo Executivo (ex.: "8 casos de possível
+   * duplicidade"), a tabela nasce já filtrada só para esse caso — nunca
+   * mais a lista inteira do recorte. Mesmo padrão já homologado em
+   * `PainelDocumentosHabeisPendentes.filtroInicial`: filtro aplicado só na
+   * APRESENTAÇÃO, sobre os mesmos `registros` já buscados por
+   * `useDiagnostico` — nenhuma nova classificação, nenhuma chamada extra.
+   * `titulo` casa contra `registro.casos[].titulo` (mesmos títulos de
+   * `app/domain/analitica/diagnostico.py`, reaproveitados por
+   * `insightsExecutivos.ts`). */
+  filtroInicial?: { titulo: string; rotulo: string } | null;
 }
 
 const ORDEM_CLASSIFICACAO: ClassificacaoDiagnostico[] = ["esperado", "atencao", "inconsistencia"];
@@ -43,8 +55,9 @@ function textoResumo(resumo: ResumoDiagnosticoResposta): string {
  * variante `critico` (laranja), distinta de `erro` (vermelho, reservado
  * a falha técnica real, `v2-demonstracao-visual.md` § 8, "Decisões de
  * UX"). */
-export default function PainelDiagnostico({ filtros, aoVoltar, aoSelecionarRegistro }: Props) {
+export default function PainelDiagnostico({ filtros, aoVoltar, aoSelecionarRegistro, filtroInicial }: Props) {
   const { carregando, erro, diagnostico, tentarNovamente } = useDiagnostico(filtros);
+  const [filtroCaso, setFiltroCaso] = useState(filtroInicial ?? null);
 
   const botaoVoltar = (
     <Botao variante="secundaria" onClick={aoVoltar}>
@@ -91,16 +104,32 @@ export default function PainelDiagnostico({ filtros, aoVoltar, aoSelecionarRegis
     atencao: percentual(resumo.atencao, total),
     inconsistencia: percentual(resumo.inconsistencia, total),
   };
+  const registrosExibidos = filtroCaso
+    ? registros.filter((registro) => registro.casos.some((caso) => caso.titulo === filtroCaso.titulo))
+    : registros;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {botaoVoltar}
         <p className={TIPOGRAFIA.textoAuxiliar}>
-          {total} registro{total === 1 ? "" : "s"}
+          Diagnóstico · {filtroCaso ? `${registrosExibidos.length} de ${total}` : total} registro
+          {(filtroCaso ? registrosExibidos.length : total) === 1 ? "" : "s"}
           {resumoPeriodo ? ` · ${resumoPeriodo}` : ""}
         </p>
       </div>
+
+      {filtroCaso && (
+        <div className={`flex flex-wrap items-center justify-between gap-3 p-3 ${SUPERFICIE_BASE}`}>
+          <span className={TIPOGRAFIA.texto}>
+            Filtrado por: <strong className={TIPOGRAFIA.textoForte}>{filtroCaso.rotulo}</strong> (
+            {registrosExibidos.length} de {total})
+          </span>
+          <Botao variante="secundaria" onClick={() => setFiltroCaso(null)}>
+            Ver todos
+          </Botao>
+        </div>
+      )}
 
       {total === 0 ? (
         <div className={`p-8 text-center ${SUPERFICIE_BASE}`}>
@@ -140,7 +169,13 @@ export default function PainelDiagnostico({ filtros, aoVoltar, aoSelecionarRegis
         </div>
       )}
 
-      {total > 0 && (
+      {total > 0 && registrosExibidos.length === 0 && (
+        <div className={`p-8 text-center ${SUPERFICIE_BASE}`}>
+          <p className={TIPOGRAFIA.texto}>Nenhum registro deste recorte se encaixa neste filtro.</p>
+        </div>
+      )}
+
+      {registrosExibidos.length > 0 && (
         <div className={`overflow-x-auto ${SUPERFICIE_BASE}`}>
           <table className="w-full text-left text-sm">
             <thead>
@@ -152,7 +187,7 @@ export default function PainelDiagnostico({ filtros, aoVoltar, aoSelecionarRegis
               </tr>
             </thead>
             <tbody>
-              {registros.map((registro) => (
+              {registrosExibidos.map((registro) => (
                 <tr
                   key={registro.sei}
                   tabIndex={0}

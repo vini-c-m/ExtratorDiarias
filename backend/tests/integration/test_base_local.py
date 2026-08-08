@@ -76,6 +76,59 @@ def test_sincronizar_tambem_reconstroi_base_local_em_sqlite(
     assert caminho_sqlite.is_file()
 
 
+def test_sincronizar_grava_versao_app_da_variavel_de_ambiente(
+    tmp_path, caminho_planilha_conferencia_teste, monkeypatch
+):
+    """URGENTE — Central Analítica (2026-08-06, achado real do 2º
+    rastreamento): `sincronizar()` repassa `EXTRATOR_DIARIAS_APP_VERSION`
+    (a mesma variável que `electron/main.ts` passa via `app.getVersion()`)
+    para `base_local_sqlite.reconstruir`, gravada em
+    `sincronizacoes.versao_app` — é o que permite `GET /sincronizacao`
+    detectar uma atualização do app mesmo quando a Planilha Oficial e o
+    schema de tabelas não mudam."""
+    import sqlite3
+
+    monkeypatch.setenv(base_local.VAR_AMBIENTE_VERSAO_APP, "2.1.0")
+    origem = caminho_planilha_conferencia_teste()
+    destino_base = tmp_path / "dados_usuario"
+
+    caminho_xlsx = base_local.sincronizar(origem, diretorio_base=destino_base)
+
+    caminho_sqlite = caminho_xlsx.parent / "base_local.sqlite"
+    conexao = sqlite3.connect(caminho_sqlite)
+    try:
+        (versao_gravada,) = conexao.execute(
+            "SELECT versao_app FROM sincronizacoes ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conexao.close()
+    assert versao_gravada == "2.1.0"
+
+
+def test_sincronizar_sem_variavel_de_ambiente_grava_versao_app_vazia(
+    tmp_path, caminho_planilha_conferencia_teste, monkeypatch
+):
+    """Backend rodando sem Electron (standalone/dev/teste) — nunca inventa
+    uma versão que não foi informada."""
+    import sqlite3
+
+    monkeypatch.delenv(base_local.VAR_AMBIENTE_VERSAO_APP, raising=False)
+    origem = caminho_planilha_conferencia_teste()
+    destino_base = tmp_path / "dados_usuario"
+
+    caminho_xlsx = base_local.sincronizar(origem, diretorio_base=destino_base)
+
+    caminho_sqlite = caminho_xlsx.parent / "base_local.sqlite"
+    conexao = sqlite3.connect(caminho_sqlite)
+    try:
+        (versao_gravada,) = conexao.execute(
+            "SELECT versao_app FROM sincronizacoes ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conexao.close()
+    assert versao_gravada == ""
+
+
 def test_sincronizar_publica_sqlite_mesmo_com_planilha_sem_dimension(
     tmp_path, caminho_planilha_conferencia_teste, remover_tag_dimension_da_planilha
 ):

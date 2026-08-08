@@ -15,6 +15,27 @@ interface Props {
    * "Dashboard de Resultados" da Sprint: todo indicador vira um cartão com
    * ícone + número + descrição). */
   icone?: ComponentType<{ className?: string }>;
+  /** Refinamento visual do Modo Executivo (2026-08-07) — em grades densas
+   * (`gap-4` = 16px) o glow "sempre visível" (raio de 38px, `--shadow-glow-*`)
+   * vaza para o cartão vizinho. `true` restringe o glow a hover/foco só
+   * onde isso importa; default `false` preserva o comportamento "sempre
+   * aceso" já homologado em todo o resto do app (Processamento, Dashboard
+   * operacional, Configurações). */
+  glowSoNoHover?: boolean;
+  /** Linha de contexto opcional abaixo do valor (ex.: "+18,2% vs. período
+   * anterior") — puramente apresentacional, quem chama já calcula/formata
+   * o texto (nenhum cálculo novo aqui). */
+  delta?: ReactNode;
+  /** Redesign BI 3.0 (2026-08-07) — `false` remove a superfície própria
+   * (borda/glow/fundo/sombra): vira uma célula sem moldura, para viver
+   * dentro de uma faixa maior que já tem sua própria superfície (só a
+   * faixa executiva de KPIs do Modo Executivo usa isto hoje). Mantém o
+   * padding e a resposta de hover (fundo sutil), então ainda lê como uma
+   * "célula" própria, nunca uma linha de tabela crua. Default `true`
+   * preserva 100% do visual já homologado em todo o resto do app —
+   * nenhum cartão existente muda sem passar `moldura={false}`
+   * explicitamente. */
+  moldura?: boolean;
 }
 
 const COR_VALOR: Record<Cor, string> = {
@@ -60,6 +81,20 @@ const COR_GLOW: Record<Cor, string> = {
   erro: "border-orange-400/20 shadow-glow-orange hover:border-orange-400/35",
 };
 
+// Variante `glowSoNoHover` (refinamento visual do Modo Executivo,
+// 2026-08-07) — borda neutra em repouso (mesma de `SUPERFICIE_BASE`), glow
+// e borda colorida só aparecem em hover/foco: nunca vazam para o cartão
+// vizinho numa grade densa, já que só um cartão por vez está em hover.
+const COR_GLOW_SO_HOVER: Record<Cor, string> = {
+  padrao: "hover:border-cyan-400/35 hover:shadow-glow-cyan focus-within:border-cyan-400/35 focus-within:shadow-glow-cyan",
+  sucesso:
+    "hover:border-emerald-400/35 hover:shadow-glow-green focus-within:border-emerald-400/35 focus-within:shadow-glow-green",
+  atencao:
+    "hover:border-amber-400/35 hover:shadow-glow-amber focus-within:border-amber-400/35 focus-within:shadow-glow-amber",
+  info: "hover:border-cyan-400/35 hover:shadow-glow-cyan focus-within:border-cyan-400/35 focus-within:shadow-glow-cyan",
+  erro: "hover:border-orange-400/35 hover:shadow-glow-orange focus-within:border-orange-400/35 focus-within:shadow-glow-orange",
+};
+
 // "grande" para números de destaque (contagens) — o valor é o elemento
 // principal do cartão (item "Estatísticas" da Sprint 09), por isso maior
 // que a Sprint 07; "compacto" para valores mais longos, como o caminho da
@@ -76,9 +111,24 @@ const CLASSES_TAMANHO: Record<Tamanho, string> = {
 // com as coloridas no mesmo estado.
 const HOVER_ELEVACAO = "transition hover:-translate-y-0.5 hover:bg-white/[0.06]";
 
-export default function Cartao({ rotulo, valor, cor = "padrao", tamanho = "grande", icone: Icone }: Props) {
+export default function Cartao({
+  rotulo,
+  valor,
+  cor = "padrao",
+  tamanho = "grande",
+  icone: Icone,
+  glowSoNoHover = false,
+  delta,
+  moldura = true,
+}: Props) {
   return (
-    <div className={`${SUPERFICIE_BASE} ${HOVER_ELEVACAO} ${COR_GLOW[cor]} p-7`}>
+    <div
+      className={
+        moldura
+          ? `${SUPERFICIE_BASE} ${HOVER_ELEVACAO} ${glowSoNoHover ? COR_GLOW_SO_HOVER[cor] : COR_GLOW[cor]} p-7`
+          : "p-5 transition hover:bg-white/[0.03]"
+      }
+    >
       {Icone && (
         <span
           className={`flex h-12 w-12 items-center justify-center rounded-2xl ${COR_SELO_ICONE[cor]}`}
@@ -92,6 +142,7 @@ export default function Cartao({ rotulo, valor, cor = "padrao", tamanho = "grand
       >
         {valor}
       </div>
+      {delta && <div className={`mt-1 ${TIPOGRAFIA.textoAuxiliar}`}>{delta}</div>}
       <div className={`mt-1.5 ${TIPOGRAFIA.legenda}`}>{rotulo}</div>
     </div>
   );

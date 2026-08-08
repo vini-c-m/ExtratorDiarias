@@ -128,32 +128,6 @@ function agruparTop3ComOutros(pontos: PontoDistribuicaoResposta[]): SegmentoDonu
   return segmentos;
 }
 
-/** Cartão de KPI com dado pendente de decisão do DIMCAC — nunca um número
- * inventado. Mesmo padrão de acessibilidade de `FiltrosRapidos.tsx`: `title`
- * cobre o hover do mouse, `aria-describedby` + texto irmão `sr-only` cobrem
- * leitor de tela — `role="group"` no wrapper é o que dá a `aria-describedby`
- * um nó de verdade na árvore de acessibilidade (uma `<div>` sem papel não
- * expõe a associação; `FiltrosRapidos.tsx` não precisa disso porque associa
- * direto a um `<button>`, que já é focável/nomeável por natureza). */
-function CartaoKpiPendente({ rotulo, motivo }: { rotulo: string; motivo: string }) {
-  const idDescricao = `dashboard-kpi-pendente-${rotulo.toLowerCase().replace(/\s+/g, "-")}`;
-  return (
-    <div role="group" title={motivo} aria-describedby={idDescricao}>
-      <Cartao rotulo={`${rotulo} 🟡`} valor="Pendente" cor="atencao" tamanho="compacto" />
-      <span id={idDescricao} className="sr-only">
-        {motivo}
-      </span>
-    </div>
-  );
-}
-
-const MOTIVO_PENDENTE_MUNICIPIOS =
-  "Pendente de definição do DIMCAC se conta origem, destino ou união — v2-arquitetura-funcional.md § 14, pergunta 2.";
-const MOTIVO_PENDENTE_COMPLETUDE =
-  "Pendente da lista fechada de campos que definem um registro incompleto — v2-arquitetura-funcional.md § 14, pergunta 4.";
-const MOTIVO_PENDENTE_AGUARDANDO =
-  "Pendente do limiar de tempo que define 'aguardando liberação' — v2-arquitetura-funcional.md § 14, pergunta 5.";
-
 /** Sprint 19.6.4 — um gráfico com carregando/erro/vazio próprios, cada um
  * consumido de sua própria instância de `useDistribuicoes` (uma dimensão por
  * chamada, decisão já registrada em `useDistribuicoes.ts`). Mesmo padrão de
@@ -193,8 +167,16 @@ function SecaoGrafico({
 }
 
 /** Sprint 19.6.4 — Dashboard do recorte (`v2-arquitetura-funcional.md` § 6):
- * 8 cartões de indicador (4 reais + 4 pendentes de decisão do DIMCAC) e 8
- * gráficos (7 reais + 1 pendente). Sprint 19.6.5 — cada ponto/fatia/legenda
+ * 4 cartões de indicador e 7 gráficos, todos com regra de negócio real e
+ * dado ao vivo. Decisão de produto 2026-08-06 (ver `v2-arquitetura-
+ * funcional.md` § 6.1/6.2, bloco "Decisão de produto — controles retirados
+ * da interface"): os 4 KPIs e o 8º gráfico que dependiam de decisão ainda
+ * pendente do DIMCAC (`CartaoKpiPendente`, sempre "Pendente", nunca um
+ * número real) foram retirados — nenhum estado "em construção" permanece
+ * exposto ao usuário; a última coluna do grid de gráficos é preenchida
+ * (`md:col-span-2` no último `SecaoGrafico`) para o layout nunca sobrar
+ * espaço vazio com um número ímpar de gráficos. Sprint 19.6.5 — cada
+ * ponto/fatia/legenda filtrável
  * filtrável (`filtravel !== false`) refina o recorte via `aoAplicarFiltro`
  * e volta aos resultados (`aoVoltar`), § 6.3. Sprint 19.6.6 — exportação
  * (§ 6.3: "Gera um PDF/imagem do dashboard atual... ver § 7 para o
@@ -380,7 +362,6 @@ export default function DashboardRecorte({
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Cartao rotulo="Total de diárias" valor={formatarInteiro(indicadores.total_diarias)} />
         <Cartao rotulo="Total de servidores" valor={formatarInteiro(indicadores.total_servidores)} />
-        <CartaoKpiPendente rotulo="Total de municípios" motivo={MOTIVO_PENDENTE_MUNICIPIOS} />
         <Cartao
           rotulo="Valor total"
           valor={formatarMoedaOuTraco(indicadores.valor_total)}
@@ -393,9 +374,6 @@ export default function DashboardRecorte({
           cor={indicadores.valor_medio == null ? "atencao" : "padrao"}
           tamanho="compacto"
         />
-        <CartaoKpiPendente rotulo="Registros completos" motivo={MOTIVO_PENDENTE_COMPLETUDE} />
-        <CartaoKpiPendente rotulo="Registros incompletos" motivo={MOTIVO_PENDENTE_COMPLETUDE} />
-        <CartaoKpiPendente rotulo="Aguardando liberação" motivo={MOTIVO_PENDENTE_AGUARDANDO} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -412,13 +390,16 @@ export default function DashboardRecorte({
                 valor: formatarInteiro(ponto.contagem),
               }))}
             >
-              <GraficoBarras
-                orientacao="vertical"
-                cor={COR_MAGNITUDE_CONTAGEM}
-                formatarValor={formatarInteiro}
-                pontos={distribuicao.pontos.map((ponto) => ({ rotulo: formatarPeriodo(ponto.rotulo), valor: ponto.contagem }))}
-                aoClicarPonto={(indice) => refinar(intervaloDoMes(distribuicao.pontos[indice].rotulo))}
-              />
+              {(expandido) => (
+                <GraficoBarras
+                  orientacao="vertical"
+                  cor={COR_MAGNITUDE_CONTAGEM}
+                  formatarValor={formatarInteiro}
+                  alturaBarra={expandido ? "expandido" : "padrao"}
+                  pontos={distribuicao.pontos.map((ponto) => ({ rotulo: formatarPeriodo(ponto.rotulo), valor: ponto.contagem }))}
+                  aoClicarPonto={(indice) => refinar(intervaloDoMes(distribuicao.pontos[indice].rotulo))}
+                />
+              )}
             </CartaoGrafico>
           )}
         />
@@ -438,13 +419,16 @@ export default function DashboardRecorte({
                   valor: formatarMoedaOuTraco(ponto.valor),
                 }))}
               >
-                <GraficoBarras
-                  orientacao="vertical"
-                  cor={COR_MAGNITUDE_VALOR}
-                  formatarValor={(valor) => FORMATADOR_MOEDA.format(valor)}
-                  pontos={comValor.map((ponto) => ({ rotulo: formatarPeriodo(ponto.rotulo), valor: ponto.valor as number }))}
-                  aoClicarPonto={(indice) => refinar(intervaloDoMes(comValor[indice].rotulo))}
-                />
+                {(expandido) => (
+                  <GraficoBarras
+                    orientacao="vertical"
+                    cor={COR_MAGNITUDE_VALOR}
+                    formatarValor={(valor) => FORMATADOR_MOEDA.format(valor)}
+                    alturaBarra={expandido ? "expandido" : "padrao"}
+                    pontos={comValor.map((ponto) => ({ rotulo: formatarPeriodo(ponto.rotulo), valor: ponto.valor as number }))}
+                    aoClicarPonto={(indice) => refinar(intervaloDoMes(comValor[indice].rotulo))}
+                  />
+                )}
               </CartaoGrafico>
             );
           }}
@@ -462,17 +446,20 @@ export default function DashboardRecorte({
                 interativo
                 linhasTabela={distribuicao.pontos.map((ponto) => ({ rotulo: ponto.rotulo, valor: formatarInteiro(ponto.contagem) }))}
               >
-                <GraficoBarras
-                  orientacao="horizontal"
-                  cor={COR_MAGNITUDE_CONTAGEM}
-                  formatarValor={formatarInteiro}
-                  pontos={topServidores.map((ponto) => ({
-                    rotulo: ponto.rotulo,
-                    valor: ponto.contagem,
-                    filtravel: !ehBucketSintetico(ponto.rotulo),
-                  }))}
-                  aoClicarPonto={(indice) => refinar({ servidor_nome: topServidores[indice].rotulo })}
-                />
+                {(expandido) => (
+                  <GraficoBarras
+                    orientacao="horizontal"
+                    cor={COR_MAGNITUDE_CONTAGEM}
+                    formatarValor={formatarInteiro}
+                    alturaBarra={expandido ? "expandido" : "padrao"}
+                    pontos={topServidores.map((ponto) => ({
+                      rotulo: ponto.rotulo,
+                      valor: ponto.contagem,
+                      filtravel: !ehBucketSintetico(ponto.rotulo),
+                    }))}
+                    aoClicarPonto={(indice) => refinar({ servidor_nome: topServidores[indice].rotulo })}
+                  />
+                )}
               </CartaoGrafico>
             );
           }}
@@ -490,17 +477,20 @@ export default function DashboardRecorte({
                 interativo
                 linhasTabela={distribuicao.pontos.map((ponto) => ({ rotulo: ponto.rotulo, valor: formatarInteiro(ponto.contagem) }))}
               >
-                <GraficoBarras
-                  orientacao="horizontal"
-                  cor={COR_MAGNITUDE_CONTAGEM}
-                  formatarValor={formatarInteiro}
-                  pontos={topMunicipios.map((ponto) => ({
-                    rotulo: ponto.rotulo,
-                    valor: ponto.contagem,
-                    filtravel: !ehBucketSintetico(ponto.rotulo),
-                  }))}
-                  aoClicarPonto={(indice) => refinar({ municipio: topMunicipios[indice].rotulo })}
-                />
+                {(expandido) => (
+                  <GraficoBarras
+                    orientacao="horizontal"
+                    cor={COR_MAGNITUDE_CONTAGEM}
+                    formatarValor={formatarInteiro}
+                    alturaBarra={expandido ? "expandido" : "padrao"}
+                    pontos={topMunicipios.map((ponto) => ({
+                      rotulo: ponto.rotulo,
+                      valor: ponto.contagem,
+                      filtravel: !ehBucketSintetico(ponto.rotulo),
+                    }))}
+                    aoClicarPonto={(indice) => refinar({ municipio: topMunicipios[indice].rotulo })}
+                  />
+                )}
               </CartaoGrafico>
             );
           }}
@@ -521,7 +511,14 @@ export default function DashboardRecorte({
                 aoClicarLegenda={aoClicar}
                 linhasTabela={distribuicao.pontos.map((ponto) => ({ rotulo: ponto.rotulo, valor: formatarInteiro(ponto.contagem) }))}
               >
-                <GraficoDonut segmentos={segmentos} formatarValor={formatarInteiro} aoClicarSegmento={aoClicar} />
+                {(expandido) => (
+                  <GraficoDonut
+                    segmentos={segmentos}
+                    formatarValor={formatarInteiro}
+                    aoClicarSegmento={aoClicar}
+                    tamanho={expandido ? "expandido" : "padrao"}
+                  />
+                )}
               </CartaoGrafico>
             );
           }}
@@ -542,46 +539,57 @@ export default function DashboardRecorte({
                 aoClicarLegenda={aoClicar}
                 linhasTabela={distribuicao.pontos.map((ponto) => ({ rotulo: ponto.rotulo, valor: formatarInteiro(ponto.contagem) }))}
               >
-                <GraficoDonut segmentos={segmentos} formatarValor={formatarInteiro} aoClicarSegmento={aoClicar} />
+                {(expandido) => (
+                  <GraficoDonut
+                    segmentos={segmentos}
+                    formatarValor={formatarInteiro}
+                    aoClicarSegmento={aoClicar}
+                    tamanho={expandido ? "expandido" : "padrao"}
+                  />
+                )}
               </CartaoGrafico>
             );
           }}
         />
 
-        <SecaoGrafico
-          estado={distribuicaoOrigemDestino}
-          renderizar={(distribuicao) => {
-            const topPares = distribuicao.pontos.slice(0, TOPO_RANKING);
-            return (
-              <CartaoGrafico
-                titulo="Origem × Destino (principais pares)"
-                rotuloColunaValor="Diárias"
-                vazio={distribuicao.pontos.length === 0}
-                interativo
-                linhasTabela={distribuicao.pontos.map((ponto) => ({ rotulo: ponto.rotulo, valor: formatarInteiro(ponto.contagem) }))}
-              >
-                <GraficoBarras
-                  orientacao="horizontal"
-                  cor={COR_MAGNITUDE_CONTAGEM}
-                  formatarValor={formatarInteiro}
-                  pontos={topPares.map((ponto) => ({
-                    rotulo: ponto.rotulo,
-                    valor: ponto.contagem,
-                    filtravel: !ehParOrigemDestinoSintetico(ponto.rotulo),
-                  }))}
-                  aoClicarPonto={(indice) => {
-                    const [origem, destino] = topPares[indice].rotulo.split(" → ");
-                    refinar({ origem, destino });
-                  }}
-                />
-              </CartaoGrafico>
-            );
-          }}
-        />
-
-        <div title={MOTIVO_PENDENTE_COMPLETUDE} className={`p-5 ${SUPERFICIE_BASE}`}>
-          <h4 className={TIPOGRAFIA.subtitulo}>Completos × incompletos 🟡</h4>
-          <p className={`mt-3 ${TIPOGRAFIA.textoAuxiliar}`}>{MOTIVO_PENDENTE_COMPLETUDE}</p>
+        {/* Último gráfico real, número ímpar (7) numa grade de 2 colunas —
+            ocupa a linha inteira (`md:col-span-2`) para nunca sobrar meia
+            linha vazia ao lado, agora que o 8º slot (pendente do DIMCAC)
+            foi retirado da interface. */}
+        <div className="md:col-span-2">
+          <SecaoGrafico
+            estado={distribuicaoOrigemDestino}
+            renderizar={(distribuicao) => {
+              const topPares = distribuicao.pontos.slice(0, TOPO_RANKING);
+              return (
+                <CartaoGrafico
+                  titulo="Origem × Destino (principais pares)"
+                  rotuloColunaValor="Diárias"
+                  vazio={distribuicao.pontos.length === 0}
+                  interativo
+                  linhasTabela={distribuicao.pontos.map((ponto) => ({ rotulo: ponto.rotulo, valor: formatarInteiro(ponto.contagem) }))}
+                >
+                  {(expandido) => (
+                    <GraficoBarras
+                      orientacao="horizontal"
+                      cor={COR_MAGNITUDE_CONTAGEM}
+                      formatarValor={formatarInteiro}
+                      alturaBarra={expandido ? "expandido" : "padrao"}
+                      pontos={topPares.map((ponto) => ({
+                        rotulo: ponto.rotulo,
+                        valor: ponto.contagem,
+                        filtravel: !ehParOrigemDestinoSintetico(ponto.rotulo),
+                      }))}
+                      aoClicarPonto={(indice) => {
+                        const [origem, destino] = topPares[indice].rotulo.split(" → ");
+                        refinar({ origem, destino });
+                      }}
+                    />
+                  )}
+                </CartaoGrafico>
+              );
+            }}
+          />
         </div>
       </div>
     </div>

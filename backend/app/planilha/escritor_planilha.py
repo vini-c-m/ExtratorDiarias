@@ -7,8 +7,10 @@ from openpyxl.styles import Alignment, Border, Font, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.domain.entities.diaria import Diaria
+from app.extraction.enriquecimento.local_destino import remover_sufixo_uf
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
 from app.domain.entities.fonte_transporte import FonteTransporte
+from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo
 from app.domain.entities.tipo_processo import TipoProcesso
 
@@ -41,6 +43,25 @@ COLUNA_LOCAL = "Q"
 # a coluna P permanece intocada, exatamente como antes desta Sprint.
 COLUNA_VALOR_DIARIAS = "P"
 
+# Modo Complemento de Diárias (decisão institucional revisada, ver
+# `docs/central-conferencia/README.md` RN-14) — as duas únicas colunas
+# extras escritas, e só neste modo. `COLUNA_QUANTIDADE_PARCIAL` (O) nunca é
+# tocada no modo Padrão (permanece preenchimento manual humano, como hoje).
+# `COLUNA_AVISO` (AA) é normalmente a fórmula nativa `=VLOOKUP(...)` de
+# alerta de duplicidade da própria planilha (RN-02 "espelhada" em Excel) —
+# só é sobrescrita com texto fixo no modo Complemento, reproduzindo em
+# código a mesma ação que hoje um humano da CMFC já faz manualmente ao
+# reconhecer um complemento legítimo.
+COLUNA_QUANTIDADE_PARCIAL = "O"
+COLUNA_AVISO = "AA"
+AVISO_COMPLEMENTO_DE_DIARIAS = "COMPLEMENTO DE DIÁRIAS"
+
+# Colunas cuja fórmula de cálculo financeiro/duplicidade precisa já estar
+# pré-copiada na linha livre ANTES de gravar um Complemento de Diárias
+# (auditoria obrigatória, decisão do usuário) — nunca no modo Padrão, cujo
+# comportamento de gravação permanece o já homologado.
+_COLUNAS_FORMULA_NECESSARIAS_COMPLEMENTO = ("N", "P", "R", "S", "V", "Z", "AA")
+
 _BORDA_FINA = Border(
     left=Side(style="thin"),
     right=Side(style="thin"),
@@ -55,6 +76,13 @@ class CategoriaResultado(str, Enum):
     INSERIDO = "inserido"
     DUPLICADO_NO_LOTE = "duplicado_no_lote"
     DUPLICADO_NA_PLANILHA = "duplicado_na_planilha"
+    # Modo Complemento de Diárias — a linha livre encontrada não tinha as
+    # fórmulas de cálculo/duplicidade pré-copiadas (ver
+    # `_linha_possui_formulas_necessarias`). Nunca ocorre no modo Padrão.
+    # Item NÃO gravado (mesmo espírito de DUPLICADO_*, mas por um motivo
+    # técnico, não de duplicidade) — decisão do usuário: nunca gravar um
+    # complemento de forma incompleta.
+    LINHA_SEM_FORMULAS_NECESSARIAS = "linha_sem_formulas_necessarias"
 
 
 @dataclass(frozen=True)
@@ -83,6 +111,14 @@ class ItemResultado:
     # PDF (Prioridade 2, fallback). None só ocorre para itens não gravados
     # (duplicados), onde a coluna C nunca chega a ser escrita.
     doc_origem_fonte: FonteDocOrigem | None = None
+    # Modo Complemento de Diárias — linha onde este mesmo SEI já existia
+    # (na planilha ou mais cedo neste lote) no momento da gravação. Só
+    # populado quando `modo` é COMPLEMENTO E o SEI já existia — nesse modo
+    # a duplicidade por SEI deixa de ser bloqueante (categoria continua
+    # INSERIDO, a linha é gravada normalmente), mas este campo mantém a
+    # informação visível para quem for revisar o resultado. Sempre `None`
+    # no modo Padrão, onde SEI duplicado nunca chega a ser INSERIDO.
+    sei_ja_existente_em_linha: int | None = None
 
 
 @dataclass(frozen=True)
@@ -112,7 +148,11 @@ class ResultadoPreenchimento:
         ]
 
 
-def preencher(caminho_planilha: str, processos: list[Processo]) -> ResultadoPreenchimento:
+def preencher(
+    caminho_planilha: str,
+    processos: list[Processo],
+    modo: ModoProcessamento = ModoProcessamento.PADRAO,
+) -> ResultadoPreenchimento:
     """Abre a planilha existente, localiza a próxima linha livre pela coluna B
     e grava apenas B, C, D, H, I, J, L de cada diária — sem criar abas, sem
     alterar cabeçalho, sem tocar em outras linhas ou fórmulas.
@@ -126,7 +166,21 @@ def preencher(caminho_planilha: str, processos: list[Processo]) -> ResultadoPree
        iteração) — se um SEI novo na planilha se repetir dentro do lote, só a
        primeira ocorrência vira linha nova; as demais viram
        DUPLICADO_NO_LOTE.
-    Nos dois casos a diária não é escrita.
+    Nos dois casos a diária não é escrita — EXCETO no `modo` COMPLEMENTO
+    (decisão institucional revisada, RN-14): SEI nunca é chave obrigatória
+    para um complemento, então nesse modo a checagem deixa de ser
+    bloqueante — a linha é gravada normalmente (categoria INSERIDO) e
+    `ItemResultado.sei_ja_existente_em_linha` guarda a linha do SEI
+    repetido, só para visibilidade.
+
+    Modo COMPLEMENTO também: (a) escreve `COLUNA_QUANTIDADE_PARCIAL` (O)
+    quando a `Diaria` já resolveu essa quantidade e `COLUNA_AVISO` (AA)
+    com o texto fixo "COMPLEMENTO DE DIÁRIAS"; (b) audita, ANTES de
+    gravar, que a linha livre já tem as fórmulas de N/P/R/S/V/Z/AA
+    pré-copiadas (`_linha_possui_formulas_necessarias`) — se não tiver,
+    aborta a gravação daquele item (`LINHA_SEM_FORMULAS_NECESSARIAS`) em
+    vez de gravar um complemento incompleto. Nenhum dos dois
+    comportamentos ocorre no modo Padrão.
 
     Sprint 06 — DOC DE ORIGEM (coluna C) por CPF: antes de gravar, a própria
     planilha oficial do DIMCAC é consultada pelo CPF do servidor (coluna D)
@@ -146,7 +200,7 @@ def preencher(caminho_planilha: str, processos: list[Processo]) -> ResultadoPree
 
     seis_planilha = _seis_existentes(planilha)
     doc_origem_historico = _historico_doc_origem_por_cpf(planilha)
-    seis_no_lote: set[str] = set()
+    seis_no_lote: dict[str, int] = {}
     linha = _localizar_proxima_linha_livre(planilha)
     linha_inicial: int | None = None
 
@@ -158,28 +212,49 @@ def preencher(caminho_planilha: str, processos: list[Processo]) -> ResultadoPree
         diaria = processo.diaria
         sei = diaria.sei.strip()
 
-        if sei in seis_planilha:
-            itens.append(
-                ItemResultado(
-                    arquivo_origem=processo.arquivo_origem,
-                    sei=sei,
-                    categoria=CategoriaResultado.DUPLICADO_NA_PLANILHA,
-                    linha=seis_planilha[sei],
-                    tipo_processo=diaria.tipo_processo,
-                    valor_total_diarias=diaria.valor_total_diarias,
-                    transporte=diaria.transporte,
-                    transporte_fonte=diaria.transporte_fonte,
-                    estado_destino=diaria.estado_destino,
-                )
-            )
-            continue
+        linha_sei_existente = seis_planilha.get(sei, seis_no_lote.get(sei))
 
-        if sei in seis_no_lote:
+        if modo is ModoProcessamento.PADRAO:
+            if sei in seis_planilha:
+                itens.append(
+                    ItemResultado(
+                        arquivo_origem=processo.arquivo_origem,
+                        sei=sei,
+                        categoria=CategoriaResultado.DUPLICADO_NA_PLANILHA,
+                        linha=seis_planilha[sei],
+                        tipo_processo=diaria.tipo_processo,
+                        valor_total_diarias=diaria.valor_total_diarias,
+                        transporte=diaria.transporte,
+                        transporte_fonte=diaria.transporte_fonte,
+                        estado_destino=diaria.estado_destino,
+                    )
+                )
+                continue
+
+            if sei in seis_no_lote:
+                itens.append(
+                    ItemResultado(
+                        arquivo_origem=processo.arquivo_origem,
+                        sei=sei,
+                        categoria=CategoriaResultado.DUPLICADO_NO_LOTE,
+                        tipo_processo=diaria.tipo_processo,
+                        valor_total_diarias=diaria.valor_total_diarias,
+                        transporte=diaria.transporte,
+                        transporte_fonte=diaria.transporte_fonte,
+                        estado_destino=diaria.estado_destino,
+                    )
+                )
+                continue
+
+        if modo is ModoProcessamento.COMPLEMENTO and not _linha_possui_formulas_necessarias(
+            planilha, linha
+        ):
             itens.append(
                 ItemResultado(
                     arquivo_origem=processo.arquivo_origem,
                     sei=sei,
-                    categoria=CategoriaResultado.DUPLICADO_NO_LOTE,
+                    categoria=CategoriaResultado.LINHA_SEM_FORMULAS_NECESSARIAS,
+                    linha=linha,
                     tipo_processo=diaria.tipo_processo,
                     valor_total_diarias=diaria.valor_total_diarias,
                     transporte=diaria.transporte,
@@ -197,8 +272,8 @@ def preencher(caminho_planilha: str, processos: list[Processo]) -> ResultadoPree
             diaria_a_gravar = diaria
             doc_origem_fonte = FonteDocOrigem.EXTRACAO_PDF
 
-        _escrever_linha(planilha, linha, diaria_a_gravar)
-        seis_no_lote.add(sei)
+        _escrever_linha(planilha, linha, diaria_a_gravar, modo)
+        seis_no_lote[sei] = linha
         itens.append(
             ItemResultado(
                 arquivo_origem=processo.arquivo_origem,
@@ -211,6 +286,9 @@ def preencher(caminho_planilha: str, processos: list[Processo]) -> ResultadoPree
                 transporte_fonte=diaria.transporte_fonte,
                 estado_destino=diaria.estado_destino,
                 doc_origem_fonte=doc_origem_fonte,
+                sei_ja_existente_em_linha=(
+                    linha_sei_existente if modo is ModoProcessamento.COMPLEMENTO else None
+                ),
             )
         )
         total_gravado += 1
@@ -283,8 +361,26 @@ def _localizar_proxima_linha_livre(planilha: Worksheet) -> int:
     return linha
 
 
-def _escrever_linha(planilha: Worksheet, linha: int, diaria: Diaria) -> None:
-    trecho = f"{diaria.cidade_origem} - {diaria.cidade_destino}"
+def _linha_possui_formulas_necessarias(planilha: Worksheet, linha: int) -> bool:
+    """Auditoria obrigatória do modo Complemento (decisão do usuário): a
+    linha livre encontrada por `_localizar_proxima_linha_livre` precisa já
+    ter as fórmulas de cálculo financeiro (`N/P/R/S`), de janela
+    operacional (`V`) e de alerta de duplicidade (`AA`) pré-copiadas —
+    nunca gravar um complemento numa linha que deixaria a própria planilha
+    incapaz de calcular o valor. `openpyxl` expõe uma fórmula como string
+    iniciante em "=" quando o workbook é aberto sem `data_only` (como
+    `preencher` sempre abre)."""
+    for coluna in _COLUNAS_FORMULA_NECESSARIAS_COMPLEMENTO:
+        valor = planilha[f"{coluna}{linha}"].value
+        if not (isinstance(valor, str) and valor.startswith("=")):
+            return False
+    return True
+
+
+def _escrever_linha(
+    planilha: Worksheet, linha: int, diaria: Diaria, modo: ModoProcessamento = ModoProcessamento.PADRAO
+) -> None:
+    trecho = f"{remover_sufixo_uf(diaria.cidade_origem)} - {remover_sufixo_uf(diaria.cidade_destino)}"
 
     if diaria.documento_habil:
         _escrever_celula(planilha, COLUNA_DH, linha, diaria.documento_habil)
@@ -305,6 +401,19 @@ def _escrever_linha(planilha: Worksheet, linha: int, diaria: Diaria) -> None:
         _escrever_celula(
             planilha, COLUNA_VALOR_DIARIAS, linha, diaria.valor_total_diarias, moeda=True
         )
+
+    # Modo Complemento de Diárias (RN-14) — únicas duas colunas extras,
+    # nunca escritas no modo Padrão. O backend nunca calcula nem escreve
+    # valor financeiro: N/P/R/S continuam fórmula, intocados aqui.
+    if modo is ModoProcessamento.COMPLEMENTO:
+        if diaria.quantidade_diaria_parcial_complementar is not None:
+            _escrever_celula(
+                planilha,
+                COLUNA_QUANTIDADE_PARCIAL,
+                linha,
+                diaria.quantidade_diaria_parcial_complementar,
+            )
+        _escrever_celula(planilha, COLUNA_AVISO, linha, AVISO_COMPLEMENTO_DE_DIARIAS)
 
 
 def _escrever_celula(

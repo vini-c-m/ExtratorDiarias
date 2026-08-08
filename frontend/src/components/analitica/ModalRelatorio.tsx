@@ -29,41 +29,26 @@ interface OpcaoTipo {
   valor: TipoRelatorio;
   rotulo: string;
   descricao: string;
-  disponivel: boolean;
 }
 
-// `v2-arquitetura-funcional.md` § 7.1 — os 8 tipos do catálogo completo.
-// "Inconsistências"/"Qualidade dos dados" aparecem sempre desabilitados
-// (nunca escondidos, mesmo padrão de `FiltrosRapidos.tsx` para os
-// atalhos pendentes): dependem de `diagnostico.py` (Sprint 19.8), que o
-// backend já recusa hoje com `422` (`TipoRelatorioIndisponivel`, Sprint
-// 19.7.2) — a UI só evita deixar o usuário tentar algo que já sabemos
-// que vai falhar.
+// `v2-arquitetura-funcional.md` § 7.1 — só os 6 tipos com regra de negócio
+// homologada e endpoint funcional hoje. Decisão de produto 2026-08-06
+// (ver `v2-arquitetura-funcional.md` § 7.1, bloco "Decisão de produto —
+// controles retirados da interface"): "Inconsistências"/"Qualidade dos
+// dados" foram retirados da lista — dependem do catálogo de diagnósticos
+// (`diagnostico.py`) para compor uma seção própria no relatório, que
+// `analitica_service._construir_secoes`/`compor_relatorio` ainda não
+// implementam (o backend continua recusando os dois tipos com `422`,
+// `TipoRelatorioIndisponivel`). Voltam a aparecer aqui quando essa
+// composição existir — nunca antes, mesmo desabilitados.
 const OPCOES_TIPO: OpcaoTipo[] = [
-  { valor: "executivo", rotulo: "Executivo", descricao: "resumo de 1 página", disponivel: true },
-  { valor: "detalhado", rotulo: "Detalhado", descricao: "todos os indicadores, gráficos e a tabela", disponivel: true },
-  { valor: "financeiro", rotulo: "Financeiro", descricao: "foco em valores, sem dados cadastrais", disponivel: true },
-  { valor: "por_servidor", rotulo: "Por servidor", descricao: "agrupado por servidor", disponivel: true },
-  { valor: "por_municipio", rotulo: "Por município", descricao: "agrupado por município", disponivel: true },
-  { valor: "por_situacao", rotulo: "Por situação", descricao: "agrupado por situação do servidor", disponivel: true },
-  { valor: "inconsistencias", rotulo: "Inconsistências", descricao: "", disponivel: false },
-  { valor: "qualidade_dados", rotulo: "Qualidade dos dados", descricao: "", disponivel: false },
+  { valor: "executivo", rotulo: "Executivo", descricao: "resumo de 1 página" },
+  { valor: "detalhado", rotulo: "Detalhado", descricao: "todos os indicadores, gráficos e a tabela" },
+  { valor: "financeiro", rotulo: "Financeiro", descricao: "foco em valores, sem dados cadastrais" },
+  { valor: "por_servidor", rotulo: "Por servidor", descricao: "agrupado por servidor" },
+  { valor: "por_municipio", rotulo: "Por município", descricao: "agrupado por município" },
+  { valor: "por_situacao", rotulo: "Por situação", descricao: "agrupado por situação do servidor" },
 ];
-
-const MOTIVO_TIPO_PENDENTE =
-  "Pendente do catálogo de diagnósticos (Sprint 19.8) — v2-plano-tecnico.md § 18, entrada 19.7.1.";
-
-// Sprint 19.7.2 — mesmo texto do `incluir_inconsistencias` aceito pelo
-// contrato, mas sem nenhum efeito enquanto `diagnostico.py` não existir
-// (`analitica_service._construir_secoes`: nenhuma seção "Inconsistências"
-// é composta hoje, para nenhum tipo). Diferente do mockup original
-// (`v2-demonstracao-visual.md` § 7, que mostra o checkbox marcado por
-// padrão): aqui fica desmarcado e desabilitado — marcá-lo sugeriria que
-// algo vai aparecer no artefato, o que nunca acontece ainda. Mesmo
-// critério de nunca dar uma afirmação falsa já aplicado aos tipos
-// pendentes acima.
-const MOTIVO_INCONSISTENCIAS_PENDENTE =
-  "Pendente do catálogo de diagnósticos (Sprint 19.8) — nenhum efeito no artefato ainda, mesmo se marcado.";
 
 const OPCOES_FORMATO: { valor: FormatoRelatorio; rotulo: string }[] = [
   { valor: "pdf", rotulo: "PDF" },
@@ -78,10 +63,6 @@ const ROTULO_TIPO: Record<TipoRelatorio, string> = Object.fromEntries(
 const ROTULO_FORMATO: Record<FormatoRelatorio, string> = Object.fromEntries(
   OPCOES_FORMATO.map((opcao) => [opcao.valor, opcao.rotulo]),
 ) as Record<FormatoRelatorio, string>;
-
-function idDescricaoPendente(valor: string): string {
-  return `modal-relatorio-pendente-${valor}`;
-}
 
 /** `YYYY-MM-DDTHH:MM:SS` → `"dd/mm/aaaa HH:MM"` — mesma extração de
  * hora/minuto já usada em `IndicadorSincronizacao.tsx::formatarHorario`,
@@ -149,7 +130,10 @@ export default function ModalRelatorio({ aberto, filtros, totalRegistros, aoFech
       incluir_indicadores: incluirIndicadores,
       incluir_graficos: incluirGraficos,
       incluir_tabela: incluirTabela,
-      // Sempre `false` — ver `MOTIVO_INCONSISTENCIAS_PENDENTE` acima.
+      // Sempre `false` — sem UI para ligar/desligar (`diagnostico.py` ainda
+      // não compõe uma seção "Inconsistências" em nenhum tipo de relatório,
+      // `analitica_service._construir_secoes`); nenhum efeito no artefato
+      // hoje, mesmo que fosse `true`.
       incluir_inconsistencias: false,
       modo,
     };
@@ -209,34 +193,22 @@ export default function ModalRelatorio({ aberto, filtros, totalRegistros, aoFech
                 Tipo de relatório
               </legend>
               <div role="radiogroup" aria-labelledby="modal-relatorio-tipo-legenda" className="mt-2 space-y-2">
-                {OPCOES_TIPO.map((opcao) => {
-                  const idDescricao = idDescricaoPendente(opcao.valor);
-                  return (
-                    <div key={opcao.valor}>
-                      <label className={`flex items-center gap-2 ${opcao.disponivel ? "" : "opacity-60"}`}>
-                        <input
-                          type="radio"
-                          name="modal-relatorio-tipo"
-                          value={opcao.valor}
-                          checked={tipo === opcao.valor}
-                          disabled={!opcao.disponivel}
-                          onChange={() => setTipo(opcao.valor)}
-                          aria-describedby={opcao.disponivel ? undefined : idDescricao}
-                          className={FOCO_ANEL}
-                        />
-                        <span className={TIPOGRAFIA.texto}>
-                          {opcao.rotulo}
-                          {opcao.descricao && <span className={TIPOGRAFIA.textoAuxiliar}> — {opcao.descricao}</span>}
-                        </span>
-                      </label>
-                      {!opcao.disponivel && (
-                        <span id={idDescricao} className="sr-only">
-                          {MOTIVO_TIPO_PENDENTE}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
+                {OPCOES_TIPO.map((opcao) => (
+                  <label key={opcao.valor} className="flex items-center gap-2">
+                    <input
+                      type="radio"
+                      name="modal-relatorio-tipo"
+                      value={opcao.valor}
+                      checked={tipo === opcao.valor}
+                      onChange={() => setTipo(opcao.valor)}
+                      className={FOCO_ANEL}
+                    />
+                    <span className={TIPOGRAFIA.texto}>
+                      {opcao.rotulo}
+                      {opcao.descricao && <span className={TIPOGRAFIA.textoAuxiliar}> — {opcao.descricao}</span>}
+                    </span>
+                  </label>
+                ))}
               </div>
             </fieldset>
 
@@ -293,23 +265,10 @@ export default function ModalRelatorio({ aberto, filtros, totalRegistros, aoFech
                   />
                   <span className={TIPOGRAFIA.texto}>Tabela completa</span>
                 </label>
-                <label className="flex items-center gap-2 opacity-60">
-                  <input
-                    type="checkbox"
-                    checked={false}
-                    disabled
-                    aria-describedby="modal-relatorio-inconsistencias-nota"
-                    className={FOCO_ANEL}
-                  />
-                  <span className={TIPOGRAFIA.texto}>Inconsistências</span>
-                </label>
               </div>
               <p id="modal-relatorio-graficos-nota" className={`mt-1.5 ${TIPOGRAFIA.textoAuxiliar}`}>
                 *Gráficos disponíveis apenas para PDF
               </p>
-              <span id="modal-relatorio-inconsistencias-nota" className="sr-only">
-                {MOTIVO_INCONSISTENCIAS_PENDENTE}
-              </span>
             </fieldset>
 
             <div className="flex justify-end gap-3">

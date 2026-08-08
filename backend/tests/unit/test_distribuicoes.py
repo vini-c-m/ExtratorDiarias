@@ -16,20 +16,24 @@ def _registro(
     motivo="Reunião",
     valor=None,
     servidor=None,
+    doc_origem="processo.pdf",
+    transporte=None,
+    categoria_funcional="NAO_IDENTIFICADO",
 ):
     return RegistroAnalitico(
         sei=sei,
-        doc_origem="processo.pdf",
+        doc_origem=doc_origem,
         cpf=cpf,
         periodo_inicial=periodo_inicial,
         periodo_final=periodo_final,
         cidade_origem=cidade_origem,
         cidade_destino=cidade_destino,
         motivo=motivo,
-        transporte=None,
+        transporte=transporte,
         valor_total_diarias=valor,
         linha_planilha=2,
         servidor=servidor,
+        categoria_funcional=categoria_funcional,
     )
 
 
@@ -38,7 +42,17 @@ _JOAO = Servidor(cpf="22222222222", nome="João Silva", cargo="Técnico", previd
 
 
 def test_recorte_vazio_devolve_lista_de_pontos_vazia():
-    for dimensao in ("periodo", "servidor", "municipio", "motivo", "situacao", "origem_destino"):
+    for dimensao in (
+        "periodo",
+        "servidor",
+        "municipio",
+        "motivo",
+        "situacao",
+        "origem_destino",
+        "categoria_funcional",
+        "doc_origem",
+        "transporte",
+    ):
         resultado = calcular_distribuicao([], dimensao)
         assert resultado.dimensao == dimensao
         assert resultado.pontos == []
@@ -271,3 +285,114 @@ class TestDimensaoOrigemDestino:
 
         rotulos = {ponto.rotulo for ponto in resultado.pontos}
         assert rotulos == {"Sem origem informada → ARARIPINA", "RECIFE → Sem destino informado"}
+
+
+class TestDimensaoCategoriaFuncional:
+    """Sprint 21.1 (Modo Executivo) — gráfico "Membros × Servidores"."""
+
+    def test_agrupa_por_categoria_funcional_ja_calculada(self):
+        registros = [
+            _registro(sei="1", categoria_funcional="MEMBRO", valor=100.0),
+            _registro(sei="2", categoria_funcional="SERVIDOR", valor=50.0),
+            _registro(sei="3", categoria_funcional="SERVIDOR", valor=200.0),
+        ]
+
+        resultado = calcular_distribuicao(registros, "categoria_funcional")
+
+        pontos_por_rotulo = {ponto.rotulo: ponto for ponto in resultado.pontos}
+        assert pontos_por_rotulo["MEMBRO"].contagem == 1
+        assert pontos_por_rotulo["MEMBRO"].valor == 100.0
+        assert pontos_por_rotulo["SERVIDOR"].contagem == 2
+        assert pontos_por_rotulo["SERVIDOR"].valor == 250.0
+
+    def test_nao_identificado_e_um_bucket_normal_nunca_omitido(self):
+        # Diferente de `servidor`/`situacao`, `categoria_funcional` nunca
+        # precisa de um rótulo de "ausente" próprio — o próprio valor
+        # `NAO_IDENTIFICADO` já é essa condição (RN-01, sem cadastro).
+        registros = [
+            _registro(sei="1", categoria_funcional="NAO_IDENTIFICADO"),
+            _registro(sei="2", categoria_funcional="MEMBRO"),
+        ]
+
+        resultado = calcular_distribuicao(registros, "categoria_funcional")
+
+        pontos_por_rotulo = {ponto.rotulo: ponto for ponto in resultado.pontos}
+        assert pontos_por_rotulo["NAO_IDENTIFICADO"].contagem == 1
+        assert sum(ponto.contagem for ponto in resultado.pontos) == 2
+
+    def test_ordem_e_decrescente_por_contagem(self):
+        registros = [
+            _registro(sei="1", categoria_funcional="MEMBRO"),
+            _registro(sei="2", categoria_funcional="SERVIDOR"),
+            _registro(sei="3", categoria_funcional="SERVIDOR"),
+        ]
+
+        resultado = calcular_distribuicao(registros, "categoria_funcional")
+
+        assert [ponto.rotulo for ponto in resultado.pontos] == ["SERVIDOR", "MEMBRO"]
+
+
+class TestDimensaoDocOrigem:
+    """Sprint 21.1 (Modo Executivo) — gráfico "Unidade solicitante
+    (documento de origem)". Decisão de fechamento 9: é literalmente
+    `doc_origem`, sem nenhuma reinterpretação institucional."""
+
+    def test_agrupa_por_doc_origem(self):
+        registros = [
+            _registro(sei="1", doc_origem="GABPGJ - Gabinete do Procurador-Geral de Justiça", valor=100.0),
+            _registro(sei="2", doc_origem="GABPGJ - Gabinete do Procurador-Geral de Justiça", valor=50.0),
+            _registro(sei="3", doc_origem="SECCGMP - Secretarias da Corregedoria", valor=200.0),
+        ]
+
+        resultado = calcular_distribuicao(registros, "doc_origem")
+
+        pontos_por_rotulo = {ponto.rotulo: ponto for ponto in resultado.pontos}
+        assert pontos_por_rotulo["GABPGJ - Gabinete do Procurador-Geral de Justiça"].contagem == 2
+        assert pontos_por_rotulo["GABPGJ - Gabinete do Procurador-Geral de Justiça"].valor == 150.0
+        assert pontos_por_rotulo["SECCGMP - Secretarias da Corregedoria"].contagem == 1
+
+    def test_doc_origem_vazio_agrupa_num_rotulo_generico_nunca_e_omitido(self):
+        # `doc_origem` nunca é `None` no esquema (`RegistroAnalitico.
+        # doc_origem: str`), mas pode ser `""` quando a célula da planilha
+        # está em branco (`repositorio_diarias.py`) — tratado como ausente,
+        # nunca como um rótulo vazio na distribuição.
+        registros = [
+            _registro(sei="1", doc_origem="GABPGJ - Gabinete do Procurador-Geral de Justiça"),
+            _registro(sei="2", doc_origem=""),
+        ]
+
+        resultado = calcular_distribuicao(registros, "doc_origem")
+
+        pontos_por_rotulo = {ponto.rotulo: ponto for ponto in resultado.pontos}
+        assert pontos_por_rotulo["Unidade solicitante não informada"].contagem == 1
+        assert sum(ponto.contagem for ponto in resultado.pontos) == 2
+
+
+class TestDimensaoTransporte:
+    """Sprint 21.1 (Modo Executivo) — gráfico "Meio de transporte"."""
+
+    def test_agrupa_por_transporte(self):
+        registros = [
+            _registro(sei="1", transporte="CARRO", valor=100.0),
+            _registro(sei="2", transporte="CARRO", valor=50.0),
+            _registro(sei="3", transporte="AVIAO", valor=200.0),
+        ]
+
+        resultado = calcular_distribuicao(registros, "transporte")
+
+        pontos_por_rotulo = {ponto.rotulo: ponto for ponto in resultado.pontos}
+        assert pontos_por_rotulo["CARRO"].contagem == 2
+        assert pontos_por_rotulo["CARRO"].valor == 150.0
+        assert pontos_por_rotulo["AVIAO"].contagem == 1
+
+    def test_transporte_ausente_agrupa_num_rotulo_generico_nunca_e_omitido(self):
+        registros = [
+            _registro(sei="1", transporte="CARRO"),
+            _registro(sei="2", transporte=None),
+        ]
+
+        resultado = calcular_distribuicao(registros, "transporte")
+
+        pontos_por_rotulo = {ponto.rotulo: ponto for ponto in resultado.pontos}
+        assert pontos_por_rotulo["Transporte não identificado"].contagem == 1
+        assert sum(ponto.contagem for ponto in resultado.pontos) == 2
