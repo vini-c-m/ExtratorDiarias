@@ -225,10 +225,10 @@ export default function GradeKpisExecutivos({
   // discretos — nenhuma mudança de hierarquia tipográfica, só de moldura.
   return (
     <div
-      className={`grid grid-cols-2 divide-x divide-y divide-white/[0.06] overflow-hidden sm:grid-cols-3 lg:grid-cols-5 lg:divide-y-0 ${SUPERFICIE_BASE}`}
+      className="kpis-executivos grid grid-cols-2 sm:grid-cols-3 min-[960px]:grid-cols-5"
     >
       {erroAlgumLado !== null ? (
-        <div className="col-span-2 p-5 sm:col-span-3 lg:col-span-5">
+        <div className="col-span-2 p-5 sm:col-span-3 min-[960px]:col-span-5">
           <div className="flex items-center justify-between gap-4">
             <Alerta variante="erro">{erroAlgumLado}</Alerta>
             <Botao variante="secundaria" onClick={comparacao.tentarNovamenteB}>
@@ -237,7 +237,7 @@ export default function GradeKpisExecutivos({
           </div>
         </div>
       ) : comparando && (carregandoAlgumLado || primeiro === null || segundo === null) ? (
-        <div role="status" className="col-span-2 flex items-center justify-center p-10 sm:col-span-3 lg:col-span-5">
+        <div role="status" className="col-span-2 flex items-center justify-center p-10 sm:col-span-3 min-[960px]:col-span-5">
           <p className={TIPOGRAFIA.textoAuxiliar}>Calculando comparação...</p>
         </div>
       ) : comparando && primeiro !== null && segundo !== null ? (

@@ -75,4 +75,5 @@ def preencher(requisicao: RequisicaoPreenchimento) -> ResultadoPreenchimentoResp
         caminho_planilha_gerada=arquivos_gerados.caminho_planilha_gerada,
         caminho_relatorio=arquivos_gerados.caminho_relatorio,
         caminho_log=arquivos_gerados.caminho_log,
+        sincronizacao_analitica_falhou=resultado.sincronizacao_analitica_falhou,
     )

@@ -56,3 +56,10 @@ class ResultadoPreenchimentoResposta(BaseModel):
     caminho_planilha_gerada: str
     caminho_relatorio: str
     caminho_log: str
+    # ETAPA 2 (Auditoria P0, 2026-08-09) — gravação da Planilha (tudo acima)
+    # e sincronização da Central Analítica são resultados distintos: este
+    # campo nunca torna `total_gravado`/`itens` inválidos, só expõe que a
+    # Base Local em SQLite pode não refletir esta gravação ainda. Default
+    # `False` — nenhum consumidor existente da resposta precisa mudar
+    # (nenhuma UI nova nesta etapa).
+    sincronizacao_analitica_falhou: bool = False

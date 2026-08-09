@@ -104,7 +104,7 @@ export default function CabecalhoExecutivo({
     ) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="cabecalho-executivo space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className={TIPOGRAFIA.titulo}>Modo Executivo</h2>
@@ -137,7 +137,7 @@ export default function CabecalhoExecutivo({
           que os separa visualmente do título/ações acima, em vez de
           empilhar com o mesmo peso — nenhum componente/callback muda,
           só a moldura ao redor deles. */}
-      <div className="space-y-3 border-t border-white/5 pt-4">
+      <div className="controles-executivos space-y-3 pt-4">
         <IndicadorSincronizacao backendOnline={backendOnline} />
 
         <div className="flex flex-wrap items-center justify-between gap-3">

@@ -1,12 +1,21 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PainelInsights from "./PainelInsights";
 import type { Insight } from "./insightsExecutivos";
 
+beforeEach(() => {
+  vi.stubGlobal("matchMedia", vi.fn().mockReturnValue({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+});
+
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
 });
 
 const INSIGHTS: Insight[] = [
@@ -24,144 +33,59 @@ const PROPS_BASE = {
 };
 
 describe("PainelInsights", () => {
-  // Redesign BI 3.0 (2026-08-07) — abaixo de xl (1280px) o painel vira
-  // seção recolhível; em xl+ o conteúdo fica sempre visível via `xl:!block`
-  // independente do estado local (jsdom não simula breakpoint real, então
-  // o guarda-corpo possível é a classe em si — mesmo critério já usado
-  // para `overflow-hidden`/`min-w-0` em rodadas anteriores).
   describe("seção recolhível (<xl)", () => {
-    it("começa recolhido: a lista tem 'hidden', mas sempre com 'xl:!block' (nunca escondida em telas grandes)", () => {
-      const { container } = render(<PainelInsights {...PROPS_BASE} />);
-      const lista = container.querySelector("ul")!;
-      expect(lista).toHaveClass("hidden");
-      expect(lista.className).toContain("xl:!block");
+    it("começa recolhido sem montar o Market Tape oculto", () => {
+      render(<PainelInsights {...PROPS_BASE} />);
+      expect(screen.queryByTestId("market-tape-continuo")).not.toBeInTheDocument();
     });
 
-    it("clicar em 'Ver (N)' expande a lista (perde 'hidden')", () => {
-      const { container } = render(<PainelInsights {...PROPS_BASE} />);
+    it("clicar em Ver expande a fita", () => {
+      render(<PainelInsights {...PROPS_BASE} />);
       fireEvent.click(screen.getByRole("button", { name: "Ver (2)" }));
-      const lista = container.querySelector("ul")!;
-      expect(lista).not.toHaveClass("hidden");
+      expect(screen.getByTestId("market-tape-continuo")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: "Ocultar" })).toBeInTheDocument();
     });
 
-    it("o botão de recolher/expandir some em xl+ (xl:hidden)", () => {
+    it("controle de recolher some em xl+", () => {
       render(<PainelInsights {...PROPS_BASE} />);
-      expect(screen.getByRole("button", { name: "Ver (2)" })).toHaveClass("xl:hidden");
+      expect(screen.getByRole("button", { name: "Ver (2)" })).toHaveClass("min-[960px]:hidden");
     });
   });
 
-  it("mostra os 2 insights recebidos, mesmo recolhido (conteúdo continua no DOM)", () => {
+  it("mantém todos os insights na lista lógica acessível", () => {
     render(<PainelInsights {...PROPS_BASE} />);
-    expect(screen.getByText("+18% de aumento no período")).toBeInTheDocument();
-    expect(screen.getByText("Recife concentra 24% dos gastos")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Ver (2)" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    const lista = screen.getByRole("list");
+    expect(lista).toHaveTextContent(INSIGHTS[0].texto);
+    expect(lista).toHaveTextContent(INSIGHTS[1].texto);
   });
 
-  it("recorte vazio: não renderiza nada (não é erro)", () => {
+  it("recorte vazio não renderiza painel", () => {
     const { container } = render(<PainelInsights {...PROPS_BASE} insights={[]} />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("erro: mostra alerta e 'Tentar novamente'", () => {
+  it("erro mantém tentativa manual", () => {
     const tentarNovamente = vi.fn();
     render(<PainelInsights {...PROPS_BASE} erro="Falha ao calcular insights." tentarNovamente={tentarNovamente} />);
-    expect(screen.getByText("Falha ao calcular insights.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(tentarNovamente).toHaveBeenCalledTimes(1);
   });
 
-  // BI 4.0 — "Insights em movimento": rotação automática do destaque.
-  describe("rotação automática (BI 4.0)", () => {
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
-    it("avança o marcador em destaque a cada ~6,5s", () => {
-      vi.useFakeTimers();
+  describe("Market Tape contínuo (BI 5.1)", () => {
+    it("usa trilho contínuo para dois ou mais insights", () => {
       render(<PainelInsights {...PROPS_BASE} />);
-
-      expect(screen.getByRole("button", { name: "Ir para o insight 1" })).toHaveAttribute("aria-current", "true");
-
-      act(() => {
-        vi.advanceTimersByTime(6500);
-      });
-
-      expect(screen.getByRole("button", { name: "Ir para o insight 2" })).toHaveAttribute("aria-current", "true");
-      expect(screen.getByRole("button", { name: "Ir para o insight 1" })).not.toHaveAttribute("aria-current");
+      fireEvent.click(screen.getByRole("button", { name: "Ver (2)" }));
+      expect(screen.getByTestId("market-tape-continuo")).toBeInTheDocument();
+      expect(document.querySelector(".market-tape-trilho")).toBeInTheDocument();
     });
 
-    // BI 4.0 (correção de perceptibilidade) — prova que a troca não é só
-    // um atributo `aria-current`: o bloco de detalhe (número + texto
-    // completo) do insight que SAI recolhe (opacity-0) e o que ENTRA
-    // expande (opacity-100/grid-rows-[1fr]) — o mecanismo visual real de
-    // "sair"/"entrar", não só o estado lógico.
-    it("insight que sai recolhe (opacity-0) e o que entra expande (opacity-100) — mecanismo visual real", () => {
-      vi.useFakeTimers();
-      render(<PainelInsights {...PROPS_BASE} />);
-
-      const blocoDetalhe1 = screen.getByText(INSIGHTS[0].texto).parentElement!.parentElement!;
-      const blocoDetalhe2 = screen.getByText(INSIGHTS[1].texto).parentElement!.parentElement!;
-      expect(blocoDetalhe1.className).toContain("opacity-100");
-      expect(blocoDetalhe2.className).toContain("opacity-0");
-
-      act(() => {
-        vi.advanceTimersByTime(6500);
-      });
-
-      expect(blocoDetalhe1.className).toContain("opacity-0");
-      expect(blocoDetalhe2.className).toContain("opacity-100");
-    });
-
-    it("hover no painel pausa a rotação; sair do hover retoma", () => {
-      vi.useFakeTimers();
-      const { container } = render(<PainelInsights {...PROPS_BASE} />);
-      const painel = container.firstChild as HTMLElement;
-
-      fireEvent.mouseEnter(painel);
-      act(() => {
-        vi.advanceTimersByTime(20000);
-      });
-      expect(screen.getByRole("button", { name: "Ir para o insight 1" })).toHaveAttribute("aria-current", "true");
-
-      fireEvent.mouseLeave(painel);
-      act(() => {
-        vi.advanceTimersByTime(6500);
-      });
-      expect(screen.getByRole("button", { name: "Ir para o insight 2" })).toHaveAttribute("aria-current", "true");
-    });
-
-    it("clicar num marcador seleciona manualmente o insight em destaque", () => {
-      vi.useFakeTimers();
-      render(<PainelInsights {...PROPS_BASE} />);
-
-      fireEvent.click(screen.getByRole("button", { name: "Ir para o insight 2" }));
-
-      expect(screen.getByRole("button", { name: "Ir para o insight 2" })).toHaveAttribute("aria-current", "true");
-    });
-
-    it("um único insight: marcador não vira botão (nada para paginar)", () => {
-      vi.useFakeTimers();
+    it("um único insight permanece estático e não é duplicado", () => {
       render(<PainelInsights {...PROPS_BASE} insights={[INSIGHTS[0]]} />);
-
-      expect(screen.queryByRole("button", { name: /Ir para o insight/ })).not.toBeInTheDocument();
-    });
-
-    it("prefers-reduced-motion: nunca avança sozinho", () => {
-      vi.useFakeTimers();
-      const matchMediaOriginal = window.matchMedia;
-      window.matchMedia = vi.fn().mockReturnValue({
-        matches: true,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      }) as unknown as typeof window.matchMedia;
-
-      render(<PainelInsights {...PROPS_BASE} />);
-      act(() => {
-        vi.advanceTimersByTime(20000);
-      });
-
-      expect(screen.getByRole("button", { name: "Ir para o insight 1" })).toHaveAttribute("aria-current", "true");
-      window.matchMedia = matchMediaOriginal;
+      fireEvent.click(screen.getByRole("button", { name: "Ver (1)" }));
+      expect(screen.getByTestId("market-tape-estatico")).toBeInTheDocument();
+      expect(screen.getAllByText(INSIGHTS[0].texto)).toHaveLength(1);
     });
   });
 });

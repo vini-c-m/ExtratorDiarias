@@ -2,10 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   calcularInsightsExecutivos,
   insightConcentracaoGastos,
+  insightDistanciaDoPico,
+  insightMediaMensal,
+  insightMotivoPredominante,
   insightParticipacaoCategoriaFuncional,
   insightPicoMensal,
+  insightPressaoFinanceiraRecente,
   insightTendenciaRecente,
+  insightTop3Municipios,
+  insightTop3Unidades,
   insightTransporteNaoIdentificado,
+  insightTransportePredominante,
   insightUnidadeLider,
   insightVariacaoPeriodo,
   insightVariacaoValorMedio,
@@ -173,7 +180,9 @@ describe("insightUnidadeLider", () => {
   it("aponta a unidade com mais registros, por CONTAGEM (nunca valor financeiro)", () => {
     const pontos = [ponto("Unidade A", 132, 900000), ponto("Unidade B", 40, 1200000)];
     const insight = insightUnidadeLider(pontos);
-    expect(insight?.texto).toBe("Unidade A liderou as solicitações, com 132 registro(s) no período");
+    expect(insight?.texto).toContain("Unidade A liderou as solicitações, com 132 registro(s)");
+    expect(insight?.texto).toContain("76,7% do total");
+    expect(insight?.texto).toContain("230% acima da segunda unidade");
     expect(insight?.texto).not.toMatch(/R\$/);
   });
 
@@ -260,9 +269,10 @@ describe("calcularInsightsExecutivos", () => {
       "pico-mensal",
       "tendencia-recente",
       "variacao-valor-medio",
+      "top3-municipios",
       "concentracao-gastos",
-      "participacao-categoria-funcional",
       "unidade-lider",
+      "participacao-categoria-funcional",
     ]);
   });
 
@@ -299,5 +309,77 @@ describe("calcularInsightsExecutivos", () => {
     });
 
     expect(insights).toEqual([]);
+  });
+});
+
+describe("insights gerenciais BI 5.1", () => {
+  const hoje = new Date(2026, 7, 8);
+
+  it("Top 3 unidades usa exclusivamente contagem de solicitações", () => {
+    const insight = insightTop3Unidades([
+      ponto("A", 50, 1), ponto("B", 30, 999999), ponto("C", 10, 1), ponto("D", 10, 1),
+    ]);
+    expect(insight?.texto).toContain("90%");
+    expect(insight?.texto).toContain("solicitações");
+    expect(insight?.texto).not.toContain("valor");
+  });
+
+  it("Top 3 municípios usa valor financeiro, nunca contagem", () => {
+    const insight = insightTop3Municipios([
+      ponto("A", 1, 50), ponto("B", 999, 30), ponto("C", 1, 10), ponto("D", 1, 10),
+    ]);
+    expect(insight?.texto).toContain("90%");
+    expect(insight?.texto).toContain("valor");
+  });
+
+  it("pressão recente compara duas janelas de 3 meses fechados e consecutivos", () => {
+    const insight = insightPressaoFinanceiraRecente([
+      ponto("2026-01", 1, 100), ponto("2026-02", 1, 100), ponto("2026-03", 1, 100),
+      ponto("2026-04", 1, 150), ponto("2026-05", 1, 150), ponto("2026-06", 1, 150),
+    ], hoje);
+    expect(insight?.texto).toContain("+50%");
+  });
+
+  it("pressão recente rejeita lacuna e mês corrente incompleto", () => {
+    expect(insightPressaoFinanceiraRecente([
+      ponto("2026-01", 1, 1), ponto("2026-02", 1, 1), ponto("2026-04", 1, 1),
+      ponto("2026-05", 1, 1), ponto("2026-06", 1, 1), ponto("2026-07", 1, 2),
+    ], hoje)).toBeNull();
+    expect(insightPressaoFinanceiraRecente([
+      ponto("2026-03", 1, 1), ponto("2026-04", 1, 1), ponto("2026-05", 1, 1),
+      ponto("2026-06", 1, 1), ponto("2026-07", 1, 1), ponto("2026-08", 1, 2),
+    ], hoje)).toBeNull();
+  });
+
+  it("média mensal exige recorte de meses completos e cobertura sem lacunas", () => {
+    expect(insightMediaMensal([
+      ponto("2026-01", 1, 100), ponto("2026-02", 1, 200), ponto("2026-03", 1, 300),
+    ], "2026-01-01", "2026-03-31", hoje)?.texto).toContain("R$ 200,00");
+    expect(insightMediaMensal([
+      ponto("2026-01", 1, 100), ponto("2026-03", 1, 300),
+    ], "2026-01-01", "2026-03-31", hoje)).toBeNull();
+    expect(insightMediaMensal([
+      ponto("2026-01", 1, 100), ponto("2026-02", 1, 200),
+    ], "2026-01-15", "2026-02-28", hoje)).toBeNull();
+  });
+
+  it("distância do pico usa somente meses fechados consecutivos", () => {
+    const insight = insightDistanciaDoPico([
+      ponto("2026-01", 1, 100), ponto("2026-02", 1, 200), ponto("2026-03", 1, 100),
+    ], hoje);
+    expect(insight?.texto).toContain("50%");
+    expect(insightDistanciaDoPico([ponto("2026-01", 1, 100), ponto("2026-03", 1, 50)], hoje)).toBeNull();
+  });
+
+  it("empate não produz líder de motivo", () => {
+    expect(insightMotivoPredominante([ponto("A", 10), ponto("B", 10)])).toBeNull();
+  });
+
+  it("transporte não identificado nunca vira líder nem alerta", () => {
+    const insight = insightTransportePredominante([
+      ponto("Transporte não identificado", 80), ponto("Aéreo", 15), ponto("Rodoviário", 5),
+    ]);
+    expect(insight?.texto).toContain("Aéreo");
+    expect(insight?.tipo).toBe("neutro");
   });
 });

@@ -92,6 +92,7 @@ def confirmar_rota(requisicao: RequisicaoConfirmacaoFinalizacao) -> RespostaConf
     return RespostaConfirmacaoFinalizacao(
         total_finalizado=resultado.total_finalizado,
         total_ignorado=resultado.total_ignorado,
+        sincronizacao_analitica_falhou=resultado.sincronizacao_analitica_falhou,
         itens=[
             ItemResultadoConfirmacaoResposta(
                 arquivo_origem=item.arquivo_origem,

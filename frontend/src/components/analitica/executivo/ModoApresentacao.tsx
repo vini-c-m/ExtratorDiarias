@@ -108,9 +108,9 @@ export default function ModoApresentacao({
       role="region"
       aria-label="Modo apresentação executiva"
       onKeyDown={aoTeclarNoContainer}
-      className="fixed inset-0 z-50 overflow-y-auto bg-[#060818] p-8 outline-none"
+      className="modo-apresentacao-executivo fixed inset-0 z-50 overflow-y-auto bg-[#060818] p-6 outline-none lg:p-8"
     >
-      <div className="mx-auto flex min-h-full max-w-6xl flex-col">
+      <div className="mx-auto flex min-h-full max-w-[1680px] flex-col">
         <div className="flex items-center justify-between">
           <div role="tablist" aria-label="Seções da apresentação" className="flex items-center gap-2">
             {SECOES.map((nome, indice) => (
@@ -138,7 +138,7 @@ export default function ModoApresentacao({
           </button>
         </div>
 
-        <div role="tabpanel" aria-label={SECOES[secaoAtual]} className="mt-8 flex-1">
+        <div role="tabpanel" aria-label={SECOES[secaoAtual]} className="slide-apresentacao-executivo mt-6 flex-1 lg:mt-8">
           {/* Seção "Insights" nunca duplica o título — `PainelInsights` já
               tem o seu próprio (§ 5.2). Só "Indicadores"/"Gráficos" (sem
               título interno próprio) ganham este título de seção. */}

@@ -245,11 +245,157 @@ export function insightUnidadeLider(pontosDocOrigem: PontoDistribuicaoResposta[]
   if (reais.length === 0) return null;
 
   const lider = reais.reduce((atual, ponto) => (ponto.contagem > atual.contagem ? ponto : atual));
+  const total = pontosDocOrigem.reduce((soma, ponto) => soma + ponto.contagem, 0);
+  const segundo = [...reais].sort((a, b) => b.contagem - a.contagem)[1];
+  const participacao = total > 0 ? ` (${FORMATADOR_PERCENTUAL.format((lider.contagem / total) * 100)}% do total)` : "";
+  const distancia = segundo && segundo.contagem > 0
+    ? `, ${FORMATADOR_PERCENTUAL.format(((lider.contagem - segundo.contagem) / segundo.contagem) * 100)}% acima da segunda unidade`
+    : "";
   return {
     id: "unidade-lider",
     tipo: "neutro",
-    texto: `${lider.rotulo} liderou as solicitações, com ${FORMATADOR_INTEIRO.format(lider.contagem)} registro(s) no período`,
+    texto: `${lider.rotulo} liderou as solicitações, com ${FORMATADOR_INTEIRO.format(lider.contagem)} registro(s)${participacao}${distancia}`,
     tituloCurto: "UNIDADE LÍDER",
+  };
+}
+
+function pontosPositivosPorContagem(pontos: PontoDistribuicaoResposta[], rotulosExcluidos: Set<string> = new Set()) {
+  return pontos.filter((ponto) => ponto.contagem > 0 && !rotulosExcluidos.has(ponto.rotulo));
+}
+
+export function insightTop3Unidades(pontos: PontoDistribuicaoResposta[]): Insight | null {
+  const reais = pontosPositivosPorContagem(pontos, new Set([ROTULO_DOC_ORIGEM_AUSENTE]));
+  const total = pontos.reduce((soma, ponto) => soma + ponto.contagem, 0);
+  if (reais.length < 3 || total <= 0) return null;
+  const top3 = [...reais].sort((a, b) => b.contagem - a.contagem).slice(0, 3);
+  const percentual = (top3.reduce((soma, ponto) => soma + ponto.contagem, 0) / total) * 100;
+  return {
+    id: "top3-unidades",
+    tipo: "neutro",
+    texto: `As 3 principais unidades concentraram ${FORMATADOR_PERCENTUAL.format(percentual)}% das solicitações do período`,
+    tituloCurto: "TOP 3 UNIDADES",
+  };
+}
+
+export function insightTop3Municipios(pontos: PontoDistribuicaoResposta[]): Insight | null {
+  const comValor = pontos.filter((ponto) => ponto.valor !== null && ponto.valor > 0);
+  const total = comValor.reduce((soma, ponto) => soma + (ponto.valor as number), 0);
+  if (comValor.length < 3 || total <= 0) return null;
+  const top3 = [...comValor].sort((a, b) => (b.valor as number) - (a.valor as number)).slice(0, 3);
+  const percentual = (top3.reduce((soma, ponto) => soma + (ponto.valor as number), 0) / total) * 100;
+  return {
+    id: "top3-municipios",
+    tipo: "neutro",
+    texto: `Os 3 principais municípios concentraram ${FORMATADOR_PERCENTUAL.format(percentual)}% do valor do período`,
+    tituloCurto: "TOP 3 MUNICÍPIOS",
+  };
+}
+
+export function insightMotivoPredominante(pontos: PontoDistribuicaoResposta[]): Insight | null {
+  const validos = pontosPositivosPorContagem(pontos);
+  const total = validos.reduce((soma, ponto) => soma + ponto.contagem, 0);
+  if (validos.length < 2 || total <= 0) return null;
+  const ordenados = [...validos].sort((a, b) => b.contagem - a.contagem);
+  if (ordenados[0].contagem === ordenados[1].contagem) return null;
+  return {
+    id: "motivo-predominante",
+    tipo: "neutro",
+    texto: `${ordenados[0].rotulo} representou ${FORMATADOR_PERCENTUAL.format((ordenados[0].contagem / total) * 100)}% das diárias do período`,
+    tituloCurto: "MOTIVO PREDOMINANTE",
+  };
+}
+
+export function insightTransportePredominante(pontos: PontoDistribuicaoResposta[]): Insight | null {
+  const excluidos = new Set(["Transporte não identificado"]);
+  const validos = pontosPositivosPorContagem(pontos, excluidos);
+  const total = pontos.reduce((soma, ponto) => soma + ponto.contagem, 0);
+  if (validos.length === 0 || total <= 0) return null;
+  const ordenados = [...validos].sort((a, b) => b.contagem - a.contagem);
+  if (ordenados[1] && ordenados[0].contagem === ordenados[1].contagem) return null;
+  return {
+    id: "transporte-predominante",
+    tipo: "neutro",
+    texto: `${ordenados[0].rotulo} respondeu por ${FORMATADOR_PERCENTUAL.format((ordenados[0].contagem / total) * 100)}% dos registros do período`,
+    tituloCurto: "TRANSPORTE PREDOMINANTE",
+  };
+}
+
+function ordenarMesesComValor(pontos: PontoDistribuicaoResposta[], hoje: Date) {
+  return pontos
+    .filter((ponto) => ponto.valor !== null && mesEhCompleto(ponto.rotulo, hoje))
+    .sort((a, b) => a.rotulo.localeCompare(b.rotulo));
+}
+
+function proximoMes(chave: string): string {
+  const [ano, mes] = chave.split("-").map(Number);
+  const data = new Date(ano, mes, 1);
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function mesesSaoConsecutivos(pontos: PontoDistribuicaoResposta[]): boolean {
+  return pontos.every((ponto, indice) => indice === 0 || ponto.rotulo === proximoMes(pontos[indice - 1].rotulo));
+}
+
+export function insightPressaoFinanceiraRecente(pontos: PontoDistribuicaoResposta[], hoje: Date = new Date()): Insight | null {
+  const fechados = ordenarMesesComValor(pontos, hoje);
+  const janela = fechados.slice(-6);
+  if (janela.length !== 6 || !mesesSaoConsecutivos(janela)) return null;
+  const anteriores = janela.slice(0, 3).reduce((soma, ponto) => soma + (ponto.valor as number), 0);
+  const recentes = janela.slice(3).reduce((soma, ponto) => soma + (ponto.valor as number), 0);
+  const variacao = formatarVariacaoPercentual(anteriores, recentes);
+  if (variacao === null || anteriores <= 0 || recentes === anteriores) return null;
+  return {
+    id: "pressao-financeira-recente",
+    tipo: "neutro",
+    texto: `${variacao} nos gastos dos 3 meses fechados mais recentes em relação aos 3 anteriores`,
+    tituloCurto: "GASTOS RECENTES",
+  };
+}
+
+function chavesDoPeriodoCompleto(inicial: string, final: string, hoje: Date): string[] | null {
+  const inicio = new Date(`${inicial}T00:00:00`);
+  const fim = new Date(`${final}T00:00:00`);
+  if (inicio.getDate() !== 1 || fim.getDate() !== new Date(fim.getFullYear(), fim.getMonth() + 1, 0).getDate()) return null;
+  const chaveFim = `${fim.getFullYear()}-${String(fim.getMonth() + 1).padStart(2, "0")}`;
+  if (!mesEhCompleto(chaveFim, hoje)) return null;
+  const chaves: string[] = [];
+  for (let cursor = new Date(inicio); cursor <= fim; cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)) {
+    chaves.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return chaves;
+}
+
+export function insightMediaMensal(
+  pontos: PontoDistribuicaoResposta[],
+  periodoInicial: string | null,
+  periodoFinal: string | null,
+  hoje: Date = new Date(),
+): Insight | null {
+  if (!periodoInicial || !periodoFinal) return null;
+  const esperados = chavesDoPeriodoCompleto(periodoInicial, periodoFinal, hoje);
+  const porMes = new Map(pontos.filter((ponto) => ponto.valor !== null).map((ponto) => [ponto.rotulo, ponto.valor as number]));
+  if (!esperados || esperados.length < 2 || esperados.some((chave) => !porMes.has(chave))) return null;
+  const media = esperados.reduce((soma, chave) => soma + (porMes.get(chave) as number), 0) / esperados.length;
+  return {
+    id: "media-mensal",
+    tipo: "neutro",
+    texto: `${FORMATADOR_MOEDA.format(media)} foi a média mensal nos ${FORMATADOR_INTEIRO.format(esperados.length)} meses completos do recorte`,
+    tituloCurto: "MÉDIA MENSAL",
+  };
+}
+
+export function insightDistanciaDoPico(pontos: PontoDistribuicaoResposta[], hoje: Date = new Date()): Insight | null {
+  const fechados = ordenarMesesComValor(pontos, hoje);
+  if (fechados.length < 2 || !mesesSaoConsecutivos(fechados)) return null;
+  const ultimo = fechados[fechados.length - 1];
+  const pico = fechados.reduce((maior, ponto) => (ponto.valor as number) > (maior.valor as number) ? ponto : maior);
+  if ((pico.valor as number) <= 0 || pico.rotulo === ultimo.rotulo) return null;
+  const percentual = (1 - (ultimo.valor as number) / (pico.valor as number)) * 100;
+  return {
+    id: "distancia-pico",
+    tipo: "neutro",
+    texto: `${formatarPeriodoMensal(ultimo.rotulo)} ficou ${FORMATADOR_PERCENTUAL.format(percentual)}% abaixo do pico financeiro do período`,
+    tituloCurto: "DISTÂNCIA DO PICO",
   };
 }
 
@@ -365,6 +511,10 @@ export interface DadosParaInsights {
   pontosMunicipio: PontoDistribuicaoResposta[];
   pontosCategoriaFuncional: PontoDistribuicaoResposta[];
   pontosDocOrigem: PontoDistribuicaoResposta[];
+  pontosMotivo?: PontoDistribuicaoResposta[];
+  pontosTransporte?: PontoDistribuicaoResposta[];
+  periodoInicial?: string | null;
+  periodoFinal?: string | null;
   /** Injetável só para teste determinístico da guarda de mês incompleto
    * (`insightTendenciaRecente`) — em produção nunca é passado, o insight
    * usa `new Date()` de verdade. */
@@ -391,22 +541,46 @@ export function calcularInsightsExecutivos(dados: DadosParaInsights): Insight[] 
   const pico = insightPicoMensal(dados.pontosPeriodo);
   if (pico) insights.push(pico);
 
+  const pressao = insightPressaoFinanceiraRecente(dados.pontosPeriodo, dados.hoje);
   const tendencia = insightTendenciaRecente(dados.pontosPeriodo, dados.hoje);
-  if (tendencia) insights.push(tendencia);
+  if (pressao) insights.push(pressao);
+  else if (tendencia) insights.push(tendencia);
 
-  if (dados.rotuloPeriodoAnterior !== null) {
+  const mediaMensal = insightMediaMensal(
+    dados.pontosPeriodo,
+    dados.periodoInicial ?? null,
+    dados.periodoFinal ?? null,
+    dados.hoje,
+  );
+  if (mediaMensal) insights.push(mediaMensal);
+  else if (dados.rotuloPeriodoAnterior !== null) {
     const variacaoMedia = insightVariacaoValorMedio(dados.valorMedioAtual, dados.valorMedioPeriodoAnterior, dados.rotuloPeriodoAnterior);
     if (variacaoMedia) insights.push(variacaoMedia);
   }
 
+  const distanciaPico = insightDistanciaDoPico(dados.pontosPeriodo, dados.hoje);
+  if (distanciaPico) insights.push(distanciaPico);
+
+  const top3Municipios = insightTop3Municipios(dados.pontosMunicipio);
+  if (top3Municipios) insights.push(top3Municipios);
+
   const concentracao = insightConcentracaoGastos(dados.pontosMunicipio);
   if (concentracao) insights.push(concentracao);
 
-  const participacao = insightParticipacaoCategoriaFuncional(dados.pontosCategoriaFuncional);
-  if (participacao) insights.push(participacao);
+  const top3Unidades = insightTop3Unidades(dados.pontosDocOrigem);
+  if (top3Unidades) insights.push(top3Unidades);
 
   const unidadeLider = insightUnidadeLider(dados.pontosDocOrigem);
   if (unidadeLider) insights.push(unidadeLider);
 
-  return insights;
+  const participacao = insightParticipacaoCategoriaFuncional(dados.pontosCategoriaFuncional);
+  if (participacao) insights.push(participacao);
+
+  const motivo = insightMotivoPredominante(dados.pontosMotivo ?? []);
+  if (motivo) insights.push(motivo);
+
+  const transporte = insightTransportePredominante(dados.pontosTransporte ?? []);
+  if (transporte) insights.push(transporte);
+
+  return insights.slice(0, 12);
 }

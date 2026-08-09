@@ -74,6 +74,8 @@ export function useInsightsExecutivos(
   pontosMunicipio: PontoDistribuicaoResposta[],
   pontosCategoriaFuncional: PontoDistribuicaoResposta[],
   pontosDocOrigem: PontoDistribuicaoResposta[],
+  pontosMotivo: PontoDistribuicaoResposta[] = [],
+  pontosTransporte: PontoDistribuicaoResposta[] = [],
 ): EstadoUseInsightsExecutivos {
   const [indicadoresPeriodoAnterior, setIndicadoresPeriodoAnterior] = useState<IndicadoresResposta | null>(
     null,
@@ -132,6 +134,10 @@ export function useInsightsExecutivos(
     pontosMunicipio,
     pontosCategoriaFuncional,
     pontosDocOrigem,
+    pontosMotivo,
+    pontosTransporte,
+    periodoInicial,
+    periodoFinal,
   });
 
   return {

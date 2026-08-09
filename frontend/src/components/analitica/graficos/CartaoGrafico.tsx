@@ -44,6 +44,10 @@ export interface ItemLegendaGrafico {
 
 interface Props {
   titulo: string;
+  /** Variante somente visual para consumidores que possuem um canvas
+   * próprio. O default mantém Dashboard operacional e demais telas
+   * exatamente como antes. */
+  contextoVisual?: "padrao" | "executivo";
   /** Equivalente textual obrigatório (`v2-demonstracao-visual.md` § 6 —
    * "gráfico nunca é a única forma de acessar o dado") — sempre calculado
    * pelo chamador a partir dos mesmos pontos desenhados no gráfico, nunca um
@@ -114,6 +118,7 @@ interface Props {
  * comportamento anterior (ambos opcionais, `interativo` default `false`). */
 export default function CartaoGrafico({
   titulo,
+  contextoVisual = "padrao",
   linhasTabela,
   rotuloColunaValor,
   legenda,
@@ -272,7 +277,7 @@ export default function CartaoGrafico({
       {vazio ? <p className={`mt-4 ${TIPOGRAFIA.textoAuxiliar}`}>Sem dados para este recorte.</p> : <Corpo expandido={false} />}
 
       {expandido && (
-        <ModalExpandirGrafico titulo={titulo} onFechar={() => setExpandido(false)}>
+        <ModalExpandirGrafico titulo={titulo} onFechar={() => setExpandido(false)} contextoVisual={contextoVisual}>
           {/* Correção UX (2026-08-07) — o corpo do modal é `flex flex-col`
               de altura total: a linha de ações (legenda + "Ver como
               tabela") fica compacta no topo, e `Corpo` (o gráfico de

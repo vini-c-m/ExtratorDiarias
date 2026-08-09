@@ -16,6 +16,7 @@ reconstrução malsucedida (decisão 5)."""
 
 import os
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,44 @@ from app.infra.db.esquema import VERSAO_ESQUEMA, criar_esquema
 from app.planilha.escritor_planilha import NOME_ABA
 
 NOME_ARQUIVO_BASE_LOCAL_SQLITE = "base_local.sqlite"
+
+# ETAPA 2 (Auditoria P0, 2026-08-09) — número de tentativas e intervalo
+# (crescente, curto) do retry específico de `PermissionError` em
+# `os.replace`. Depois do lock global (`base_local.LOCK_SINCRONIZACAO`,
+# que elimina a concorrência ESCRITOR×ESCRITOR), a única janela de colisão
+# que sobra é LEITOR×ESCRITOR: uma consulta `mode=ro` da Central Analítica
+# (`repositorio_analitico._conectar_somente_leitura`) pode, por acaso,
+# estar com um handle aberto sobre `base_local.sqlite` no instante exato
+# da troca — reproduzido deterministicamente na auditoria (conexão
+# `mode=ro` aberta de propósito + `reconstruir()` -> `PermissionError`).
+# Cada consulta é de vida curtíssima (abre, 1-2 `SELECT`, fecha), então um
+# retry curto tende a resolver sozinho. Nunca faz retry para outra
+# exceção — só `PermissionError`.
+_TENTATIVAS_REPLACE = 3
+_INTERVALO_BASE_RETRY_REPLACE_S = 0.05
+
+
+def _substituir_com_retry(caminho_tmp: Path, caminho_destino: Path) -> None:
+    ultimo_erro: PermissionError | None = None
+    for tentativa in range(_TENTATIVAS_REPLACE):
+        try:
+            os.replace(caminho_tmp, caminho_destino)
+            return
+        except PermissionError as erro:
+            ultimo_erro = erro
+            if tentativa < _TENTATIVAS_REPLACE - 1:
+                time.sleep(_INTERVALO_BASE_RETRY_REPLACE_S * (tentativa + 1))
+    assert ultimo_erro is not None
+    raise ultimo_erro
+
+
+class ValidacaoBaseLocalFalhou(Exception):
+    """ETAPA 2 (Auditoria P0) — guarda estrutural/determinística, nunca um
+    limite financeiro arbitrário: impede que `os.replace` promova um
+    `.tmp` genuinamente truncado/inconsistente. Levantada ANTES de
+    `commit()` — o `.tmp` nunca chega a virar a base oficial, e a última
+    Base Local íntegra continua sendo servida (mesma garantia de qualquer
+    outra exceção nesta função, ver docstring do módulo)."""
 
 
 def caminho_base_local_sqlite(*, diretorio_base: Path | str | None = None) -> Path:
@@ -192,6 +231,42 @@ class ResumoSincronizacao:
     avisos: list[AvisoLinhaIgnorada] = field(default_factory=list)
 
 
+def _validar_antes_de_promover(
+    conexao: sqlite3.Connection,
+    resultado_diarias: ResultadoDiariasCompletas,
+    sinal_frescor: SinalFrescor,
+) -> None:
+    """ETAPA 2 (Auditoria P0) — chamada depois dos `INSERT`s, antes de
+    `commit()`: se alguma guarda falhar, a exceção propaga por `reconstruir`
+    (nunca comitada, `.tmp` nunca promovido) exatamente como qualquer outra
+    falha já tratada por este módulo."""
+    tabelas_esperadas = {"diarias", "sincronizacoes", "avisos_sincronizacao"}
+    tabelas_existentes = {
+        linha[0] for linha in conexao.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }
+    faltando = tabelas_esperadas - tabelas_existentes
+    if faltando:
+        raise ValidacaoBaseLocalFalhou(f"Tabelas ausentes na Base Local reconstruída: {sorted(faltando)}")
+
+    (total_inserido,) = conexao.execute("SELECT COUNT(*) FROM diarias").fetchone()
+    if total_inserido != len(resultado_diarias.diarias):
+        raise ValidacaoBaseLocalFalhou(
+            f"Contagem inconsistente: {total_inserido} linha(s) na tabela 'diarias', "
+            f"{len(resultado_diarias.diarias)} esperada(s) de resultado_diarias."
+        )
+
+    # A fonte tem linhas de dados em "Controle de Diárias" (mais que só o
+    # cabeçalho), mas nada foi reconstruído — sinal forte de reconstrução
+    # truncada; nunca promovida silenciosamente. Planilha genuinamente
+    # vazia (só cabeçalho, `linhas_controle_diarias <= 1`) continua válida.
+    if sinal_frescor.linhas_controle_diarias > 1 and total_inserido == 0:
+        raise ValidacaoBaseLocalFalhou(
+            "A fonte tem linhas em 'Controle de Diárias' "
+            f"(linhas_controle_diarias={sinal_frescor.linhas_controle_diarias}), mas nenhuma "
+            "diária foi reconstruída — promoção bloqueada."
+        )
+
+
 def reconstruir(
     resultado_diarias: ResultadoDiariasCompletas,
     servidores: dict[str, Servidor],
@@ -296,11 +371,12 @@ def reconstruir(
                 (sincronizacao_id, aviso.aba, aviso.linha, aviso.motivo),
             )
 
+        _validar_antes_de_promover(conexao, resultado_diarias, sinal_frescor)
         conexao.commit()
     finally:
         conexao.close()
 
-    os.replace(caminho_tmp, caminho_destino)
+    _substituir_com_retry(caminho_tmp, caminho_destino)
 
     return ResumoSincronizacao(
         sincronizado_em=sincronizado_em,

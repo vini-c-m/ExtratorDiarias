@@ -30,6 +30,10 @@ from openpyxl import Workbook
 from app.consulta import base_local, base_local_sqlite, repositorio_analitico
 from app.consulta.repositorio_analitico import FiltrosDiaria
 from app.domain.analitica.indicadores import calcular_indicadores
+from app.domain.entities.diaria import Diaria
+from app.domain.entities.modo_processamento import ModoProcessamento
+from app.domain.entities.processo import Processo, StatusProcesso
+from app.planilha.escritor_planilha import preencher
 
 _CABECALHO_CONTROLE = [
     "DH", "SEI", "DOC ORIGEM", "CPF", "PREVIDÊNCIA", "NOME", "CARGO",
@@ -267,3 +271,114 @@ def test_fixture_sintetica_diferenca_estrutural_membro_x_servidor_soma_correta(
     indicadores = calcular_indicadores(registros)
     assert indicadores.valor_total == 968.50
     assert indicadores.valor_medio == 484.25
+
+
+# --- P0 (2026-08-09) — regressão da causa raiz confirmada por reprodução --
+# executável: `escritor_planilha.preencher()` abria a Planilha Oficial sem
+# `data_only=True` (necessário para preservar fórmulas que não toca) e, ao
+# salvar o workbook inteiro, apagava o cache de TODA fórmula pré-existente —
+# não só das linhas novas gravadas por ele. Diferente do resto deste
+# arquivo (que testa só `sincronizar()` isoladamente, sobre uma planilha já
+# pronta), estes dois testes chamam o `preencher()` REAL, reproduzindo a
+# sequência de produção ponta a ponta: cache válido -> `preencher()` ->
+# `sincronizar()` -> SQLite -> indicador. -----------------------------------
+
+
+def test_preencher_real_preserva_valor_historico_com_cache_de_formula(tmp_path, injetar_cache_formula):
+    """Processamento normal (modo Padrão): gravar uma diária nova não pode
+    apagar o valor financeiro de uma diária histórica de SERVIDOR."""
+    caminho = _montar_planilha(
+        tmp_path,
+        "planilha_preservacao_padrao.xlsx",
+        [
+            _linha_controle(
+                dh=None, sei="19.20.0001.0009001/2025-01", cpf=77777777777,
+                periodo_inicial=date(2025, 1, 8), periodo_final=date(2025, 1, 10),
+                valor_p="=R2+S2", valor_r=300.00, valor_s=162.28,
+            )
+        ],
+        [[77777777777, 1007, "Servidor Histórico", "INSS", _CARGO_SERVIDOR, None, "RGPS", "Em exercício"]],
+    )
+    injetar_cache_formula(caminho, "P2", 462.28)
+
+    registros_antes = _sincronizar_e_buscar_registros(caminho, tmp_path)
+    assert registros_antes[0].valor_total_diarias == 462.28
+
+    nova_diaria = Diaria(
+        sei="19.20.0002.0009002/2026-01", doc_origem="PJNOVO", cpf="88888888888",
+        periodo_inicial=date(2026, 2, 1), periodo_final=date(2026, 2, 3),
+        cidade_origem="RECIFE", cidade_destino="CARUARU", motivo="Diligência nova",
+    )
+    processo = Processo(arquivo_origem="novo.pdf", status=StatusProcesso.SUCESSO, diaria=nova_diaria)
+    resultado = preencher(caminho, [processo])
+    assert resultado.total_gravado == 1
+
+    registros_depois = _sincronizar_e_buscar_registros(caminho, tmp_path)
+    por_sei = {registro.sei: registro for registro in registros_depois}
+    assert por_sei["19.20.0001.0009001/2025-01"].valor_total_diarias == 462.28
+
+    indicadores = calcular_indicadores(registros_depois)
+    assert indicadores.valor_total == 462.28
+
+
+def test_preencher_real_preserva_valor_historico_com_cache_de_formula_modo_complemento(
+    tmp_path, injetar_cache_formula
+):
+    """Mesmo achado, no modo Complemento de Diárias (RN-14) — a auditoria
+    obrigatória de `_linha_possui_formulas_necessarias` exige colunas
+    extras (N/V/Z/AA) pré-copiadas na linha livre, então a planilha
+    sintética aqui é mais larga que `_montar_planilha` (mesma estrutura já
+    usada por `tests/integration/test_complemento_diarias.py`)."""
+    caminho = tmp_path / "planilha_preservacao_complemento.xlsx"
+    workbook = Workbook()
+    controle = workbook.active
+    controle.title = "Controle de Diárias"
+    controle.append([
+        "DH", "SEI", "DOC ORIGEM", "CPF", "PREVIDÊNCIA", "NOME", "CARGO",
+        "PERÍODO INICIAL", "PERÍODO FINAL", "TRECHO", "TRANSPORTE", "MOTIVO",
+        "VALOR DA PASSAGEM", "QUANT. DIÁRIA INTEGRAL", "QUANT. DIÁRIA PARCIAL",
+        "VALOR TOTAL DAS DIÁRIAS", "LOCAL", "VALOR DAS DIÁRIAS INTEGRAIS",
+        "VALOR DAS DIÁRIAS PARCIAIS", "DMTC", "DMOF", "PASSAR DIA",
+        "RESTITUIÇÃO", "COMPROVANTES", "CONFIRMAÇÃO DE DIÁRIAS", "CONCATENAÇÃO",
+        "AVISO ", "AVISO AUXILIAR",
+    ])
+    controle.append([
+        None, "19.20.0001.0009101/2025-01", "PJTESTE", 99999999999,
+        None, None, None, date(2025, 1, 8), date(2025, 1, 10), "OURICURI-RECIFE", "CARRO",
+        "Motivo original", None, "=I2-H2", 1, "=R2+S2", "PERNAMBUCO",
+        "=(VLOOKUP(Q2,'Tabela Valores'!A:C,2,FALSE()))*N2",
+        "=(VLOOKUP(Q2,'Tabela Valores'!A:C,3,FALSE()))*O2",
+        None, None, "=H2-15", None, None, None,
+        "=CONCATENATE(D2,H2,I2)", "=VLOOKUP(Z2,Z$1:AB1,3,0)", None,
+    ])
+    controle.append([
+        None, None, None, None, None, None, None, None, None, None, None, None,
+        None, "=I3-H3", None, "=R3+S3", None,
+        "=(VLOOKUP(Q3,'Tabela Valores'!A:C,2,FALSE()))*N3",
+        "=(VLOOKUP(Q3,'Tabela Valores'!A:C,3,FALSE()))*O3",
+        None, None, "=H3-15", None, None, None,
+        "=CONCATENATE(D3,H3,I3)", "=VLOOKUP(Z3,Z$1:AB2,3,0)", None,
+    ])
+    dados = workbook.create_sheet("Dados")
+    dados.append(_CABECALHO_DADOS)
+    dados.append([99999999999, 1009, "Servidor Histórico Complemento", "INSS", _CARGO_SERVIDOR, None, "RGPS", "Em exercício"])
+    tabela_valores = workbook.create_sheet("Tabela Valores")
+    tabela_valores.append(["PERNAMBUCO", 308.19, 154.09])
+    workbook.save(caminho)
+    injetar_cache_formula(str(caminho), "P2", 462.28)
+
+    registros_antes = _sincronizar_e_buscar_registros(str(caminho), tmp_path)
+    assert registros_antes[0].valor_total_diarias == 462.28
+
+    nova_diaria = Diaria(
+        sei="19.20.0002.0009102/2026-01", doc_origem="PJNOVO", cpf="10101010101",
+        periodo_inicial=date(2026, 2, 1), periodo_final=date(2026, 2, 3),
+        cidade_origem="RECIFE", cidade_destino="CARUARU", motivo="Complemento novo",
+    )
+    processo = Processo(arquivo_origem="novo.pdf", status=StatusProcesso.SUCESSO, diaria=nova_diaria)
+    resultado = preencher(str(caminho), [processo], modo=ModoProcessamento.COMPLEMENTO)
+    assert resultado.total_gravado == 1
+
+    registros_depois = _sincronizar_e_buscar_registros(str(caminho), tmp_path)
+    por_sei = {registro.sei: registro for registro in registros_depois}
+    assert por_sei["19.20.0001.0009101/2025-01"].valor_total_diarias == 462.28

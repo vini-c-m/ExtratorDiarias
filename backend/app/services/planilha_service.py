@@ -1,5 +1,6 @@
 import logging
 import os
+from dataclasses import replace
 
 from app.consulta import base_local
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
@@ -79,10 +80,28 @@ def preencher_planilha(
     # custo de reindexar ~3 mil linhas. Nunca pode quebrar o fluxo de
     # preenchimento já homologado: qualquer falha aqui é registrada no log
     # (não mais engolida em silêncio) e nunca propagada.
+    #
+    # ETAPA 2 (Auditoria P0, 2026-08-09) — gravação da Planilha e
+    # sincronização da Central Analítica são resultados DISTINTOS: uma
+    # falha aqui NUNCA transforma um preenchimento já salvo em "não
+    # salvo" (o `except` continua nunca propagando), mas também não pode
+    # mais ficar só no log — `sincronizacao_analitica_falhou` viaja até a
+    # resposta da API (`ResultadoPreenchimentoResposta`), para o backend
+    # conseguir expor esse estado corretamente (nenhuma UI nova ainda).
+    sincronizacao_analitica_falhou = False
+
+    def _marcar_falha_sincronizacao(erro: Exception) -> None:
+        nonlocal sincronizacao_analitica_falhou
+        sincronizacao_analitica_falhou = True
+
     if resultado.total_gravado > 0:
         try:
-            base_local.sincronizar(caminho_planilha)
+            base_local.sincronizar(caminho_planilha, ao_falhar_sqlite=_marcar_falha_sincronizacao)
         except Exception:
             _logger.exception("Falha ao sincronizar a Base Local de Consulta")
+            sincronizacao_analitica_falhou = True
+
+    if sincronizacao_analitica_falhou:
+        resultado = replace(resultado, sincronizacao_analitica_falhou=True)
 
     return resultado, arquivos_gerados

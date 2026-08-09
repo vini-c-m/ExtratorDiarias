@@ -1,6 +1,8 @@
 import re
+import zipfile
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from xml.etree import ElementTree
 
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, Side
@@ -128,6 +130,15 @@ class ResultadoPreenchimento:
     linha_inicial: int
     linha_final: int
     itens: list[ItemResultado] = field(default_factory=list)
+    # ETAPA 2 (Auditoria P0, 2026-08-09) — gravação da Planilha e
+    # sincronização da Central Analítica são resultados DISTINTOS (ver
+    # `planilha_service.preencher_planilha`, quem preenche este campo):
+    # `total_gravado`/`itens` continuam refletindo só a gravação em si,
+    # que nunca é reportada como falha só porque a Base Local em SQLite
+    # não pôde ser atualizada. Default `False` preserva 100% os
+    # construtores existentes deste dataclass (todos os testes/chamadores
+    # atuais, que nunca passam este argumento).
+    sincronizacao_analitica_falhou: bool = False
 
     @property
     def gravados(self) -> list[ItemResultado]:
@@ -146,6 +157,145 @@ class ResultadoPreenchimento:
             for item in self.itens
             if item.categoria is CategoriaResultado.DUPLICADO_NA_PLANILHA
         ]
+
+
+_NS_PRINCIPAL = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_NS_RELACIONAMENTOS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+# Auditoria P0 (2026-08-09) — causa raiz confirmada por reprodução executável
+# (planilha sintética com fórmula+cache real → `preencher()` → cache
+# perdido): `openpyxl` só sabe preservar, ao salvar, o que carregou em
+# memória. Aberto sem `data_only=True` (obrigatório aqui — é o que preserva
+# fórmulas em células que este módulo nunca toca), toda célula de fórmula
+# vira só o texto da fórmula; o `<v>` com o último valor calculado pelo
+# Excel (histórico real: 1.419 de 1.446 diárias de SERVIDOR usam fórmula na
+# coluna P, quase todas com cache válido) nunca chega a ser carregado — e
+# `workbook.save()` reescreve o arquivo inteiro sem ele, apagando o cache de
+# TODA fórmula pré-existente, não só das linhas novas gravadas aqui.
+#
+# Correção: capturar esse cache ANTES de salvar (`_capturar_cache_formulas`,
+# segunda leitura só-leitura com `data_only=True`, nunca recalcula nada,
+# só copia o que o Excel já tinha calculado) e reescrevê-lo no XML do
+# arquivo já salvo (`_reinjetar_cache_formulas`, mesma técnica já usada por
+# `tests/unit/test_escritor_planilha.py::injetar_cache_formula` para
+# simular o que o Excel real grava). Fórmulas continuam fórmulas — nenhuma
+# vira número fixo, nenhum cálculo é inventado; só o `<v>` que já existia
+# antes desta gravação é devolvido ao lugar. Não depende de Excel instalado
+# (manipulação pura de XML/zip). Limitação conhecida: fórmulas
+# compartilhadas (`<f t="shared" .../>` sem texto próprio) não são
+# reinjetadas — o regex exige `<f...>texto</f>`; nesse caso a reinjeção
+# simplesmente não encontra a célula e não faz nada (degrada para o
+# comportamento antigo só nessas células, nunca corrompe).
+def _capturar_cache_formulas(workbook, caminho_planilha: str) -> dict[str, dict[str, object]]:
+    """Varre o workbook (já em memória, `data_only=False`, ainda não salvo)
+    por toda célula que hoje é fórmula, em qualquer aba — e busca o valor em
+    cache de cada uma numa segunda leitura `data_only=True` do arquivo NO
+    DISCO (ainda intocado nesta chamada, já que roda antes de
+    `workbook.save()`). Células de fórmula sem cache (genuinamente nunca
+    calculadas pelo Excel) não entram no resultado — nunca inventamos um
+    valor que não existia."""
+    coordenadas_por_aba: dict[str, list[str]] = {}
+    for nome_aba in workbook.sheetnames:
+        aba = workbook[nome_aba]
+        coordenadas = [
+            celula.coordinate
+            for linha in aba.iter_rows()
+            for celula in linha
+            if isinstance(celula.value, str) and celula.value.startswith("=")
+        ]
+        if coordenadas:
+            coordenadas_por_aba[nome_aba] = coordenadas
+
+    if not coordenadas_por_aba:
+        return {}
+
+    cache: dict[str, dict[str, object]] = {}
+    workbook_valores = load_workbook(caminho_planilha, data_only=True)
+    try:
+        for nome_aba, coordenadas in coordenadas_por_aba.items():
+            aba_valores = workbook_valores[nome_aba]
+            cache_aba = {
+                referencia: valor
+                for referencia in coordenadas
+                if (valor := aba_valores[referencia].value) is not None
+            }
+            if cache_aba:
+                cache[nome_aba] = cache_aba
+    finally:
+        workbook_valores.close()
+
+    return cache
+
+
+def _mapear_abas_para_xml_interno(caminho_planilha: str) -> dict[str, str]:
+    """`xl/workbook.xml` só lista as abas por nome+`r:id`; o nome do arquivo
+    XML de cada aba (`xl/worksheets/sheetN.xml`) vem de
+    `xl/_rels/workbook.xml.rels` — a ordem de criação das abas não garante
+    que a aba N corresponda a `sheetN.xml` (por isso não hardcodamos
+    `sheet1.xml` como o fixture de teste faz para um caso sintético
+    controlado)."""
+    with zipfile.ZipFile(caminho_planilha, "r") as arquivo_zip:
+        workbook_xml = arquivo_zip.read("xl/workbook.xml")
+        rels_xml = arquivo_zip.read("xl/_rels/workbook.xml.rels")
+
+    rid_para_alvo = {
+        relacionamento.get("Id"): relacionamento.get("Target")
+        for relacionamento in ElementTree.fromstring(rels_xml)
+        if relacionamento.get("Id") and relacionamento.get("Target")
+    }
+
+    mapa: dict[str, str] = {}
+    sheets_el = ElementTree.fromstring(workbook_xml).find(f"{{{_NS_PRINCIPAL}}}sheets")
+    if sheets_el is None:
+        return mapa
+    for sheet_el in sheets_el:
+        nome = sheet_el.get("name")
+        rid = sheet_el.get(f"{{{_NS_RELACIONAMENTOS}}}id")
+        alvo = rid_para_alvo.get(rid) if rid else None
+        if nome and alvo:
+            # `Target` em `xl/_rels/workbook.xml.rels` é relativo à pasta
+            # `xl/` (ex.: `worksheets/sheet1.xml`) — só prefixamos `xl/`
+            # quando o valor ainda não o inclui, para nunca duplicar.
+            alvo_normalizado = alvo.lstrip("/")
+            mapa[nome] = alvo_normalizado if alvo_normalizado.startswith("xl/") else f"xl/{alvo_normalizado}"
+    return mapa
+
+
+def _reinjetar_cache_formulas(caminho_planilha: str, cache_por_aba: dict[str, dict[str, object]]) -> None:
+    """Reescreve, célula a célula, o `<v>` vazio (`<v />`) que `openpyxl`
+    acabou de gravar para cada fórmula capturada por
+    `_capturar_cache_formulas` — nunca toca `<f>` (a fórmula em si
+    permanece exatamente a mesma), nunca escreve numa célula que não
+    estava no cache capturado antes de salvar."""
+    if not cache_por_aba:
+        return
+
+    mapa_aba_para_xml = _mapear_abas_para_xml_interno(caminho_planilha)
+
+    with zipfile.ZipFile(caminho_planilha, "r") as arquivo_zip:
+        entradas = {info.filename: arquivo_zip.read(info.filename) for info in arquivo_zip.infolist()}
+
+    houve_alteracao = False
+    for nome_aba, cache_celulas in cache_por_aba.items():
+        arquivo_interno = mapa_aba_para_xml.get(nome_aba)
+        if arquivo_interno is None or arquivo_interno not in entradas:
+            continue
+
+        conteudo = entradas[arquivo_interno].decode("utf-8")
+        for referencia, valor in cache_celulas.items():
+            padrao = re.compile(rf'(<c r="{referencia}"[^>]*><f[^>]*>[^<]*</f>)<v\s*/>')
+            conteudo_novo, total = padrao.subn(rf"\1<v>{valor}</v>", conteudo, count=1)
+            if total:
+                conteudo = conteudo_novo
+                houve_alteracao = True
+        entradas[arquivo_interno] = conteudo.encode("utf-8")
+
+    if not houve_alteracao:
+        return
+
+    with zipfile.ZipFile(caminho_planilha, "w", zipfile.ZIP_DEFLATED) as arquivo_zip:
+        for nome, dado in entradas.items():
+            arquivo_zip.writestr(nome, dado)
 
 
 def preencher(
@@ -297,7 +447,13 @@ def preencher(
         linha += 1
 
     if total_gravado:
+        # Captura o cache de TODA fórmula pré-existente antes de salvar — o
+        # arquivo no disco ainda está intocado neste ponto (ver comentário
+        # de `_capturar_cache_formulas` acima: é isso que garante que o
+        # valor capturado é sempre o que já estava lá, nunca inventado).
+        cache_formulas = _capturar_cache_formulas(workbook, caminho_planilha)
         workbook.save(caminho_planilha)
+        _reinjetar_cache_formulas(caminho_planilha, cache_formulas)
 
     return ResultadoPreenchimento(
         total_gravado=total_gravado,

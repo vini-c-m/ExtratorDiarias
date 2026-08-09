@@ -413,14 +413,14 @@ describe("CentralAnalitica", () => {
       render(<CentralAnalitica backendOnline />);
 
       await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
-      expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeDisabled();
     });
 
     it("recorte com resultado: o botão 'Modo Executivo' fica habilitado", async () => {
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
       render(<CentralAnalitica backendOnline />);
 
-      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
     });
 
     it("clicar em 'Modo Executivo' mostra o Modo Executivo real no lugar da tabela, preservando o filtro aplicado", async () => {
@@ -428,9 +428,9 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
       obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
       render(<CentralAnalitica backendOnline />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
 
-      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
 
       expect(await screen.findByRole("heading", { name: "Modo Executivo" })).toBeInTheDocument();
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
@@ -444,8 +444,8 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
       obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
       render(<CentralAnalitica backendOnline />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
-      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
       await screen.findByRole("heading", { name: "Modo Executivo" });
 
       await usuario.click(screen.getByRole("button", { name: "← Voltar ao Modo Operacional" }));
@@ -469,8 +469,8 @@ describe("CentralAnalitica", () => {
           : { dimensao: parametros.dimensao, pontos: [] },
       );
       render(<CentralAnalitica backendOnline />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
-      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
       await waitFor(() => expect(screen.getByText("Municípios")).toBeInTheDocument());
 
       await usuario.click(screen.getByRole("button", { name: /Filtrar por Araripina/ }));
@@ -519,8 +519,8 @@ describe("CentralAnalitica", () => {
           : { dimensao: parametros.dimensao, pontos: [] },
       );
       render(<CentralAnalitica backendOnline />);
-      await waitFor(() => expect(screen.getByRole("button", { name: "Modo Executivo" })).toBeEnabled());
-      await usuario.click(screen.getByRole("button", { name: "Modo Executivo" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
       await waitFor(() => expect(screen.getByText("Municípios")).toBeInTheDocument());
       expect(screen.queryByText(/possível duplicidade/i)).not.toBeInTheDocument();
       expect(screen.queryByText("Atenção (diagnóstico)")).not.toBeInTheDocument();

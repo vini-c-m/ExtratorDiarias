@@ -59,6 +59,13 @@ export default function App() {
   // enquanto só abre "Alterar Planilha Oficial", acessível de qualquer
   // funcionalidade via o Cabecalho — nenhuma tela dedicada ainda.
   const [modalConfiguracoesAberto, setModalConfiguracoesAberto] = useState(false);
+  // MS1 (Recuperação Visual, 2026-08-09) — sinal puramente visual reportado
+  // por `CentralAnalitica` (`aoMudarTemaExecutivo`), refletindo se o Dark
+  // Mode Executivo está ativo lá dentro. Vive aqui (não em
+  // `CentralAnalitica`) porque o cabeçalho global (`Cabecalho`, abaixo)
+  // também precisa entrar no tema quando o Modo Executivo está ativo —
+  // nenhuma navegação/estado de página muda, só esta informação de tema.
+  const [temaExecutivoAtivo, setTemaExecutivoAtivo] = useState(false);
 
   // Sprint 15 — bloqueia Hub e Boas-vindas por igual enquanto não houver
   // nenhuma planilha oficial configurada (`configuracao` só é `null`
@@ -91,7 +98,9 @@ export default function App() {
   }
 
   return (
-    <div className="fundo-app relative min-h-screen">
+    <div
+      className={`fundo-app relative min-h-screen ${temaExecutivoAtivo ? "central-executivo-tema" : ""}`}
+    >
       <FundoDecorativo />
 
       <div className="relative z-10">
@@ -158,6 +167,7 @@ export default function App() {
             <CentralAnalitica
               backendOnline={status === "conectado"}
               abrirEmDocumentosHabeisPendentes={analiticaAbreEmDocumentosHabeis}
+              aoMudarTemaExecutivo={setTemaExecutivoAtivo}
             />
           )}
         </LimiteDeErro>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import BarraPesquisaGlobal from "../components/analitica/BarraPesquisaGlobal";
 import DashboardRecorte from "../components/analitica/DashboardRecorte";
 import ModoExecutivo from "../components/analitica/executivo/ModoExecutivo";
@@ -27,6 +27,14 @@ interface Props {
   // na visualização de pendências, em vez do padrão "resultados". Só lido
   // na montagem (este componente remonta a cada entrada em "analitica").
   abrirEmDocumentosHabeisPendentes?: boolean;
+  /** MS1 (Recuperação Visual, 2026-08-09) — sinal PURAMENTE visual de
+   * "Dark Mode Executivo ativo" para o shell global (`App.tsx`), que não
+   * tem acesso a `visualizacao` (estado interno deste componente). Nenhuma
+   * navegação/lógica nova: só propaga `visualizacao === "executivo"` para
+   * fora, para que `App.tsx` possa aplicar o mesmo tema ao cabeçalho
+   * global e ao fundo da janela, não só à Central. Opcional — nenhum
+   * outro consumidor/teste deste componente precisa passar isto. */
+  aoMudarTemaExecutivo?: (ativo: boolean) => void;
 }
 
 // Sprint 21.2 (Modo Executivo) — `"executivo"` é uma 5ª visualização, no
@@ -68,7 +76,11 @@ type Visualizacao =
 // (achado da auditoria do bloco 19.8). "Ainda não disponível"/
 // `TEXTO_EM_CONSTRUCAO` removidos — não sobra mais nenhum destino sem
 // conteúdo.
-export default function CentralAnalitica({ backendOnline, abrirEmDocumentosHabeisPendentes }: Props) {
+export default function CentralAnalitica({
+  backendOnline,
+  abrirEmDocumentosHabeisPendentes,
+  aoMudarTemaExecutivo,
+}: Props) {
   const [termoBusca, setTermoBusca] = useState("");
   const [visualizacao, setVisualizacao] = useState<Visualizacao>(
     abrirEmDocumentosHabeisPendentes ? "documentos_habeis_pendentes" : "resultados",
@@ -176,6 +188,21 @@ export default function CentralAnalitica({ backendOnline, abrirEmDocumentosHabei
     indicadores.erro === null &&
     indicadores.indicadores !== null;
 
+  // MS1 rodada 4 (2026-08-09) — o tema Dark Executive passou a ser
+  // aplicado pelo shell global (`App.tsx`), não mais aqui: o cabeçalho do
+  // app (`Cabecalho.tsx`, fora deste componente) também precisa entrar no
+  // tema, então a classe CSS sobe para o container mais alto que envolve
+  // os dois. Este componente só *reporta* a mesma condição que já decidia
+  // a classe antes — nenhum estado novo, nenhuma lógica muda; `App.tsx` é
+  // quem decide o que fazer visualmente com essa informação. O `return` de
+  // limpeza garante que, se este componente sair da árvore inteiramente
+  // (ex.: usuário volta ao Hub a partir do Modo Executivo), o tema nunca
+  // fica "preso" ativo no shell.
+  useEffect(() => {
+    aoMudarTemaExecutivo?.(visualizacao === "executivo");
+    return () => aoMudarTemaExecutivo?.(false);
+  }, [visualizacao, aoMudarTemaExecutivo]);
+
   return (
     <div className="mx-auto max-w-6xl animate-entrada-conteudo px-6 py-12 md:px-10">
       <h2 className={TIPOGRAFIA.titulo}>Central Analítica</h2>
@@ -197,7 +224,7 @@ export default function CentralAnalitica({ backendOnline, abrirEmDocumentosHabei
           disabled={!recorteValido}
           onClick={() => setVisualizacao("executivo")}
         >
-          Modo Executivo
+          Dark Mode Executivo
         </Botao>
       </div>
 

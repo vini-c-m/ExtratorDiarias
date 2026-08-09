@@ -9,6 +9,7 @@ interface Props {
   titulo: string;
   onFechar: () => void;
   children: ReactNode;
+  contextoVisual?: "padrao" | "executivo";
 }
 
 /** "Expandir gráfico" (refinamento visual do Modo Executivo, 2026-08-07;
@@ -44,7 +45,7 @@ interface Props {
  * real, por mais que a classe dissesse `fixed inset-0`. `createPortal`
  * para `document.body` tira o modal desse DOM, resolvendo na raiz — não é
  * só um `z-index`/`overflow` mal ajustado. */
-export default function ModalExpandirGrafico({ titulo, onFechar, children }: Props) {
+export default function ModalExpandirGrafico({ titulo, onFechar, children, contextoVisual = "padrao" }: Props) {
   const referenciaTitulo = useRef<HTMLHeadingElement>(null);
   const referenciaElementoAnterior = useRef<HTMLElement | null>(null);
 
@@ -65,13 +66,13 @@ export default function ModalExpandirGrafico({ titulo, onFechar, children }: Pro
   }, [onFechar]);
 
   return createPortal(
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4" onClick={onFechar}>
+    <div className={`fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4 ${contextoVisual === "executivo" ? "backdrop-grafico-executivo" : ""}`} onClick={onFechar}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-expandir-grafico-titulo"
         onClick={(evento) => evento.stopPropagation()}
-        className={`flex h-[90vh] w-[94vw] flex-col overflow-hidden ${PAINEL_MODAL}`}
+        className={`flex h-[90vh] w-[94vw] flex-col overflow-hidden ${PAINEL_MODAL} ${contextoVisual === "executivo" ? "modal-grafico-executivo" : ""}`}
       >
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 p-6">
           <h2

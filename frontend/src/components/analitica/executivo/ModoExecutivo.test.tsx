@@ -428,6 +428,8 @@ describe("ModoExecutivo", () => {
         if (parametros.dimensao === "municipio") return { dimensao: "municipio", pontos: [] };
         if (parametros.dimensao === "categoria_funcional") return { dimensao: "categoria_funcional", pontos: [] };
         if (parametros.dimensao === "doc_origem") return { dimensao: "doc_origem", pontos: [] };
+        if (parametros.dimensao === "motivo") return { dimensao: "motivo", pontos: [] };
+        if (parametros.dimensao === "transporte") return { dimensao: "transporte", pontos: [] };
         return DISTRIBUICOES[parametros.dimensao];
       });
       render(<ModoExecutivo {...PROPS_BASE} />);
@@ -473,8 +475,9 @@ describe("ModoExecutivo", () => {
       const onMudarFiltro = vi.fn();
       render(<ModoExecutivo {...PROPS_BASE} onMudarFiltro={onMudarFiltro} />);
 
-      await waitFor(() => expect(screen.getByText(/município\(s\) concentram/)).toBeInTheDocument());
-      await userEvent.click(screen.getByRole("button", { name: "Aplicar filtro" }));
+      await waitFor(() => expect(screen.getAllByText(/município\(s\) concentram/)).toHaveLength(2));
+      await userEvent.hover(screen.getByTestId("market-tape-continuo"));
+      fireEvent.click(screen.getByRole("button", { name: "Aplicar filtro" }));
 
       expect(onMudarFiltro).toHaveBeenCalledWith({ municipio: "Araripina-PE" });
     });

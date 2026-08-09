@@ -1,19 +1,27 @@
+import logging
 import os
 from dataclasses import dataclass
 from enum import Enum
 
 from openpyxl import load_workbook
 
+from app.consulta import base_local
 from app.domain.rules.finalizacao_diarias import AvaliacaoElegibilidade, avaliar
 from app.extraction import pdf_reader
 from app.extraction.parsers.parser_factory import obter_parser
-from app.planilha.escritor_planilha import NOME_ABA
+from app.planilha.escritor_planilha import (
+    NOME_ABA,
+    _capturar_cache_formulas,  # noqa: PLC2701 — mesmo reuso já praticado em repositorio_analitico.py
+    _reinjetar_cache_formulas,  # noqa: PLC2701 — evita duplicar a correção da ETAPA 1 (Auditoria P0)
+)
 from app.planilha.finalizador_planilha import (
     CandidatoLinhaFinalizacao,
     EstadoLinhaFinalizacao,
     gravar_finalizacao,
     localizar_candidatos,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class ErroFinalizacaoDiarias(Exception):
@@ -196,6 +204,12 @@ class ResultadoConfirmacao:
     total_finalizado: int
     total_ignorado: int
     itens: list[ItemResultadoConfirmacao]
+    # ETAPA 3 (Auditoria P0, 2026-08-09) — mesmo princípio da ETAPA 2
+    # (`escritor_planilha.ResultadoPreenchimento.sincronizacao_analitica_
+    # falhou`): a gravação da Confirmação e a sincronização da Central
+    # Analítica são resultados distintos. Default `False` preserva 100%
+    # os construtores/testes existentes.
+    sincronizacao_analitica_falhou: bool = False
 
 
 def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoConfirmacao:
@@ -288,13 +302,52 @@ def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoC
             )
         )
 
+    sincronizacao_analitica_falhou = False
     if algum_gravado:
+        # ETAPA 1 (Auditoria P0) reaproveitada aqui: este `workbook.save()`
+        # tem a MESMA vulnerabilidade que `escritor_planilha.preencher()`
+        # tinha antes da correção — `openpyxl` carregado sem
+        # `data_only=True` (necessário para não converter as fórmulas que
+        # este módulo não toca) apaga o cache de TODA fórmula pré-
+        # existente ao salvar o workbook inteiro, não só das células que
+        # `gravar_finalizacao` de fato grava (X/Y de confirmação, nunca
+        # fórmula). Sem isto, ligar a sincronização abaixo reintroduziria
+        # o mesmo bug de perda de valor financeiro (941k→482k) por um
+        # caminho novo. Mesmas duas funções já usadas por `preencher()` —
+        # nenhuma lógica duplicada.
+        cache_formulas = _capturar_cache_formulas(workbook, caminho_planilha)
         workbook.save(caminho_planilha)
-    workbook.close()
+        _reinjetar_cache_formulas(caminho_planilha, cache_formulas)
+        workbook.close()
+
+        # ETAPA 3 (Auditoria P0) — lacuna confirmada pela auditoria:
+        # Finalizar/Confirmar alterava a Planilha Oficial mas nunca
+        # disparava sincronização da Base Local, deixando a Central
+        # Analítica desatualizada até o próximo processamento/complemento
+        # ou clique manual. Reaproveita literalmente `base_local.
+        # sincronizar()` — mesmo `LOCK_SINCRONIZACAO`, mesmo retry de
+        # `PermissionError`, mesma validação estrutural, mesmo Last Known
+        # Good da ETAPA 2 — nenhum mecanismo novo. Uma falha aqui nunca
+        # desfaz a finalização já concluída (mesmo contrato de
+        # `planilha_service.preencher_planilha`): só sinaliza.
+        def _marcar_falha_sincronizacao(erro: Exception) -> None:
+            nonlocal sincronizacao_analitica_falhou
+            sincronizacao_analitica_falhou = True
+
+        try:
+            base_local.sincronizar(
+                caminho_planilha, origem="finalizacao", ao_falhar_sqlite=_marcar_falha_sincronizacao
+            )
+        except Exception:
+            _logger.exception("Falha ao sincronizar a Base Local de Consulta após Finalizar/Confirmar")
+            sincronizacao_analitica_falhou = True
+    else:
+        workbook.close()
 
     total_finalizado = sum(1 for r in resultados if r.categoria is CategoriaConfirmacao.FINALIZADO)
     return ResultadoConfirmacao(
         total_finalizado=total_finalizado,
         total_ignorado=len(resultados) - total_finalizado,
         itens=resultados,
+        sincronizacao_analitica_falhou=sincronizacao_analitica_falhou,
     )

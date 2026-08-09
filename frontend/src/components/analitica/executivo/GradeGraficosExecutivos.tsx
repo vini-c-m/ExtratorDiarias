@@ -309,7 +309,7 @@ export default function GradeGraficosExecutivos({
   );
 
   return (
-    <div className="space-y-8">
+    <div className="grade-graficos-executivos space-y-8">
       {/* Refinamento visual do Modo Executivo (2026-08-07) — "Evolução de
           gastos" é o gráfico hero: largura total, área de barras maior
           (`alturaBarra="grande"`), título maior (`variante="hero"` de
@@ -320,7 +320,7 @@ export default function GradeGraficosExecutivos({
           insight↔gráfico ("pico mensal", ver `ModoExecutivo`). */}
       <div
         id="grafico-periodo"
-        className={`rounded-card transition ${graficoEmDestaque === "periodo" ? "ring-2 ring-cyan-400/50 shadow-glow-cyan" : ""}`}
+        className={`hero-executivo transition ${graficoEmDestaque === "periodo" ? "ring-2 ring-cyan-400/50 shadow-glow-cyan" : ""}`}
       >
         {indicadores !== null && (
           <div className="mb-5">
@@ -335,6 +335,7 @@ export default function GradeGraficosExecutivos({
             const comValor = distribuicao.pontos.filter((ponto) => ponto.valor !== null);
             return (
               <CartaoGrafico
+                contextoVisual="executivo"
                 titulo="Evolução de gastos"
                 subtitulo={comValor.length > 0 ? `${formatarPeriodo(comValor[0].rotulo)} – ${formatarPeriodo(comValor[comValor.length - 1].rotulo)}` : undefined}
                 variante="hero"
@@ -381,13 +382,14 @@ export default function GradeGraficosExecutivos({
           único e sutil; os gráficos que vivem dentro perdem a borda/fundo
           próprios (`enfase="sutil"`) e passam a ler como parte da mesma
           superfície contínua, não como cartões empilhados. */}
-      <div className="rounded-card bg-white/[0.015] p-6">
+      <div className="secao-executiva distribuicoes-executivas p-6">
         <RotuloSecao>Distribuições</RotuloSecao>
         <div className="space-y-5">
           <SecaoGrafico
             estado={distribuicaoPeriodo}
             renderizar={(distribuicao) => (
               <CartaoGrafico
+                contextoVisual="executivo"
                 titulo="Evolução da quantidade"
                 somenteLeitura={somenteLeitura}
                 enfase="sutil"
@@ -444,6 +446,7 @@ export default function GradeGraficosExecutivos({
               };
               return (
                 <CartaoGrafico
+                  contextoVisual="executivo"
                   titulo="Membros × Servidores"
                   somenteLeitura={somenteLeitura}
                   enfase="sutil"
@@ -490,6 +493,7 @@ export default function GradeGraficosExecutivos({
               };
               return (
                 <CartaoGrafico
+                  contextoVisual="executivo"
                   titulo="Motivos"
                   somenteLeitura={somenteLeitura}
                   enfase="sutil"
@@ -531,6 +535,7 @@ export default function GradeGraficosExecutivos({
               };
               return (
                 <CartaoGrafico
+                  contextoVisual="executivo"
                   titulo="Situação do servidor"
                   somenteLeitura={somenteLeitura}
                   enfase="sutil"
@@ -567,6 +572,7 @@ export default function GradeGraficosExecutivos({
               const segmentos = agruparTop3ComOutros(distribuicao.pontos);
               return (
                 <CartaoGrafico
+                  contextoVisual="executivo"
                   titulo="Meio de transporte"
                   somenteLeitura={somenteLeitura}
                   enfase="sutil"
@@ -600,7 +606,7 @@ export default function GradeGraficosExecutivos({
           rótulo em `GraficoBarras` horizontal é uma classe fixa, não
           proporcional ao card). */}
       {/* BI 4.0 — mesmo canvas de seção da "Distribuições" acima. */}
-      <div className="rounded-card bg-white/[0.015] p-6">
+      <div className="secao-executiva territorial-executiva p-6">
         <RotuloSecao>Análise Territorial</RotuloSecao>
         <div className="space-y-5">
           <SecaoGrafico
@@ -626,6 +632,7 @@ export default function GradeGraficosExecutivos({
                   }`}
                 >
                   <CartaoGrafico
+                    contextoVisual="executivo"
                     titulo="Municípios"
                     somenteLeitura={somenteLeitura}
                     enfase="sutil"
@@ -678,6 +685,7 @@ export default function GradeGraficosExecutivos({
               const topUnidades = distribuicao.pontos.slice(0, TOPO_RANKING);
               return (
                 <CartaoGrafico
+                  contextoVisual="executivo"
                   titulo="Unidade solicitante (documento de origem)"
                   somenteLeitura={somenteLeitura}
                   enfase="sutil"
@@ -705,6 +713,7 @@ export default function GradeGraficosExecutivos({
               const topPares = distribuicao.pontos.slice(0, TOPO_RANKING);
               return (
                 <CartaoGrafico
+                  contextoVisual="executivo"
                   titulo="Origem × Destino"
                   somenteLeitura={somenteLeitura}
                   enfase="sutil"

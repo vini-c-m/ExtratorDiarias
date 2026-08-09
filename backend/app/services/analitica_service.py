@@ -48,7 +48,6 @@ import os
 import re
 import sqlite3
 import tempfile
-import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -341,12 +340,25 @@ class ResumoExecucao:
     total_avisos: int | None
 
 
-_lock_sincronizacao = threading.Lock()
+# ETAPA 2 (Auditoria P0, 2026-08-09) — reaproveita o MESMO lock que
+# `base_local.sincronizar()` agora adquire internamente para a etapa
+# SQLite (`base_local.LOCK_SINCRONIZACAO`), em vez de um `Lock` próprio
+# deste módulo: antes, só este caminho (manual) tinha proteção — dois
+# chamadores automáticos (processamento/complemento/configuração) podiam
+# colidir entre si sem nenhuma coordenação, reproduzido gerando
+# `PermissionError`/`WinError 32` real. É um `RLock` (não `Lock`) de
+# propósito: esta função adquire aqui embaixo (`acquire(blocking=False)`,
+# não-bloqueante — devolve "sincronização já em andamento" na hora se
+# outra chamada, de QUALQUER origem, já segura o lock) e a chamada
+# síncrona a `base_local.sincronizar()` logo abaixo adquire de novo, na
+# MESMA thread — só um `RLock` permite isso sem deadlock.
+_lock_sincronizacao = base_local.LOCK_SINCRONIZACAO
 """Nível de módulo — protege `executar_sincronizacao_manual` contra
-chamadas concorrentes (RN-A). Suficiente porque o backend roda como
-processo único (Uvicorn local, subido pelo Electron) — premissa
-explícita, não uma garantia universal (§ 5 do plano técnico); deixaria
-de proteger se o backend passasse a rodar com múltiplos workers."""
+chamadas concorrentes (RN-A) E agora contra qualquer sincronização
+automática concorrente também (ETAPA 2). Suficiente porque o backend roda
+como processo único (Uvicorn local, subido pelo Electron) — premissa
+explícita, não uma garantia universal (§ 5 do plano técnico); deixaria de
+proteger se o backend passasse a rodar com múltiplos workers."""
 
 
 def pesquisar_diarias(

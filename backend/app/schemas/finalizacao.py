@@ -63,3 +63,9 @@ class RespostaConfirmacaoFinalizacao(BaseModel):
     total_finalizado: int
     total_ignorado: int
     itens: list[ItemResultadoConfirmacaoResposta]
+    # ETAPA 3 (Auditoria P0, 2026-08-09) — mesmo campo de
+    # `ResultadoPreenchimentoResposta` (ETAPA 2): a confirmação em si
+    # nunca é invalidada por uma falha de sincronização da Central
+    # Analítica; este campo só expõe esse estado. Default `False` —
+    # nenhum consumidor existente da resposta precisa mudar.
+    sincronizacao_analitica_falhou: bool = False

@@ -16,6 +16,7 @@ import { mensagemAmigavel } from "../../../lib/mensagens";
 import { filtrosParaRelatorio } from "../../../lib/parametrosRelatorio";
 import type { IndicadoresResposta, ParametrosPesquisaDiariasQuery } from "../../../types/analitica";
 import type { Insight } from "./insightsExecutivos";
+import "./modoExecutivo.css";
 
 // Conexão visual Insight ↔ Gráfico (2026-08-07; BI 4.0 adiciona o 2º caso)
 // — mapeamento fixo e minúsculo: "concentração de gastos" → cartão
@@ -107,6 +108,8 @@ export default function ModoExecutivo({
     distribuicaoMunicipio.distribuicao?.pontos ?? [],
     distribuicaoCategoriaFuncional.distribuicao?.pontos ?? [],
     distribuicaoDocOrigem.distribuicao?.pontos ?? [],
+    distribuicaoMotivo.distribuicao?.pontos ?? [],
+    distribuicaoTransporte.distribuicao?.pontos ?? [],
   );
   const apresentacao = useModoApresentacao();
   const { estado: estadoExportacao, gerar: gerarExportacao, tentarNovamente: tentarNovamenteExportacao } = useGerarRelatorio();
@@ -239,7 +242,7 @@ export default function ModoExecutivo({
   }
 
   return (
-    <div className="animate-entrada-painel space-y-6">
+    <div className="modo-executivo animate-entrada-painel space-y-5">
       <CabecalhoExecutivo
         backendOnline={backendOnline}
         filtros={filtros}
@@ -263,11 +266,11 @@ export default function ModoExecutivo({
           espaço vertical com os gráficos em telas menores. */}
       <GradeKpisExecutivos {...propsKpis} />
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_280px] xl:items-start 2xl:grid-cols-[1fr_360px]">
-        <div className="min-w-0">
+      <div className="cockpit-executivo grid grid-cols-1 gap-5 min-[960px]:grid-cols-[minmax(0,1fr)_360px] min-[960px]:items-stretch 2xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="conteudo-executivo min-w-0">
           <GradeGraficosExecutivos {...propsGraficos} />
         </div>
-        <div className="xl:sticky xl:top-4">
+        <div className="rail-insights-executivo min-[960px]:sticky min-[960px]:top-4 min-[960px]:self-start">
           <PainelInsights {...propsInsights} />
         </div>
       </div>
