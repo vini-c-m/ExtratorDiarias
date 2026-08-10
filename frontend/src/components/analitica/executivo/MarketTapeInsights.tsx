@@ -1,111 +1,98 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
-import { usePrefersReducedMotion } from "./usePrefersReducedMotion";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 interface Props<T> {
   itens: T[];
   chave: (item: T) => string;
-  renderizar: (item: T, copiaVisual: boolean) => ReactNode;
+  /** `ativo` — este item está com o "spotlight": ou é a vez dele na
+   * sequência automática, ou o usuário está com o mouse/foco sobre ele.
+   * Mesmo sinal visual para os dois casos ("este é o insight em destaque
+   * agora"), nunca uma segunda semântica. */
+  renderizar: (item: T, ativo: boolean) => ReactNode;
 }
 
-const VELOCIDADE_PX_POR_SEGUNDO = 18;
+// MS — Insights vivos por destaque sequencial (2026-08-10): substitui o
+// ticker/scroll contínuo (`translate3d`, cópia duplicada, `ResizeObserver`/
+// `IntersectionObserver` para medir e detectar a zona de foco — pedido
+// explícito do usuário para simplificar). Os insights ficam FIXOS na
+// lateral; um por vez "acende" — como se o usuário tivesse passado o mouse
+// sobre ele —, sempre de cima para baixo, em loop. Meio da faixa 2,5–3,5s
+// pedida.
+const INTERVALO_MS = 3000;
 
-/** Fita vertical executiva. A lista lógica é renderizada uma única vez; o
- * segundo grupo é uma cópia estritamente visual (`aria-hidden` + `inert`),
- * usada apenas para fechar geometricamente o loop de `transform`.
- * Nenhum estado React é atualizado por frame: Chromium executa a animação
- * no compositor e `IntersectionObserver` só alterna uma classe quando um
- * item cruza a faixa central. */
+/** Lista fixa de insights com destaque sequencial (substitui o antigo
+ * "Market Tape" de rolagem contínua). Nenhum item muda de posição — só a
+ * classe de destaque troca, item a item, a cada `INTERVALO_MS`, sempre de
+ * cima para baixo e em loop. Pausa com o mouse ou o foco em qualquer ponto
+ * da lista (`onPointerEnter`/`onFocusCapture`): enquanto pausado, o item
+ * sob o cursor/foco (não o da sequência) fica em destaque; ao sair, a
+ * sequência retoma exatamente de onde tinha parado (o índice automático
+ * nunca é resetado durante a pausa) — nunca um salto de volta ao primeiro
+ * item.
+ *
+ * AJUSTE FINAL (2026-08-10) — `prefers-reduced-motion` NUNCA MAIS desliga
+ * esta sequência (achado do diagnóstico anterior: numa máquina com
+ * "Efeitos de animação" desligado no Windows, o Chromium do Electron
+ * reporta essa preferência como ativa o tempo todo — desligar a sequência
+ * inteira nesse caso deixava o rail completamente estático, sem exigir
+ * nenhuma mudança de configuração do usuário para ver alguma forma de
+ * destaque, o que não é aceitável para a entrega). "Reduzir movimento" quer
+ * dizer reduzir MOVIMENTO, não eliminar a "vida" do rail: o índice ativo
+ * continua avançando e o `ativo` continua sendo passado a `renderizar`
+ * normalmente, em qualquer configuração do SO — só a PELE (CSS, em
+ * `modoExecutivo.css`) troca de um destaque com leve `translateX`+glow
+ * para um destaque só de luminância/background/contraste de texto, sem
+ * nenhum deslocamento espacial, sob `@media (prefers-reduced-motion:
+ * reduce)`. Este componente não precisa mais saber da preferência do SO —
+ * não há nenhuma ramificação de JS por ela. */
 export default function MarketTapeInsights<T>({ itens, chave, renderizar }: Props<T>) {
-  const movimentoReduzido = usePrefersReducedMotion();
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const grupoOriginalRef = useRef<HTMLDivElement>(null);
-  const copiaVisualRef = useRef<HTMLDivElement>(null);
-  const [alturaGrupo, setAlturaGrupo] = useState(0);
+  const [indiceAtivo, setIndiceAtivo] = useState(0);
   const [pausado, setPausado] = useState(false);
-
-  useLayoutEffect(() => {
-    const grupo = grupoOriginalRef.current;
-    if (!grupo || movimentoReduzido || itens.length <= 1) return;
-
-    const medir = () => {
-      const altura = grupo.getBoundingClientRect().height;
-      if (altura > 0) setAlturaGrupo(altura);
-    };
-    medir();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(medir);
-    observer.observe(grupo);
-    return () => observer.disconnect();
-  }, [itens, movimentoReduzido]);
+  const [indiceInteragido, setIndiceInteragido] = useState<number | null>(null);
+  const listaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || movimentoReduzido || itens.length <= 1 || typeof IntersectionObserver === "undefined") return;
+    if (itens.length <= 1 || pausado) return;
+    const temporizador = window.setInterval(() => {
+      setIndiceAtivo((atual) => (atual + 1) % itens.length);
+    }, INTERVALO_MS);
+    return () => window.clearInterval(temporizador);
+  }, [itens.length, pausado]);
 
-    const observer = new IntersectionObserver(
-      (entradas) => {
-        for (const entrada of entradas) entrada.target.classList.toggle("market-tape-item-em-foco", entrada.isIntersecting);
-      },
-      { root: viewport, rootMargin: "-39% 0px -39% 0px", threshold: 0.15 },
-    );
-    viewport.querySelectorAll("[data-market-tape-item]").forEach((elemento) => observer.observe(elemento));
-    return () => observer.disconnect();
-  }, [alturaGrupo, itens, movimentoReduzido]);
-
+  // Guarda simples: se o recorte muda e a lista encolhe, evita um índice
+  // fora da faixa (nunca aponta a um item que deixou de existir).
   useEffect(() => {
-    if (copiaVisualRef.current) copiaVisualRef.current.inert = true;
-  }, [itens, movimentoReduzido]);
+    if (indiceAtivo >= itens.length) setIndiceAtivo(0);
+  }, [itens.length, indiceAtivo]);
 
   if (itens.length === 0) return null;
 
-  if (movimentoReduzido || itens.length === 1) {
-    return (
-      <div className="market-tape-estatico" data-testid="market-tape-estatico" role="list">
-        {itens.map((item) => (
-          <div key={chave(item)} className="market-tape-item market-tape-item-estatico" role="listitem">
-            {renderizar(item, false)}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  const animacaoPronta = alturaGrupo > 0;
-  const duracao = animacaoPronta ? alturaGrupo / VELOCIDADE_PX_POR_SEGUNDO : 0;
-  const estilo = {
-    "--market-tape-distancia": `${-alturaGrupo}px`,
-    "--market-tape-duracao": `${duracao}s`,
-  } as CSSProperties;
-
-  const Grupo = ({ copiaVisual }: { copiaVisual: boolean }) => (
-    <div ref={copiaVisual ? copiaVisualRef : grupoOriginalRef} className="market-tape-grupo" aria-hidden={copiaVisual || undefined}>
-      {itens.map((item) => (
-        <div key={chave(item)} className="market-tape-item" data-market-tape-item="" role={copiaVisual ? undefined : "listitem"}>
-          {renderizar(item, copiaVisual)}
-        </div>
-      ))}
-    </div>
-  );
+  const indiceEmDestaque = indiceInteragido ?? indiceAtivo;
 
   return (
     <div
-      ref={viewportRef}
-      className={`market-tape-viewport ${pausado ? "market-tape-pausado" : ""}`}
-      data-testid="market-tape-continuo"
+      ref={listaRef}
+      className="market-tape-lista"
+      data-testid="market-tape-lista"
       role="list"
       onPointerEnter={() => setPausado(true)}
-      onPointerLeave={() => setPausado(false)}
+      onPointerLeave={() => {
+        setPausado(false);
+        setIndiceInteragido(null);
+      }}
       onFocusCapture={() => setPausado(true)}
       onBlurCapture={(evento) => {
-        if (!evento.currentTarget.contains(evento.relatedTarget)) setPausado(false);
+        if (!evento.currentTarget.contains(evento.relatedTarget)) {
+          setPausado(false);
+          setIndiceInteragido(null);
+        }
       }}
     >
-      <div className="market-tape-zona-foco" aria-hidden="true" />
-      <div className={`market-tape-trilho ${animacaoPronta ? "market-tape-trilho-ativo" : ""}`} style={estilo}>
-        <Grupo copiaVisual={false} />
-        <Grupo copiaVisual />
-      </div>
+      {itens.map((item, indice) => (
+        <div key={chave(item)} className="market-tape-item" role="listitem" onMouseEnter={() => setIndiceInteragido(indice)} onFocus={() => setIndiceInteragido(indice)}>
+          {renderizar(item, indice === indiceEmDestaque)}
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
-import BarraPesquisaGlobal from "../components/analitica/BarraPesquisaGlobal";
+import { useRef, useEffect, useState } from "react";
 import DashboardRecorte from "../components/analitica/DashboardRecorte";
 import ModoExecutivo from "../components/analitica/executivo/ModoExecutivo";
 import IndicadorSincronizacao from "../components/analitica/IndicadorSincronizacao";
 import ModalRelatorio from "../components/analitica/ModalRelatorio";
+import NotificacaoDocumentosHabeisPendentes from "../components/analitica/NotificacaoDocumentosHabeisPendentes";
 import PainelAcoesRecorte from "../components/analitica/PainelAcoesRecorte";
 import PainelDetalhamentoDiaria from "../components/analitica/PainelDetalhamentoDiaria";
 import PainelDiagnostico from "../components/analitica/PainelDiagnostico";
@@ -13,13 +13,12 @@ import ResumoRecorte from "../components/analitica/ResumoRecorte";
 import TabelaDiarias from "../components/analitica/TabelaDiarias";
 import Alerta from "../components/ui/Alerta";
 import Botao from "../components/ui/Botao";
-import { useDiarias } from "../hooks/useDiarias";
+import { CAMPOS_DE_FILTRO, useDiarias, type CampoDeFiltro } from "../hooks/useDiarias";
 import { useDocumentosHabeisPendentes } from "../hooks/useDocumentosHabeisPendentes";
 import { useIndicadores } from "../hooks/useIndicadores";
-import { useOpcoesFiltro } from "../hooks/useOpcoesFiltro";
 import { MENSAGENS } from "../lib/mensagens";
 import { TIPOGRAFIA } from "../theme/tipografia";
-import type { SituacaoDocumentoHabilPendente } from "../types/analitica";
+import type { ParametrosPesquisaDiariasQuery, SituacaoDocumentoHabilPendente } from "../types/analitica";
 
 interface Props {
   backendOnline: boolean;
@@ -81,7 +80,6 @@ export default function CentralAnalitica({
   abrirEmDocumentosHabeisPendentes,
   aoMudarTemaExecutivo,
 }: Props) {
-  const [termoBusca, setTermoBusca] = useState("");
   const [visualizacao, setVisualizacao] = useState<Visualizacao>(
     abrirEmDocumentosHabeisPendentes ? "documentos_habeis_pendentes" : "resultados",
   );
@@ -97,11 +95,12 @@ export default function CentralAnalitica({
   const [origemDetalhamento, setOrigemDetalhamento] = useState<
     "tabela" | "diagnostico" | "documentos_habeis_pendentes"
   >("tabela");
-  // Aviso de liberação atingida (§ 5 do pedido) — dispensa é só visual, só
-  // para a sessão atual (nunca persistida, nunca grava nada na Base
-  // Local); filtro inicial é passado para `PainelDocumentosHabeisPendentes`
-  // quando o aviso é aberto já filtrado para "Revisão manual necessária".
-  const [avisoLiberacaoDispensado, setAvisoLiberacaoDispensado] = useState(false);
+  // MS UX (2026-08-10) — o banner específico de "liberação atingida" foi
+  // substituído pela notificação única de Documentos Hábeis Pendentes
+  // (`NotificacaoDocumentosHabeisPendentes`, item 5 do pedido); filtro
+  // inicial é passado para `PainelDocumentosHabeisPendentes` quando o
+  // usuário abre a tela a partir de outro ponto (ex.: alerta do Hub) já
+  // filtrada para uma situação específica.
   const [filtroInicialDocumentosHabeis, setFiltroInicialDocumentosHabeis] = useState<
     SituacaoDocumentoHabilPendente | undefined
   >(undefined);
@@ -125,8 +124,12 @@ export default function CentralAnalitica({
     setVisualizacao(destino);
   }
 
-  const diarias = useDiarias(termoBusca);
-  const opcoesFiltro = useOpcoesFiltro(backendOnline);
+  // MS UX — Simplificação da Central Analítica (2026-08-10, item 4): a
+  // barra de pesquisa rápida foi removida por completo — `useDiarias`
+  // continua aceitando um `q` inicial genericamente, mas nada mais o
+  // alimenta nesta tela (filtro `q` propriamente dito segue existindo no
+  // backend/tipo, só não é mais alcançável por nenhum controle visível).
+  const diarias = useDiarias("");
   // Sprint 19.6.2 — reaproveita os mesmos `diarias.filtros` já geridos por
   // `useDiarias` (nunca um segundo estado de filtro); busca independente
   // da tabela, com seus próprios carregando/erro internos.
@@ -136,11 +139,6 @@ export default function CentralAnalitica({
   // o resumo alimenta o badge do botão e o aviso de liberação atingida,
   // que precisam estar visíveis mesmo antes do usuário abrir a lista.
   const documentosHabeisPendentes = useDocumentosHabeisPendentes(diarias.filtros);
-
-  function pesquisarGlobalmente(termo: string) {
-    setTermoBusca(termo);
-    setVisualizacao("resultados");
-  }
 
   function selecionarLinhaTabela(sei: string) {
     setOrigemDetalhamento("tabela");
@@ -203,6 +201,45 @@ export default function CentralAnalitica({
     return () => aoMudarTemaExecutivo?.(false);
   }, [visualizacao, aoMudarTemaExecutivo]);
 
+  // MS — Isolamento de filtros entre Modo Operacional e Dark Mode Executivo
+  // (item 8 do pedido): dentro do Executivo, zoom de período nos gráficos
+  // de evolução e "Comparar" (`useComparacaoExecutiva`) escrevem direto em
+  // `diarias.filtros` — mesma instância compartilhada por decisão de
+  // arquitetura (nenhum estado de filtro paralelo). Sem isolamento, esses
+  // valores ficavam "presos" ao desligar o toggle, invisíveis na UI
+  // simplificada do Operacional (só SEI/CPF/Período). Captura o filtro
+  // operacional vigente ao ENTRAR no Dark Mode e o restaura por completo ao
+  // SAIR por aqui (o único caminho de "desligar o toggle" — `visualizacao`
+  // só entra em "executivo" por este botão). O drill-down explícito do
+  // painel lateral executivo ("Aplicar filtro"/"Abrir relatório"/"Abrir
+  // diagnóstico", `PainelLateralExecutivo`) usa sua própria navegação
+  // (`aoVoltar`/`navegarPara`), nunca este toggle — o filtro que o usuário
+  // escolhe explicitamente carregar para fora do Executivo continua
+  // preservado, sem ser desfeito por esta restauração.
+  const filtrosOperacionaisRef = useRef<ParametrosPesquisaDiariasQuery | null>(null);
+
+  function alternarDarkModeExecutivo() {
+    if (visualizacao === "executivo") {
+      const snapshot = filtrosOperacionaisRef.current;
+      // Só dispara `aplicarFiltro` (e a nova busca que isso implica) quando
+      // algo de fato mudou durante o Executivo — nada de refazer a busca à
+      // toa em toda saída, mesmo quando nenhuma mutação executivo-only
+      // aconteceu (caso comum: usuário só olhou os gráficos e desligou).
+      const houveMudanca = snapshot !== null && CAMPOS_DE_FILTRO.some((campo) => diarias.filtros[campo] !== snapshot[campo]);
+      if (houveMudanca) {
+        diarias.aplicarFiltro(
+          Object.fromEntries(CAMPOS_DE_FILTRO.map((campo) => [campo, snapshot![campo]])) as Partial<
+            Record<CampoDeFiltro, string | undefined>
+          >,
+        );
+      }
+      setVisualizacao("resultados");
+    } else {
+      filtrosOperacionaisRef.current = diarias.filtros;
+      setVisualizacao("executivo");
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl animate-entrada-conteudo px-6 py-12 md:px-10">
       <h2 className={TIPOGRAFIA.titulo}>Central Analítica</h2>
@@ -213,102 +250,74 @@ export default function CentralAnalitica({
         </div>
       )}
 
-      <div className="mt-6 flex flex-wrap items-start justify-between gap-3">
-        <IndicadorSincronizacao backendOnline={backendOnline} />
-        {/* Sprint 21.2 — decisão 1 da arquitetura funcional do Modo
-            Executivo: entra pela própria Central Analítica (não um card
-            novo no Hub), botão sempre visível quando há recorte válido —
-            mesmo critério de habilitação de `PainelAcoesRecorte`. */}
+      {/* MS UX — Simplificação da Central Analítica (2026-08-10, item 8):
+          Dark Mode Executivo virou um TOGGLE único — "acesa" (`variante=
+          "ativa"`) quando `visualizacao === "executivo"`, clicar de novo
+          desliga e volta para "resultados". Substitui o par antigo de
+          botões ("Dark Mode Executivo" aqui + "Voltar ao Modo Operacional"
+          dentro de `CabecalhoExecutivo`). Continua sempre visível — é o
+          único jeito de entrar OU sair do Dark Mode. */}
+      <div className="mt-6 flex flex-wrap items-start justify-end gap-3">
         <Botao
-          variante="secundaria"
-          disabled={!recorteValido}
-          onClick={() => setVisualizacao("executivo")}
+          variante={visualizacao === "executivo" ? "ativa" : "secundaria"}
+          aria-pressed={visualizacao === "executivo"}
+          disabled={visualizacao !== "executivo" && !recorteValido}
+          onClick={alternarDarkModeExecutivo}
         >
           Dark Mode Executivo
         </Botao>
       </div>
 
-      <div className="mt-6">
-        <BarraPesquisaGlobal onPesquisar={pesquisarGlobalmente} desabilitado={!backendOnline} />
-      </div>
-
-      <div className="mt-6">
-        <PainelFiltrosPrincipal
-          filtros={diarias.filtros}
-          opcoes={opcoesFiltro.opcoes}
-          erroOpcoes={opcoesFiltro.erro}
-          onTentarNovamenteOpcoes={opcoesFiltro.tentarNovamente}
-          onMudarFiltro={diarias.aplicarFiltro}
-          onRemoverFiltro={diarias.removerFiltro}
-          onLimparTudo={diarias.limparFiltros}
-        />
-      </div>
-
-      <div className="mt-6">
-        <ResumoRecorte
-          carregando={diarias.carregando}
-          resultado={diarias.resultado}
-          indicadores={indicadores.indicadores}
-          indicadoresCarregando={indicadores.carregando}
-          indicadoresErro={indicadores.erro}
-          aoTentarNovamenteIndicadores={indicadores.tentarNovamente}
-        />
-      </div>
-
-      {/* Correção de foco (§ 5 do pedido) — aviso dentro da própria Central
-          Analítica quando algum processo do recorte atual atingiu a data
-          de liberação do DH e continua sem DH ("revisão manual
-          necessária"). Nunca marca nada como resolvido nem grava na
-          planilha — a fonte da verdade continua sendo `dh` vazio + a
-          regra de data, recalculada a cada carregamento deste hook. */}
-      {!avisoLiberacaoDispensado &&
-        (documentosHabeisPendentes.documentosHabeisPendentes?.resumo.revisao_manual_necessaria ?? 0) > 0 && (
+      {/* MS UX (item 10) — Dark Mode Executivo é só leitura/análise/
+          apresentação: nenhuma ação administrativa (sincronização manual,
+          Documentos Hábeis Pendentes, Gerar Dashboard/Relatório, filtros
+          operacionais) aparece acima do canvas enquanto ele está ativo —
+          tudo isso reaparece sozinho ao desligar o toggle, nenhuma lógica
+          é removida, só a visibilidade. */}
+      {visualizacao !== "executivo" && (
+        <>
           <div className="mt-6">
-            <Alerta variante="aviso">
-              <div className="flex w-full flex-wrap items-center justify-between gap-3">
-                <span>
-                  {documentosHabeisPendentes.documentosHabeisPendentes!.resumo.revisao_manual_necessaria === 1
-                    ? "Existe"
-                    : "Existem"}{" "}
-                  {documentosHabeisPendentes.documentosHabeisPendentes!.resumo.revisao_manual_necessaria}{" "}
-                  processo
-                  {documentosHabeisPendentes.documentosHabeisPendentes!.resumo.revisao_manual_necessaria === 1
-                    ? ""
-                    : "s"}{" "}
-                  cuja data de liberação do Documento Hábil foi atingida e que ainda{" "}
-                  {documentosHabeisPendentes.documentosHabeisPendentes!.resumo.revisao_manual_necessaria === 1
-                    ? "permanece"
-                    : "permanecem"}{" "}
-                  sem DH.
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  <Botao variante="secundaria" onClick={() => abrirDocumentosHabeisPendentes()}>
-                    Abrir Documentos Hábeis Pendentes
-                  </Botao>
-                  <Botao
-                    variante="secundaria"
-                    onClick={() => abrirDocumentosHabeisPendentes("revisao_manual_necessaria")}
-                  >
-                    Ver revisão manual
-                  </Botao>
-                  <Botao variante="link" onClick={() => setAvisoLiberacaoDispensado(true)}>
-                    Dispensar
-                  </Botao>
-                </div>
-              </div>
-            </Alerta>
+            <IndicadorSincronizacao backendOnline={backendOnline} />
           </div>
-        )}
 
-      <div className="mt-6">
-        <PainelAcoesRecorte
-          habilitado={recorteValido}
-          aoGerarDashboard={() => navegarPara("dashboard")}
-          aoGerarRelatorio={() => navegarPara("relatorio")}
-          aoAbrirDocumentosHabeisPendentes={() => abrirDocumentosHabeisPendentes()}
-          resumoDocumentosHabeis={documentosHabeisPendentes.documentosHabeisPendentes?.resumo ?? null}
-        />
-      </div>
+          {/* Item 5 — a notificação de Documentos Hábeis Pendentes ocupa o
+              espaço onde antes ficava a barra de pesquisa rápida
+              (removida por completo, item 4). */}
+          <div className="mt-6">
+            <NotificacaoDocumentosHabeisPendentes
+              resumo={documentosHabeisPendentes.documentosHabeisPendentes?.resumo ?? null}
+              aoAbrir={() => abrirDocumentosHabeisPendentes()}
+            />
+          </div>
+
+          <div className="mt-6">
+            <PainelFiltrosPrincipal
+              filtros={diarias.filtros}
+              onMudarFiltro={diarias.aplicarFiltro}
+              onRemoverFiltro={diarias.removerFiltro}
+            />
+          </div>
+
+          <div className="mt-6">
+            <ResumoRecorte
+              carregando={diarias.carregando}
+              resultado={diarias.resultado}
+              indicadores={indicadores.indicadores}
+              indicadoresCarregando={indicadores.carregando}
+              indicadoresErro={indicadores.erro}
+              aoTentarNovamenteIndicadores={indicadores.tentarNovamente}
+            />
+          </div>
+
+          <div className="mt-6">
+            <PainelAcoesRecorte
+              habilitado={recorteValido}
+              aoGerarDashboard={() => navegarPara("dashboard")}
+              aoGerarRelatorio={() => navegarPara("relatorio")}
+            />
+          </div>
+        </>
+      )}
 
       {visualizacao === "resultados" && (
         <div className="mt-6 space-y-4">
@@ -382,15 +391,12 @@ export default function CentralAnalitica({
       {visualizacao === "executivo" && (
         <div className="mt-6">
           <ModoExecutivo
-            backendOnline={backendOnline}
             filtros={diarias.filtros}
             indicadores={indicadores.indicadores}
             indicadoresCarregando={indicadores.carregando}
             indicadoresErro={indicadores.erro}
             aoTentarNovamenteIndicadores={indicadores.tentarNovamente}
             onMudarFiltro={diarias.aplicarFiltro}
-            onRemoverFiltro={diarias.removerFiltro}
-            onLimparTudo={diarias.limparFiltros}
             aoVoltar={() => setVisualizacao("resultados")}
             aoAbrirRelatorio={() => navegarPara("relatorio")}
             aoAbrirDiagnostico={abrirDiagnostico}

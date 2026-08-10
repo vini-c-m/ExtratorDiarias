@@ -52,4 +52,15 @@ describe("preload", () => {
 
     expect(ipcRendererMock.invoke).toHaveBeenCalledWith("conferencia:copiar-historico", "texto do histórico");
   });
+
+  it("abrirLinkExterno (link Arquimedes) invoca ipcRenderer.invoke no canal 'link:abrir-externo' com a URL exata", async () => {
+    const api = await importarApiExposta();
+
+    api.abrirLinkExterno("https://arquimedes.mppe.mp.br/arquimedes/");
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(
+      "link:abrir-externo",
+      "https://arquimedes.mppe.mp.br/arquimedes/",
+    );
+  });
 });

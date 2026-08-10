@@ -21,6 +21,21 @@ Thumbs.db
 .idea/
 *.tsbuildinfo
 
+# Base Local (SQLite) e arquivos temporários de escrita atômica — nunca
+# gerados dentro do repo em uso normal (vivem em %APPDATA%/ExtratorDiarias),
+# mas ignorados aqui por segurança caso algum script/teste os crie localmente.
+*.sqlite
+*.sqlite3
+*.db
+*.tmp
+*.cadastro.tmp.*
+
+# Screenshots/provas ad-hoc soltas na raiz do repo (nunca as intencionais de
+# docs/screenshots/, que continuam versionadas).
+/prova-*.png
+/prova-*.json
+/normal-*.png
+
 # Segredos e configuração local — nunca versionar
 .env
 .env.*

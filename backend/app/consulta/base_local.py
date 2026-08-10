@@ -22,6 +22,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from app import diagnostico_complemento_temp as diag  # DIAGNÓSTICO TEMPORÁRIO — remover após causa raiz confirmada/corrigida
+
 NOME_PASTA_DADOS_FALLBACK = "ExtratorDiarias"
 NOME_ARQUIVO_BASE_LOCAL = "base_local_consulta.xlsx"
 VAR_AMBIENTE_USER_DATA = "EXTRATOR_DIARIAS_USER_DATA"
@@ -192,6 +194,11 @@ def sincronizar(
             from app.consulta import base_local_sqlite, repositorio_diarias, repositorio_servidores
 
             sinal_frescor = base_local_sqlite.capturar_sinal_frescor(caminho_planilha_preenchida)
+            diag.registrar(
+                "sinal_frescor_capturado",
+                tamanho_bytes=sinal_frescor.tamanho_bytes,
+                linhas_controle_diarias=sinal_frescor.linhas_controle_diarias,
+            )
 
             # `data_only=True`: a coluna P (`VALOR TOTAL DAS DIÁRIAS`) de
             # `Controle de Diárias` é fórmula (`=R+S`) na maioria das
@@ -218,15 +225,23 @@ def sincronizar(
             finally:
                 workbook.close()
 
-            base_local_sqlite.reconstruir(
-                resultado_diarias,
-                servidores,
-                sinal_frescor,
-                origem=origem,
-                caminho_destino=base_local_sqlite.caminho_base_local_sqlite(diretorio_base=diretorio_base),
-                versao_app=os.environ.get(VAR_AMBIENTE_VERSAO_APP, ""),
+            diag.registrar(
+                "diarias_completas_lidas",
+                total_diarias=len(resultado_diarias.diarias),
+                linhas_ignoradas=resultado_diarias.linhas_ignoradas,
+                total_avisos=len(resultado_diarias.avisos),
             )
+            with diag.etapa("base_local_sqlite_reconstruir", total_diarias=len(resultado_diarias.diarias)):
+                base_local_sqlite.reconstruir(
+                    resultado_diarias,
+                    servidores,
+                    sinal_frescor,
+                    origem=origem,
+                    caminho_destino=base_local_sqlite.caminho_base_local_sqlite(diretorio_base=diretorio_base),
+                    versao_app=os.environ.get(VAR_AMBIENTE_VERSAO_APP, ""),
+                )
         except Exception as erro:
+            diag.registrar("sincronizacao_sqlite_falhou", sucesso=False, erro=erro)
             _logger.exception("Falha ao reconstruir a Base Local em SQLite")
             if ao_falhar_sqlite is not None:
                 ao_falhar_sqlite(erro)

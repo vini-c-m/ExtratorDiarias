@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MarketTapeInsights from "./MarketTapeInsights";
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -17,69 +20,197 @@ function configurarReducedMotion(ativa: boolean) {
   }));
 }
 
-describe("MarketTapeInsights", () => {
-  beforeEach(() => configurarReducedMotion(false));
+beforeEach(() => configurarReducedMotion(false));
 
-  it("mantém uma lista lógica e uma cópia estritamente visual/inert para o loop", () => {
-    const { container } = render(
+const INTERVALO_MS = 3000;
+
+function ativoAtual() {
+  return screen.getAllByRole("listitem").findIndex((item) => item.querySelector("[data-ativo='true']") !== null);
+}
+
+describe("MarketTapeInsights", () => {
+  // AJUSTE FINAL (2026-08-10) — item 1: a sequência NUNCA mais depende de
+  // `prefers-reduced-motion` no JS (o componente nem consulta mais essa
+  // preferência) — só a CSS do card ativo muda de pele conforme o SO. As
+  // duas primeiras suítes (A e B) rodam o MESMO teste de sequência com
+  // `matchMedia` mockado para `false` e para `true`, provando que o
+  // comportamento de avanço é idêntico nos dois casos.
+  describe.each([
+    ["A) prefers-reduced-motion=false", false],
+    ["B) prefers-reduced-motion=true", true],
+  ] as const)("%s", (_rotulo, reduzido) => {
+    beforeEach(() => configurarReducedMotion(reduzido));
+
+    it("sequência completa: primeiro ativa, avança de cima para baixo e do último volta ao primeiro (loop)", () => {
+      vi.useFakeTimers();
+      render(
+        <MarketTapeInsights
+          itens={["A", "B", "C"]}
+          chave={(item) => item}
+          renderizar={(item, ativo) => <span data-ativo={ativo}>{item}</span>}
+        />,
+      );
+
+      expect(ativoAtual()).toBe(0);
+      act(() => vi.advanceTimersByTime(INTERVALO_MS));
+      expect(ativoAtual()).toBe(1);
+      act(() => vi.advanceTimersByTime(INTERVALO_MS));
+      expect(ativoAtual()).toBe(2);
+      act(() => vi.advanceTimersByTime(INTERVALO_MS));
+      expect(ativoAtual()).toBe(0); // G) nenhuma config. do Windows foi alterada e o destaque segue funcionando
+    });
+
+    // D) hover pausa a sequência e destaca o item sob o mouse, nos dois modos.
+    it("D) hover pausa a sequência e destaca o item sob o mouse", () => {
+      vi.useFakeTimers();
+      render(
+        <MarketTapeInsights
+          itens={["A", "B", "C"]}
+          chave={(item) => item}
+          renderizar={(item, ativo) => <span data-ativo={ativo}>{item}</span>}
+        />,
+      );
+      const lista = screen.getByTestId("market-tape-lista");
+      act(() => vi.advanceTimersByTime(INTERVALO_MS)); // "B" ativo pela sequência
+      const itens = screen.getAllByRole("listitem");
+
+      fireEvent.mouseEnter(itens[0]);
+      fireEvent.pointerEnter(lista);
+      expect(itens[0].querySelector("[data-ativo='true']")).not.toBeNull();
+      expect(itens[1].querySelector("[data-ativo='true']")).toBeNull();
+
+      act(() => vi.advanceTimersByTime(INTERVALO_MS * 3)); // pausado: tempo passar não muda nada
+      expect(itens[0].querySelector("[data-ativo='true']")).not.toBeNull();
+    });
+
+    // F) ao sair do hover, a sequência retoma de onde estava (nunca reseta).
+    it("F) mouse sai e a sequência retoma exatamente de onde estava, sem resetar", () => {
+      vi.useFakeTimers();
+      render(
+        <MarketTapeInsights
+          itens={["A", "B", "C"]}
+          chave={(item) => item}
+          renderizar={(item, ativo) => <span data-ativo={ativo}>{item}</span>}
+        />,
+      );
+      const lista = screen.getByTestId("market-tape-lista");
+      act(() => vi.advanceTimersByTime(INTERVALO_MS)); // "B" ativo
+      const itens = screen.getAllByRole("listitem");
+
+      fireEvent.mouseEnter(itens[0]);
+      fireEvent.pointerEnter(lista);
+      fireEvent.pointerLeave(lista);
+
+      expect(itens[1].querySelector("[data-ativo='true']")).not.toBeNull();
+    });
+
+    // E) foco (teclado) também pausa, nos dois modos.
+    it("E) foco em qualquer item pausa a sequência", () => {
+      vi.useFakeTimers();
+      render(
+        <MarketTapeInsights
+          itens={["A", "B"]}
+          chave={(item) => item}
+          renderizar={(item, ativo) => <button data-ativo={ativo}>{item}</button>}
+        />,
+      );
+      const botaoB = screen.getByRole("button", { name: "B" });
+      fireEvent.focusIn(botaoB);
+      const itens = screen.getAllByRole("listitem");
+      expect(itens[1].querySelector("[data-ativo='true']")).not.toBeNull();
+
+      act(() => vi.advanceTimersByTime(INTERVALO_MS * 3));
+      // Continua em "B" — o foco pausou o avanço automático, que teria
+      // seguido para "A" (loop) se não estivesse pausado.
+      expect(itens[1].querySelector("[data-ativo='true']")).not.toBeNull();
+    });
+  });
+
+  // C) reduced-motion: nenhum deslocamento espacial (translate/scale) — a
+  // garantia é 100% CSS (o componente não aplica nenhum estilo inline
+  // condicionado à preferência do SO, então não há nada para testar no
+  // nível de DOM além de "nenhum estilo inline aparece"); a regra visual
+  // em si é verificada lendo o CSS de produção diretamente, para nunca
+  // regressar silenciosamente.
+  it("C) reduced-motion nunca aplica transform/scale via JS — o card ativo não tem nenhum estilo inline", () => {
+    configurarReducedMotion(true);
+    vi.useFakeTimers();
+    render(
       <MarketTapeInsights
-        itens={["Financeiro", "Territorial"]}
+        itens={["A", "B"]}
         chave={(item) => item}
-        renderizar={(item) => <button type="button">{item}</button>}
+        renderizar={(item, ativo) => <span data-ativo={ativo}>{item}</span>}
       />,
     );
-    expect(screen.getAllByText("Financeiro")).toHaveLength(2);
-    expect(screen.getAllByRole("button", { name: "Financeiro" })).toHaveLength(1);
-    const copia = container.querySelector('[aria-hidden="true"].market-tape-grupo') as HTMLElement;
-    expect(copia).toBeInTheDocument();
-    expect(copia.inert).toBe(true);
+    const itens = screen.getAllByRole("listitem");
+    // Nenhum wrapper nem conteúdo renderizado tem `style` — todo o
+    // destaque (em qualquer modo) é resolvido só por classe CSS.
+    for (const item of itens) {
+      expect(item).not.toHaveAttribute("style");
+      expect(item.firstElementChild).not.toHaveAttribute("style");
+    }
   });
 
-  it("com reduced-motion mostra todos os itens uma única vez e sem trilho animado", () => {
-    configurarReducedMotion(true);
-    render(
-      <MarketTapeInsights itens={["A", "B"]} chave={(item) => item} renderizar={(item) => <span>{item}</span>} />,
+  it("C) o CSS de reduced-motion zera transform/box-shadow do card ativo (sem deslocamento espacial)", () => {
+    const caminhoCss = resolve(process.cwd(), "src/components/analitica/executivo/modoExecutivo.css");
+    const css = readFileSync(caminhoCss, "utf-8");
+    const indiceMedia = css.indexOf("@media (prefers-reduced-motion: reduce)");
+    expect(indiceMedia).toBeGreaterThan(-1);
+    const blocoReduzido = css.slice(indiceMedia, css.indexOf("\n}\n", css.indexOf("market-tape-item-spotlight", indiceMedia)) + 3);
+    expect(blocoReduzido).toMatch(/\.market-tape-item-spotlight\s*\{[^}]*transform:\s*none/);
+    expect(blocoReduzido).not.toMatch(/translateX/);
+    expect(blocoReduzido).not.toMatch(/scale\(/);
+  });
+
+  // J — lista vazia não renderiza nada.
+  it("J) lista vazia não renderiza a lista", () => {
+    const { container } = render(
+      <MarketTapeInsights itens={[]} chave={(item) => String(item)} renderizar={() => null} />,
     );
-    expect(screen.getByTestId("market-tape-estatico")).toBeInTheDocument();
-    expect(screen.queryByTestId("market-tape-continuo")).not.toBeInTheDocument();
-    expect(screen.getAllByText("A")).toHaveLength(1);
-  });
-
-  it("um único item fica estático e não é duplicado", () => {
-    render(<MarketTapeInsights itens={["Único"]} chave={(item) => item} renderizar={(item) => <span>{item}</span>} />);
-    expect(screen.getByTestId("market-tape-estatico")).toBeInTheDocument();
-    expect(screen.getAllByText("Único")).toHaveLength(1);
-  });
-
-  it("lista vazia não cria viewport", () => {
-    const { container } = render(<MarketTapeInsights itens={[]} chave={(item) => String(item)} renderizar={() => null} />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("calcula duração pela altura a 18 px/s e pausa sem substituir o trilho", async () => {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      width: 300, height: 720, top: 0, right: 300, bottom: 720, left: 0, x: 0, y: 0, toJSON: () => ({}),
-    });
-    render(<MarketTapeInsights itens={["A", "B"]} chave={(item) => item} renderizar={(item) => <span>{item}</span>} />);
-    const viewport = screen.getByTestId("market-tape-continuo");
-    const trilho = viewport.querySelector(".market-tape-trilho") as HTMLElement;
-    await waitFor(() => expect(trilho.style.getPropertyValue("--market-tape-duracao")).toBe("40s"));
-    expect(trilho.style.getPropertyValue("--market-tape-distancia")).toBe("-720px");
-    expect(trilho).toHaveClass("market-tape-trilho-ativo");
-    fireEvent.pointerEnter(viewport);
-    expect(viewport).toHaveClass("market-tape-pausado");
-    fireEvent.pointerLeave(viewport);
-    expect(viewport).not.toHaveClass("market-tape-pausado");
-    expect(viewport.querySelector(".market-tape-trilho")).toBe(trilho);
+  // K — item único: renderiza normalmente, nunca duplicado, sem quebrar
+  // (a sequência simplesmente não tem para onde avançar).
+  it("K) item único renderiza uma vez só, sem duplicar", () => {
+    vi.useFakeTimers();
+    render(
+      <MarketTapeInsights itens={["Único"]} chave={(item) => item} renderizar={(item) => <span>{item}</span>} />,
+    );
+    expect(screen.getAllByText("Único")).toHaveLength(1);
+    act(() => vi.advanceTimersByTime(INTERVALO_MS * 3));
+    expect(screen.getAllByText("Único")).toHaveLength(1);
   });
 
-  it("não inicia a animação enquanto a altura medida for zero", () => {
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0, x: 0, y: 0, toJSON: () => ({}),
-    });
-    render(<MarketTapeInsights itens={["A", "B"]} chave={(item) => item} renderizar={(item) => <span>{item}</span>} />);
-    const trilho = screen.getByTestId("market-tape-continuo").querySelector(".market-tape-trilho") as HTMLElement;
-    expect(trilho).not.toHaveClass("market-tape-trilho-ativo");
-    expect(trilho.style.getPropertyValue("--market-tape-distancia")).toBe("0px");
+  // L — nenhum resquício da mecânica de scroll/ticker antiga permanece:
+  // sem trilho, sem cópia visual duplicada, sem viewport com overflow.
+  it("L) não existe nenhum vestígio de scroll/ticker vertical (trilho, cópia duplicada, viewport)", () => {
+    const { container } = render(
+      <MarketTapeInsights
+        itens={["A", "B"]}
+        chave={(item) => item}
+        renderizar={(item) => <span>{item}</span>}
+      />,
+    );
+    expect(container.querySelector(".market-tape-trilho")).not.toBeInTheDocument();
+    expect(container.querySelector(".market-tape-viewport")).not.toBeInTheDocument();
+    expect(container.querySelector(".market-tape-grupo")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(0);
+    expect(screen.getAllByText("A")).toHaveLength(1);
+    expect(screen.getAllByText("B")).toHaveLength(1);
+  });
+
+  it("sem remontar a lista entre trocas de destaque (mesmo nó DOM)", () => {
+    vi.useFakeTimers();
+    render(
+      <MarketTapeInsights
+        itens={["A", "B"]}
+        chave={(item) => item}
+        renderizar={(item) => <span>{item}</span>}
+      />,
+    );
+    const lista = screen.getByTestId("market-tape-lista");
+    act(() => vi.advanceTimersByTime(INTERVALO_MS));
+    expect(screen.getByTestId("market-tape-lista")).toBe(lista);
   });
 });

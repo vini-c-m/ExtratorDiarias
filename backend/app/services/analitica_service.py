@@ -70,6 +70,7 @@ from reportlab.lib.units import cm
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app import diagnostico_complemento_temp as diag  # DIAGNÓSTICO TEMPORÁRIO — remover após causa raiz confirmada/corrigida
 from app.consulta import base_local, base_local_sqlite, repositorio_analitico
 from app.consulta.repositorio_analitico import InfoSincronizacaoResumida, OpcoesFiltro, PaginaDeAvisos, PaginaDeRegistros
 from app.domain.analitica import diagnostico as diagnostico_dominio
@@ -1697,23 +1698,40 @@ def executar_sincronizacao_manual() -> ResumoExecucao:
         caminho_planilha = configuracao_app.resolver_caminho_para_preenchimento()
 
         try:
-            base_local.sincronizar(caminho_planilha, origem="manual")
-        except Exception:
+            with diag.etapa("manual_base_local_sincronizar", caminho_planilha=caminho_planilha):
+                base_local.sincronizar(caminho_planilha, origem="manual")
+        except Exception as erro:
+            diag.registrar("manual_sincronizar_excecao", sucesso=False, erro=erro)
             _logger.exception("Falha inesperada durante sincronização manual (etapa base_local.sincronizar).")
             return _resumo_falha()
 
         sinal_depois = _capturar_sinal_fisico(caminho_sqlite)
-        if not _indica_substituicao(sinal_antes, sinal_depois):
+        substituiu = _indica_substituicao(sinal_antes, sinal_depois)
+        diag.registrar(
+            "manual_sinal_fisico_sqlite",
+            sinal_antes=str(sinal_antes),
+            sinal_depois=str(sinal_depois),
+            indica_substituicao=substituiu,
+        )
+        if not substituiu:
+            diag.registrar("manual_sincronizacao_falha_sem_substituicao", sucesso=False)
             return _resumo_falha()
 
         try:
             info = repositorio_analitico.estado_sincronizacao_registrado(caminho_sqlite)
         except sqlite3.Error as erro:
+            diag.registrar("manual_leitura_pos_sync_falhou", sucesso=False, erro=erro)
             _logger.exception(
                 "Sinal físico indicou substituição, mas a leitura pós-sincronização falhou."
             )
             raise BaseAnaliticaIndisponivel(_MENSAGEM_BASE_INDISPONIVEL) from erro
 
+        diag.registrar(
+            "manual_sincronizacao_sucesso",
+            sucesso=True,
+            linhas_diarias=info.linhas_diarias,
+            linhas_ignoradas=info.linhas_ignoradas,
+        )
         return ResumoExecucao(
             status="sucesso",
             sincronizado_em=info.sincronizado_em,

@@ -6,6 +6,38 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Conferencia from "./Conferencia";
 import { ErroConferenciaIndisponivel } from "../services/api";
 import type { ResultadoConferencia } from "../types/conferencia";
+import type { ConfiguracaoAtiva } from "../types/configuracao";
+
+// Cadastro de Servidor/Membro (wiring em `Conferencia.tsx`) — mockado como
+// um dublê interativo simples (mesmo padrão já usado em `App.test.tsx`
+// para `SelecionarProcessar`): a cobertura do formulário/estados internos
+// do modal já vive em `ModalCadastrarServidor.test.tsx`, este arquivo só
+// prova a integração (quando o botão aparece, o CPF repassado, e o
+// reconsultar automático via `onCpfResolvido`).
+vi.mock("../components/conferencia/ModalCadastrarServidor", () => ({
+  default: ({
+    cpf,
+    onFechar,
+    onCpfResolvido,
+  }: {
+    cpf: string;
+    onFechar: () => void;
+    onCpfResolvido: (cpfFinal: string) => void;
+  }) => (
+    <div>
+      <span>Modal de cadastro — CPF {cpf}</span>
+      <button onClick={onFechar}>Fechar modal de cadastro</button>
+      <button onClick={() => onCpfResolvido(cpf)}>Concluir cadastro (dublê)</button>
+      {/* Simula o CPF editável (item 2/6 do pedido "Ajuste Funcional +
+          UX"): o modal real pode resolver um CPF DIFERENTE do que foi
+          originalmente pesquisado, quando o usuário corrige o valor
+          antes de salvar. */}
+      <button onClick={() => onCpfResolvido("22222222222")}>
+        Concluir cadastro com CPF corrigido (dublê)
+      </button>
+    </div>
+  ),
+}));
 
 // Sprint 13 — cobre o portão da Etapa 2 (só existe quando o veredito é
 // APTO_PARA_PROCESSAMENTO ou quando o servidor escolhe "Prosseguir mesmo
@@ -93,6 +125,31 @@ const RESULTADO_REVISAR_APENAS_JANELA: ResultadoConferencia = {
   servidor: { nome: "Maria Aparecida Souza", cargo: "Analista Judiciário", previdencia: "FUNAFIN" },
   duplicidade: null,
   janela_processamento: { liberado: false, data_liberacao: "2026-08-05" },
+};
+
+// Cadastro de Servidor/Membro — CPF consultado e NÃO localizado na aba
+// Dados (`cadastro_localizado.ok: false`), o único gatilho da ação.
+const RESULTADO_REVISAR_CADASTRO_AUSENTE: ResultadoConferencia = {
+  veredito: "REVISAR",
+  providencia: "Servidor não cadastrado — verifique antes de prosseguir.",
+  checklist: [
+    { item: "cadastro_localizado", ok: false, valor: null },
+    { item: "nome", ok: false, valor: null },
+    { item: "cargo", ok: false, valor: null },
+    { item: "duplicidade", ok: true, valor: null },
+    { item: "janela_processamento", ok: true, valor: null },
+  ],
+  servidor: null,
+  duplicidade: null,
+  janela_processamento: { liberado: true, data_liberacao: "2026-07-06" },
+};
+
+const CONFIGURACAO_ATIVA: ConfiguracaoAtiva = {
+  configurado: true,
+  planilha_acessivel: true,
+  requer_revalidacao: false,
+  caminho_planilha_oficial: "C:\\planilha-oficial.xlsx",
+  configurado_em: "2026-08-01T10:00:00",
 };
 
 beforeEach(() => {
@@ -403,5 +460,125 @@ describe("Conferencia — Modo Complemento de Diárias (RN-14)", () => {
     expect(conferirMock).toHaveBeenCalledWith("12345678901", "2026-07-21", "2026-07-23", "PADRAO");
     expect(await screen.findByText("Gerar Histórico para o e-Fisco")).toBeInTheDocument();
     expect(screen.queryByText("Continuidade Processual")).not.toBeInTheDocument();
+  });
+});
+
+describe("Conferencia — Cadastro de Servidor/Membro (wiring com ChecklistConferencia/ModalCadastrarServidor)", () => {
+  it("A) mostra 'Cadastrar servidor/membro' quando o CPF não é localizado e a Planilha Oficial está disponível", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_REVISAR_CADASTRO_AUSENTE);
+
+    render(<Conferencia backendOnline configuracaoAtiva={CONFIGURACAO_ATIVA} />);
+    await preencherEConferir(usuario);
+
+    expect(await screen.findByText("REVISAR")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cadastrar servidor/membro" })).toBeInTheDocument();
+  });
+
+  it("B) não mostra a ação quando o cadastro já foi localizado", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO);
+
+    render(<Conferencia backendOnline configuracaoAtiva={CONFIGURACAO_ATIVA} />);
+    await preencherEConferir(usuario);
+
+    expect(await screen.findByText("APTO PARA PROCESSAMENTO")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cadastrar servidor/membro" })).not.toBeInTheDocument();
+  });
+
+  it("item 12 — não mostra a ação quando a Planilha Oficial não está disponível para escrita", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_REVISAR_CADASTRO_AUSENTE);
+
+    render(<Conferencia backendOnline configuracaoAtiva={{ configurado: false }} />);
+    await preencherEConferir(usuario);
+
+    expect(await screen.findByText("REVISAR")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cadastrar servidor/membro" })).not.toBeInTheDocument();
+  });
+
+  it("item 12 — não mostra a ação quando a planilha exige revalidação", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_REVISAR_CADASTRO_AUSENTE);
+
+    render(
+      <Conferencia
+        backendOnline
+        configuracaoAtiva={{ ...CONFIGURACAO_ATIVA, requer_revalidacao: true }}
+      />,
+    );
+    await preencherEConferir(usuario);
+
+    expect(await screen.findByText("REVISAR")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cadastrar servidor/membro" })).not.toBeInTheDocument();
+  });
+
+  it("abre o modal com o CPF já consultado ao clicar em 'Cadastrar servidor/membro'", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_REVISAR_CADASTRO_AUSENTE);
+
+    render(<Conferencia backendOnline configuracaoAtiva={CONFIGURACAO_ATIVA} />);
+    await preencherEConferir(usuario);
+    await usuario.click(await screen.findByRole("button", { name: "Cadastrar servidor/membro" }));
+
+    expect(screen.getByText("Modal de cadastro — CPF 12345678901")).toBeInTheDocument();
+  });
+
+  it("O) ao concluir o cadastro, fecha o modal e reconsulta o MESMO CPF/período — nunca aceita um resultado montado no frontend (RN-11)", async () => {
+    const usuario = userEvent.setup();
+    conferirMock
+      .mockResolvedValueOnce(RESULTADO_REVISAR_CADASTRO_AUSENTE)
+      .mockResolvedValueOnce(RESULTADO_APTO);
+
+    render(<Conferencia backendOnline configuracaoAtiva={CONFIGURACAO_ATIVA} />);
+    await preencherEConferir(usuario);
+    await usuario.click(await screen.findByRole("button", { name: "Cadastrar servidor/membro" }));
+
+    await usuario.click(screen.getByRole("button", { name: "Concluir cadastro (dublê)" }));
+
+    expect(screen.queryByText(/Modal de cadastro/)).not.toBeInTheDocument();
+    expect(conferirMock).toHaveBeenCalledTimes(2);
+    expect(conferirMock).toHaveBeenNthCalledWith(2, "12345678901", "2026-07-21", "2026-07-23", "PADRAO");
+    expect(await screen.findByText("APTO PARA PROCESSAMENTO")).toBeInTheDocument();
+  });
+
+  it("item 6 do pedido 'Ajuste Funcional + UX': CPF corrigido no modal — reconsulta usa o CPF FINAL salvo, nunca o originalmente pesquisado", async () => {
+    const usuario = userEvent.setup();
+    conferirMock
+      .mockResolvedValueOnce(RESULTADO_REVISAR_CADASTRO_AUSENTE)
+      .mockResolvedValueOnce(RESULTADO_APTO);
+
+    render(<Conferencia backendOnline configuracaoAtiva={CONFIGURACAO_ATIVA} />);
+    await preencherEConferir(usuario); // pesquisa 12345678901
+    await usuario.click(await screen.findByRole("button", { name: "Cadastrar servidor/membro" }));
+
+    // No modal real, o usuário teria corrigido o CPF de 12345678901 para
+    // 22222222222 antes de salvar — o dublê simula exatamente esse
+    // resultado via `onCpfResolvido("22222222222")`.
+    await usuario.click(
+      screen.getByRole("button", { name: "Concluir cadastro com CPF corrigido (dublê)" }),
+    );
+
+    expect(conferirMock).toHaveBeenCalledTimes(2);
+    expect(conferirMock).toHaveBeenNthCalledWith(2, "22222222222", "2026-07-21", "2026-07-23", "PADRAO");
+    expect(await screen.findByText("APTO PARA PROCESSAMENTO")).toBeInTheDocument();
+
+    // O campo de busca da tela também reflete o CPF final — nunca fica
+    // "preso" mostrando o CPF antigo enquanto o resultado já é do novo.
+    expect(screen.getByLabelText("CPF do servidor")).toHaveValue("22222222222");
+  });
+
+  it("'Fechar' no modal fecha sem reconsultar", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_REVISAR_CADASTRO_AUSENTE);
+
+    render(<Conferencia backendOnline configuracaoAtiva={CONFIGURACAO_ATIVA} />);
+    await preencherEConferir(usuario);
+    await usuario.click(await screen.findByRole("button", { name: "Cadastrar servidor/membro" }));
+
+    await usuario.click(screen.getByRole("button", { name: "Fechar modal de cadastro" }));
+
+    expect(screen.queryByText(/Modal de cadastro/)).not.toBeInTheDocument();
+    expect(conferirMock).toHaveBeenCalledTimes(1);
   });
 });

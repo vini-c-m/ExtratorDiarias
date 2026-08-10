@@ -227,6 +227,146 @@ describe("SelecionarProcessar — cancelamento do processamento", () => {
   });
 });
 
+// Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 5-7 e 14) —
+// `aoMudarSolicitarSaidaSegura` é o mecanismo que `App.tsx` usa para
+// Voltar/Configurações reaproveitarem a MESMA confirmação/interrupção já
+// testada acima, sem duplicar lógica nenhuma.
+describe("SelecionarProcessar — solicitarSaidaSegura (Voltar/Configurações reaproveitam a interrupção)", () => {
+  function montarComCaptura() {
+    const funcaoRef: { atual: ((aoConcluir: () => void) => void) | null } = { atual: null };
+    const utilitarios = render(
+      <SelecionarProcessar
+        backendOnline
+        aoMudarSolicitarSaidaSegura={(funcao) => {
+          funcaoRef.atual = funcao;
+        }}
+      />,
+    );
+    return { ...utilitarios, funcaoRef };
+  }
+
+  it("A/F) sem processamento ativo, conclui a saída na hora — navegação normal", async () => {
+    const { funcaoRef } = montarComCaptura();
+    const aoConcluir = vi.fn();
+
+    funcaoRef.atual?.(aoConcluir);
+
+    expect(aoConcluir).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("A) com processamento ativo, mostra a MESMA confirmação de 'Interromper Processamento' (não navega ainda)", async () => {
+    const usuario = userEvent.setup();
+    processarMock.mockImplementation(() => new Promise(() => {}));
+    const { funcaoRef } = montarComCaptura();
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    await screen.findByRole("button", { name: "⏹ Interromper Processamento" });
+    const aoConcluir = vi.fn();
+
+    act(() => funcaoRef.atual?.(aoConcluir));
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByText("Interromper processamento?")).toBeInTheDocument();
+    expect(aoConcluir).not.toHaveBeenCalled();
+  });
+
+  it("B) cancelar a confirmação não conclui — permanece na tela, processamento continua, e não conclui depois", async () => {
+    const usuario = userEvent.setup();
+    let sinalCapturado: AbortSignal | undefined;
+    processarMock.mockImplementation((_caminhos, _onProgresso, signal) => {
+      sinalCapturado = signal;
+      return new Promise(() => {});
+    });
+    const { funcaoRef } = montarComCaptura();
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    await screen.findByRole("button", { name: "⏹ Interromper Processamento" });
+    const aoConcluir = vi.fn();
+    act(() => funcaoRef.atual?.(aoConcluir));
+
+    await usuario.click(screen.getByRole("button", { name: "Continuar Processando" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(sinalCapturado?.aborted).toBe(false);
+    expect(aoConcluir).not.toHaveBeenCalled();
+  });
+
+  it("C) confirmar interrompe e SÓ DEPOIS conclui a saída pendente — nunca antes da interrupção terminar", async () => {
+    const usuario = userEvent.setup();
+    processarMock.mockImplementation(
+      (_caminhos, _onProgresso, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new ProcessamentoCanceladoError()));
+        }),
+    );
+    const { funcaoRef } = montarComCaptura();
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    await screen.findByRole("button", { name: "⏹ Interromper Processamento" });
+    const aoConcluir = vi.fn();
+    act(() => funcaoRef.atual?.(aoConcluir));
+
+    await act(async () => {
+      await usuario.click(screen.getByRole("button", { name: "Interromper" }));
+    });
+
+    expect(aoConcluir).toHaveBeenCalledTimes(1);
+    // O processamento já tinha realmente terminado quando a saída concluiu
+    // — de volta ao botão "Processar", sem diálogo.
+    expect(screen.getByRole("button", { name: "Processar" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("D) Configurações usa exatamente o mesmo mecanismo que Voltar (mesma função, sem lógica duplicada)", async () => {
+    const usuario = userEvent.setup();
+    processarMock.mockImplementation(
+      (_caminhos, _onProgresso, signal) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new ProcessamentoCanceladoError()));
+        }),
+    );
+    const { funcaoRef } = montarComCaptura();
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    await screen.findByRole("button", { name: "⏹ Interromper Processamento" });
+    const aoConcluirVoltar = vi.fn();
+    const aoConcluirConfiguracoes = vi.fn();
+
+    act(() => funcaoRef.atual?.(aoConcluirVoltar));
+    // Uma segunda chamada (ex.: usuário clicou Configurações enquanto o
+    // diálogo de Voltar já estava aberto) não duplica o diálogo nem quebra.
+    act(() => funcaoRef.atual?.(aoConcluirConfiguracoes));
+    expect(screen.getAllByRole("alertdialog")).toHaveLength(1);
+
+    await act(async () => {
+      await usuario.click(screen.getByRole("button", { name: "Interromper" }));
+    });
+
+    // Só a saída pendente MAIS RECENTE é concluída — mesma semântica de
+    // "sobrescrever a intenção anterior", nunca as duas ao mesmo tempo.
+    expect(aoConcluirConfiguracoes).toHaveBeenCalledTimes(1);
+    expect(aoConcluirVoltar).not.toHaveBeenCalled();
+  });
+
+  it("reporta null ao desmontar — App.tsx nunca guarda uma função de um componente já saído", () => {
+    const funcaoRef: { atual: ((aoConcluir: () => void) => void) | null } = { atual: null };
+    const { unmount } = render(
+      <SelecionarProcessar
+        backendOnline
+        aoMudarSolicitarSaidaSegura={(funcao) => {
+          funcaoRef.atual = funcao;
+        }}
+      />,
+    );
+    expect(funcaoRef.atual).not.toBeNull();
+
+    unmount();
+
+    expect(funcaoRef.atual).toBeNull();
+  });
+});
+
 // Sprint 05.2 — "Salvar Relatório" (diálogo nativo "Salvar Como...") e
 // "Abrir Local" (pasta escolhida pelo usuário) na tela de conclusão, sem
 // afetar a visualização já homologada ("Abrir Relatório").

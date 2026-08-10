@@ -122,3 +122,34 @@ export const ALTURA_LISTA_ROLAVEL = "max-h-80";
  * Tailwind); esta constante existe só para nenhum componente reescrever o
  * nome da classe "no olho". */
 export const SCROLL_FINO = "scroll-fino";
+
+/** Padronização visual do modal de Cadastro de Servidor/Membro — gatilho
+ * compartilhado por `ComboboxPesquisavel` (um `<input>`) e `Selecao` (um
+ * `<button>`): mesma superfície "vidro" de `Campo`, com espaço reservado à
+ * direita (`pr-9`) para o Chevron indicador de dropdown. Cor do texto e o
+ * anel de foco (`FOCO_ANEL`) ficam a critério de quem usa — o botão precisa
+ * de um tom diferente quando vazio (placeholder), o input não. Um único
+ * lugar garante que os dois nunca divirjam visualmente — nenhuma parte do
+ * modal deve parecer "Dark UI" e outra parecer controle nativo do SO. */
+export const CAMPO_COM_DROPDOWN =
+  "w-full rounded-lg border border-white/[0.12] bg-white/[0.03] py-2.5 pl-3.5 pr-9 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-40";
+
+/** Painel do dropdown (lista de opções) de `ComboboxPesquisavel`/`Selecao` —
+ * superfície opaca (mesmo tom de `PAINEL_MODAL`) para nunca deixar o popup
+ * branco nativo do SO/navegador aparecer atrás, com a mesma scrollbar fina
+ * (`SCROLL_FINO`) das demais listas roláveis do app. */
+export const PAINEL_DROPDOWN =
+  "absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-white/10 bg-[#0b1120] py-1 shadow-dialog scroll-fino";
+
+/** Variante "expandida" de `PAINEL_DROPDOWN` — para um combobox que vive
+ * numa coluna estreita (ex.: Cargo, ao lado de Matrícula) mas cujas opções
+ * têm texto longo (cargos completos não devem truncar). Ancorado pela
+ * BORDA DIREITA (`right-0`, nunca `left-0`) porque cresce sempre para a
+ * ESQUERDA: a borda direita do campo já fica rente à borda do modal (sem
+ * folga para crescer pra direita sem estourar o card), enquanto a
+ * esquerda tem a coluna vizinha inteira livre. `max-w-[26rem]` é
+ * deliberadamente menor que a largura útil do modal (`max-w-lg` com
+ * `p-8`, ~28rem de conteúdo) para nunca ultrapassar a borda esquerda do
+ * card mesmo crescendo a partir da coluna mais à direita. */
+export const PAINEL_DROPDOWN_EXPANDIDO =
+  "absolute right-0 z-10 mt-1 max-h-56 w-max min-w-full max-w-[26rem] overflow-auto rounded-lg border border-white/10 bg-[#0b1120] py-1 shadow-dialog scroll-fino";

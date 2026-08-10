@@ -29,15 +29,12 @@ const GRAFICO_POR_INSIGHT: Record<string, "municipio" | "periodo"> = {
 };
 
 interface Props {
-  backendOnline: boolean;
   filtros: ParametrosPesquisaDiariasQuery;
   indicadores: IndicadoresResposta | null;
   indicadoresCarregando: boolean;
   indicadoresErro: string | null;
   aoTentarNovamenteIndicadores: () => void;
   onMudarFiltro: (parcial: Partial<Record<CampoDeFiltro, string | undefined>>) => void;
-  onRemoverFiltro: (campo: CampoDeFiltro) => void;
-  onLimparTudo: () => void;
   aoVoltar: () => void;
   /** Sprint 21.4 — ações do painel lateral que navegam para fora do Modo
    * Executivo (`v2-arquitetura-funcional.md`-style: `CentralAnalitica.tsx`
@@ -78,15 +75,12 @@ interface Props {
  * suas próprias chamadas de distribuição (`motivo`/`servidor` filtrados)
  * nunca disparam com o painel fechado. */
 export default function ModoExecutivo({
-  backendOnline,
   filtros,
   indicadores,
   indicadoresCarregando,
   indicadoresErro,
   aoTentarNovamenteIndicadores,
   onMudarFiltro,
-  onRemoverFiltro,
-  onLimparTudo,
   aoVoltar,
   aoAbrirRelatorio,
   aoAbrirDiagnostico,
@@ -244,12 +238,7 @@ export default function ModoExecutivo({
   return (
     <div className="modo-executivo animate-entrada-painel space-y-5">
       <CabecalhoExecutivo
-        backendOnline={backendOnline}
         filtros={filtros}
-        onMudarFiltro={onMudarFiltro}
-        onRemoverFiltro={onRemoverFiltro}
-        onLimparTudo={onLimparTudo}
-        aoVoltar={aoVoltar}
         comparacao={comparacao}
         aoEntrarApresentacao={apresentacao.entrar}
         exportacao={exportacao}

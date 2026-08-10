@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CentralAnalitica from "./CentralAnalitica";
@@ -188,31 +188,39 @@ afterEach(() => {
 });
 
 describe("CentralAnalitica", () => {
+  // MS UX — Simplificação da Central Analítica (2026-08-10): de 16 filtros
+  // colapsados atrás de "Filtros" para só 4 campos SEMPRE visíveis
+  // (SEI/CPF/Período Inicial/Período Final, item 1) — nenhum toggle
+  // "Filtros" a mais para expandir.
   it("abre direto no fluxo único, sem abas: filtros e tabela já visíveis", async () => {
     render(<CentralAnalitica backendOnline />);
 
     expect(screen.getByRole("heading", { name: "Central Analítica" })).toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
-    expect(obterOpcoesFiltroMock).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: /Filtros/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("SEI")).toBeInTheDocument();
+    expect(screen.getByLabelText("CPF")).toBeInTheDocument();
+    expect(screen.getByLabelText("Período inicial")).toBeInTheDocument();
+    expect(screen.getByLabelText("Período final")).toBeInTheDocument();
   });
 
-  // Sprint 19.5.6.1 — fecha o achado da auditoria da 19.5.6: `FiltrosRapidos`
-  // agora é alcançável e utilizável na tela real (não só isolado em sua
-  // própria suíte), e um clique nele reage pelo mesmo fluxo homologado de
-  // `useDiarias` (nova chamada a `pesquisarDiarias`, sem hook/estado novo).
-  it("clicar num atalho rápido na tela real atualiza o período e refaz a busca via useDiarias", async () => {
-    const usuario = userEvent.setup();
+  // H) item 13 do pedido — a barra de pesquisa rápida não existe mais.
+  it("H) não existe mais nenhuma barra de pesquisa rápida", async () => {
+    render(<CentralAnalitica backendOnline />);
+
+    await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+  });
+
+  it("digitar no campo SEI refaz a busca via useDiarias", async () => {
     render(<CentralAnalitica backendOnline />);
     await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalledTimes(1));
 
-    await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+    fireEvent.change(screen.getByLabelText("SEI"), { target: { value: "19.20.0001" } });
 
     await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalledTimes(2));
     const [ultimaChamada] = pesquisarDiariasMock.mock.calls.at(-1)!;
-    expect(ultimaChamada.periodo_inicial).toEqual(expect.any(String));
-    expect(ultimaChamada.periodo_final).toEqual(expect.any(String));
+    expect(ultimaChamada.sei).toBe("19.20.0001");
     expect(ultimaChamada.pagina).toBe(1);
   });
 
@@ -230,9 +238,7 @@ describe("CentralAnalitica", () => {
 
   // Sprint 19.6.2 — `GET /indicadores` (19.6.1): `ResumoRecorte` passa a
   // mostrar valor total/médio reais, reaproveitando os mesmos
-  // `diarias.filtros` já usados por `useDiarias` (nunca um segundo estado
-  // de filtro — `obterIndicadoresMock` é chamado com os mesmos 15 campos
-  // de filtro, nunca paginação/ordenação).
+  // `diarias.filtros` já usados por `useDiarias`.
   it("resumo do recorte mostra valor total/médio reais quando os indicadores carregam", async () => {
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
     obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
@@ -251,22 +257,20 @@ describe("CentralAnalitica", () => {
     expect(parametros).not.toHaveProperty("ordenar_por");
   });
 
-  it("recorte vazio: as 3 ações ficam desabilitadas", async () => {
+  it("recorte vazio: as 2 ações de geração ficam desabilitadas", async () => {
     render(<CentralAnalitica backendOnline />);
 
     await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ })).toBeDisabled();
   });
 
-  it("recorte com resultado: as 3 ações ficam habilitadas", async () => {
+  it("recorte com resultado: as 2 ações de geração ficam habilitadas", async () => {
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
     render(<CentralAnalitica backendOnline />);
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeEnabled());
     expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ })).toBeEnabled();
   });
 
   // Sprint 19.6.4 — Dashboard ganha conteúdo real (`DashboardRecorte`);
@@ -311,44 +315,63 @@ describe("CentralAnalitica", () => {
     expect(parametros.tipo).toBe("executivo");
   });
 
-  // Correção de foco (2026-08-05) — substitui a antiga "Análise Rápida
-  // (Diagnóstico)": o botão abre `PainelDocumentosHabeisPendentes`, nunca
-  // mais `PainelDiagnostico`.
-  it("clicar em 'Documentos Hábeis Pendentes' mostra o PainelDocumentosHabeisPendentes real no lugar da tabela", async () => {
-    const usuario = userEvent.setup();
-    pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
-    render(<CentralAnalitica backendOnline />);
-    await waitFor(() => expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ })).toBeEnabled());
+  // MS UX (item 5) — I) a notificação de Documentos Hábeis Pendentes
+  // substitui o antigo botão com badge de `PainelAcoesRecorte` + o antigo
+  // banner dedicado — agora é uma notificação única em destaque, no lugar
+  // onde antes ficava a barra de pesquisa rápida.
+  describe("I) Notificação de Documentos Hábeis Pendentes", () => {
+    it("sem nenhuma pendência, a notificação não aparece", async () => {
+      render(<CentralAnalitica backendOnline />);
 
-    await usuario.click(screen.getByRole("button", { name: /Documentos Hábeis Pendentes/ }));
+      await waitFor(() => expect(obterDocumentosHabeisPendentesMock).toHaveBeenCalled());
+      expect(screen.queryByText(/Documentos? Háb(el|eis) Pendente/)).not.toBeInTheDocument();
+    });
 
-    await waitFor(() => expect(obterDocumentosHabeisPendentesMock).toHaveBeenCalledTimes(1));
-    await waitFor(() =>
+    it("com pendências, mostra a contagem total (aguardando + revisão manual) em destaque", async () => {
+      obterDocumentosHabeisPendentesMock.mockResolvedValue({
+        resumo: { aguardando_liberacao: 2, revisao_manual_necessaria: 1 },
+        registros: DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO.registros,
+      });
+      render(<CentralAnalitica backendOnline />);
+
+      expect(await screen.findByRole("button", { name: /3 Documentos Hábeis Pendentes/ })).toBeInTheDocument();
+    });
+
+    it("clicar na notificação mostra o PainelDocumentosHabeisPendentes real no lugar da tabela", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      const botaoAbrir = await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ });
+
+      await usuario.click(botaoAbrir);
+
+      // `PainelDocumentosHabeisPendentes` recebe o resultado já carregado
+      // pela mesma instância de `useDocumentosHabeisPendentes` (prop, não
+      // uma busca independente) — nenhuma chamada nova.
+      const linha = await screen.findByRole("row", {
+        name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}`,
+      });
+      expect(linha).toBeInTheDocument();
+      expect(screen.queryByText("Ainda não disponível")).not.toBeInTheDocument();
+      expect(obterDiagnosticoMock).not.toHaveBeenCalled();
+
+      await usuario.click(screen.getByRole("button", { name: "← Voltar aos resultados" }));
       expect(
-        screen.getByText("Nenhum processo deste recorte está com o Documento Hábil pendente."),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.queryByText("Ainda não disponível")).not.toBeInTheDocument();
-    expect(obterDiagnosticoMock).not.toHaveBeenCalled();
-
-    await usuario.click(screen.getByRole("button", { name: "← Voltar aos resultados" }));
-    expect(
-      screen.queryByText("Nenhum processo deste recorte está com o Documento Hábil pendente."),
-    ).not.toBeInTheDocument();
+        screen.queryByRole("row", { name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}` }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   // Correção de foco — "Ver detalhes" de Documentos Hábeis Pendentes abre o
   // mesmo painel de detalhamento do § 5 (nunca uma tela nova), com o foco
-  // inicial no bloco "Avisos e diagnósticos" em vez do título — mesmo alvo
-  // de foco já usado pelo Diagnóstico geral (é literalmente o mesmo caso de
-  // `dh`, nunca um terceiro bloco de foco novo).
+  // inicial no bloco "Avisos e diagnósticos" em vez do título.
   it("'Ver detalhes' em Documentos Hábeis Pendentes abre o painel de detalhamento com o foco no bloco de avisos", async () => {
     const usuario = userEvent.setup();
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
     obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
     render(<CentralAnalitica backendOnline />);
-    const botaoAbrir = await screen.findByRole("button", { name: "Documentos Hábeis Pendentes (1)" });
-    await waitFor(() => expect(botaoAbrir).toBeEnabled());
+    const botaoAbrir = await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ });
     await usuario.click(botaoAbrir);
     const linha = await screen.findByRole("row", {
       name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}`,
@@ -371,8 +394,7 @@ describe("CentralAnalitica", () => {
     pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
     obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
     render(<CentralAnalitica backendOnline />);
-    const botaoAbrir = await screen.findByRole("button", { name: "Documentos Hábeis Pendentes (1)" });
-    await waitFor(() => expect(botaoAbrir).toBeEnabled());
+    const botaoAbrir = await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ });
     await usuario.click(botaoAbrir);
     const linha = await screen.findByRole("row", {
       name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}`,
@@ -403,56 +425,107 @@ describe("CentralAnalitica", () => {
     expect(screen.queryByText("Total de diárias")).not.toBeInTheDocument();
   });
 
-  // Sprint 21.2 (Modo Executivo) — mesmo critério de habilitação/fiação já
-  // testado para "Gerar Dashboard" acima: o botão "Modo Executivo" segue a
-  // mesma regra de `recorteValido` e abre o componente real no lugar da
-  // tabela, preservando o recorte ao voltar (decisão 2 da arquitetura
-  // funcional — nenhum estado de filtro paralelo).
-  describe("Modo Executivo (Sprint 21.2)", () => {
-    it("recorte vazio: o botão 'Modo Executivo' fica desabilitado", async () => {
+  // MS UX — Simplificação da Central Analítica (2026-08-10, item 8): Dark
+  // Mode Executivo virou um TOGGLE único — "L) Dark Mode é toggle único" e
+  // "M) 'Voltar ao modo operacional' não existe mais" (item 13).
+  describe("Dark Mode Executivo (toggle único, MS UX 2026-08-10)", () => {
+    it("recorte vazio: o toggle 'Dark Mode Executivo' fica desabilitado", async () => {
       render(<CentralAnalitica backendOnline />);
 
       await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalled());
       expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeDisabled();
     });
 
-    it("recorte com resultado: o botão 'Modo Executivo' fica habilitado", async () => {
+    it("recorte com resultado: o toggle 'Dark Mode Executivo' fica habilitado", async () => {
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
       render(<CentralAnalitica backendOnline />);
 
       await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
     });
 
-    it("clicar em 'Modo Executivo' mostra o Modo Executivo real no lugar da tabela, preservando o filtro aplicado", async () => {
+    it("L) clicar liga o Dark Mode Executivo (toggle aceso, aria-pressed=true) e mostra o conteúdo real", async () => {
       const usuario = userEvent.setup();
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
       obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
       render(<CentralAnalitica backendOnline />);
       await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
 
-      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+      const toggle = screen.getByRole("button", { name: "Dark Mode Executivo" });
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      await usuario.click(toggle);
 
       expect(await screen.findByRole("heading", { name: "Modo Executivo" })).toBeInTheDocument();
       expect(screen.queryByRole("table")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toHaveAttribute("aria-pressed", "true");
       // Nenhuma nova busca de `/diarias` — o mesmo recorte de `useDiarias`
       // é reaproveitado, nunca refeito ao trocar de modo.
       expect(pesquisarDiariasMock).toHaveBeenCalledTimes(1);
     });
 
-    it("'← Voltar ao Modo Operacional' devolve a tabela com o mesmo recorte", async () => {
+    it("L/M) clicar de novo no MESMO botão desliga o Dark Mode — não existe mais um botão separado 'Voltar ao Modo Operacional'", async () => {
       const usuario = userEvent.setup();
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
       obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
       render(<CentralAnalitica backendOnline />);
       await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
-      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+      const toggle = screen.getByRole("button", { name: "Dark Mode Executivo" });
+      await usuario.click(toggle);
       await screen.findByRole("heading", { name: "Modo Executivo" });
 
-      await usuario.click(screen.getByRole("button", { name: "← Voltar ao Modo Operacional" }));
+      expect(screen.queryByRole("button", { name: /Voltar ao Modo Operacional/ })).not.toBeInTheDocument();
+      // Só existe UM botão "Dark Mode Executivo" na árvore inteira.
+      expect(screen.getAllByRole("button", { name: "Dark Mode Executivo" })).toHaveLength(1);
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
 
       expect(screen.queryByRole("heading", { name: "Modo Executivo" })).not.toBeInTheDocument();
       expect(screen.getByRole("table")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toHaveAttribute("aria-pressed", "false");
       expect(pesquisarDiariasMock).toHaveBeenCalledTimes(1);
+    });
+
+    // J) item 13 — Dark Mode ativo esconde DH/Gerar Dashboard/Gerar
+    // Relatório/sincronização manual (o mock de `IndicadorSincronizacao`
+    // renderiza sempre "Indicador de sincronização" — some daqui também).
+    it("J) Dark Mode ativo esconde a notificação de DH, os botões de geração e o indicador de sincronização", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ });
+      expect(screen.getByText("Indicador de sincronização")).toBeInTheDocument();
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+      await screen.findByRole("heading", { name: "Modo Executivo" });
+
+      expect(screen.queryByText(/Documento Hábil Pendente/)).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Gerar Dashboard" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Gerar Relatório" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Indicador de sincronização")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("SEI")).not.toBeInTheDocument();
+    });
+
+    // K) item 13 — desligar o Dark Mode restaura tudo (nenhuma lógica foi
+    // removida, só a visibilidade).
+    it("K) desligar o Dark Mode restaura a notificação de DH, os botões de geração e o indicador de sincronização", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ });
+      const toggle = screen.getByRole("button", { name: "Dark Mode Executivo" });
+      await usuario.click(toggle);
+      await screen.findByRole("heading", { name: "Modo Executivo" });
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+
+      expect(await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeInTheDocument();
+      expect(screen.getByText("Indicador de sincronização")).toBeInTheDocument();
+      expect(screen.getByLabelText("SEI")).toBeInTheDocument();
     });
 
     // Sprint 21.4 — painel lateral contextual: "Abrir relatório"/"Abrir
@@ -482,23 +555,6 @@ describe("CentralAnalitica", () => {
       ));
     });
 
-    // Correção de foco (2026-08-05) — o Diagnóstico geral (catálogo de
-    // anomalias) deixa de ser alcançável pelo botão de `PainelAcoesRecorte`
-    // (que agora abre Documentos Hábeis Pendentes), mas continua existindo
-    // e continua alcançável pelo Modo Executivo, via o painel lateral
-    // contextual (clique num ponto de gráfico).
-    //
-    // BI 4.0 (2026-08-08) — a lateral de Insights do Modo Executivo passou
-    // a ser exclusivamente financeira/gerencial (pedido explícito do
-    // usuário): o caminho "insight de diagnóstico → Abrir diagnóstico" foi
-    // removido (o insight de duplicidade nunca mais aparece na lateral
-    // executiva), e a célula "Atenção (diagnóstico)" da faixa de KPI
-    // também saiu do Modo Executivo (mesma Sprint) — o dado continua
-    // acessível em Diagnóstico geral. Este teste passa a validar as duas
-    // pontas: (1) diagnóstico não aparece mais na lateral/faixa de KPI,
-    // mesmo com um caso no recorte; (2) "Abrir diagnóstico" continua
-    // alcançável de ponta a ponta pelo painel lateral contextual (clique
-    // num ponto de gráfico, Sprint 21.4 — nunca removido).
     it("diagnóstico não aparece mais na lateral de Insights, mas 'Abrir diagnóstico' via painel lateral contextual continua funcionando de ponta a ponta", async () => {
       const usuario = userEvent.setup();
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
@@ -538,125 +594,191 @@ describe("CentralAnalitica", () => {
     });
   });
 
-  // Correção de foco (2026-08-05) — aviso dentro da Central Analítica
-  // quando algum processo do recorte atual atingiu a data de liberação do
-  // DH e continua sem DH (§ 5 do pedido).
-  describe("Aviso de liberação atingida (correção de foco 2026-08-05)", () => {
-    it("sem processos em revisão manual, nenhum aviso aparece", async () => {
-      render(<CentralAnalitica backendOnline />);
-
-      await waitFor(() => expect(obterDocumentosHabeisPendentesMock).toHaveBeenCalled());
-      expect(
-        screen.queryByText(/cuja data de liberação do Documento Hábil foi atingida/),
-      ).not.toBeInTheDocument();
-    });
-
-    it("com 1 processo em revisão manual, mostra o aviso com a contagem no singular ('Existe ... processo ... permanece')", async () => {
-      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
-      render(<CentralAnalitica backendOnline />);
-
-      expect(
-        await screen.findByText(
-          "Existe 1 processo cuja data de liberação do Documento Hábil foi atingida e que ainda permanece sem DH.",
-        ),
-      ).toBeInTheDocument();
-    });
-
-    it("com vários processos em revisão manual, mostra o aviso no plural ('Existem ... processos ... permanecem')", async () => {
-      obterDocumentosHabeisPendentesMock.mockResolvedValue({
-        ...DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO,
-        resumo: { aguardando_liberacao: 0, revisao_manual_necessaria: 3 },
-      });
-      render(<CentralAnalitica backendOnline />);
-
-      expect(
-        await screen.findByText(
-          "Existem 3 processos cuja data de liberação do Documento Hábil foi atingida e que ainda permanecem sem DH.",
-        ),
-      ).toBeInTheDocument();
-    });
-
-    it("'Abrir Documentos Hábeis Pendentes' no aviso abre a tela sem filtro aplicado", async () => {
-      const usuario = userEvent.setup();
+  // MS — Insights vivos por destaque sequencial + isolamento de filtros
+  // (2026-08-10, itens 8-14): Modo Operacional e Dark Mode Executivo têm
+  // contextos de filtro isolados — nada aplicado só dentro do Executivo
+  // (zoom de período, "Comparar", drill-down por gráfico ainda não
+  // explicitamente "aplicado") pode permanecer ativo ao desligar o toggle.
+  describe("Isolamento de filtros entre Modo Operacional e Dark Mode Executivo", () => {
+    async function ligarDarkMode(usuario: ReturnType<typeof userEvent.setup>) {
       pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
-      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
       render(<CentralAnalitica backendOnline />);
-      await screen.findByText(/cuja data de liberação do Documento Hábil foi atingida/);
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+      await screen.findByRole("heading", { name: "Modo Executivo" });
+    }
 
-      await usuario.click(screen.getByRole("button", { name: "Abrir Documentos Hábeis Pendentes" }));
+    // A) Comparação ("Comparar: Membros × Servidores") escreve
+    // `categoria_funcional` direto em `diarias.filtros` (mesma instância
+    // compartilhada, decisão de arquitetura) enquanto permanece no
+    // Executivo — ao sair pelo toggle, não pode sobrar no Operacional.
+    it("A) 'Comparar: Membros × Servidores' aplica categoria_funcional no Dark Mode → sair → não permanece no Operacional", async () => {
+      const usuario = userEvent.setup();
+      await ligarDarkMode(usuario);
 
-      const grupo = await screen.findByRole("radiogroup", { name: "Filtrar Documentos Hábeis Pendentes" });
-      expect(within(grupo).getByRole("radio", { name: /^Todos/ })).toHaveAttribute("aria-checked", "true");
+      await usuario.click(screen.getByRole("button", { name: "Comparar" }));
+      await usuario.click(screen.getByRole("menuitem", { name: "Membros × Servidores" }));
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ categoria_funcional: "MEMBRO" }),
+      ));
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ categoria_funcional: expect.anything() }),
+      ));
     });
 
-    it("'Ver revisão manual' no aviso abre a tela já filtrada para 'Revisão manual necessária'", async () => {
+    // B) Zoom temporal nos gráficos de evolução ("filtro por gráfico") —
+    // mesmo padrão: escreve período direto em `diarias.filtros` dentro do
+    // Executivo; sair pelo toggle restaura o período operacional anterior
+    // (aqui, nenhum — "Todos os períodos").
+    it("B) zoom de período num gráfico aplica filtro no Dark Mode → sair → período não permanece", async () => {
       const usuario = userEvent.setup();
-      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
-      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
-      render(<CentralAnalitica backendOnline />);
-      await screen.findByText(/cuja data de liberação do Documento Hábil foi atingida/);
-
-      await usuario.click(screen.getByRole("button", { name: "Ver revisão manual" }));
-
-      expect(await screen.findByRole("radio", { name: /Revisão manual necessária/ })).toHaveAttribute(
-        "aria-checked",
-        "true",
+      obterDistribuicaoMock.mockImplementation(async (parametros) =>
+        parametros.dimensao === "periodo"
+          ? { dimensao: "periodo", pontos: [{ rotulo: "2026-05", contagem: 8, valor: 3200 }] }
+          : { dimensao: parametros.dimensao, pontos: [] },
       );
+      await ligarDarkMode(usuario);
+      await waitFor(() => expect(screen.getByText("Evolução da quantidade")).toBeInTheDocument());
+
+      const zonaMaio = screen.getByRole("button", { name: "mai/2026: 8 — selecionar para o intervalo de zoom" });
+      fireEvent.pointerDown(zonaMaio);
+      fireEvent.pointerUp(zonaMaio);
+      await usuario.click(screen.getByRole("button", { name: "Aplicar como filtro" }));
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ periodo_inicial: "2026-05-01", periodo_final: "2026-05-31" }),
+      ));
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ periodo_inicial: undefined, periodo_final: undefined }),
+      ));
+      expect(screen.getByLabelText("Período inicial")).toHaveValue("");
     });
 
-    it("'Dispensar' esconde o aviso nesta sessão, sem marcar nada como resolvido nem gravar na planilha", async () => {
+    // C) Drill-down territorial: só ABRIR o painel lateral contextual
+    // (clicar num ponto do gráfico de Municípios) nunca aplica filtro —
+    // fechar sem clicar "Aplicar filtro" e sair do Dark Mode nunca deixa
+    // nada preso (reforça o isolamento por um ângulo diferente de A/B: a
+    // simples navegação/exploração dentro do Executivo é sempre inócua).
+    it("C) abrir e fechar o drill-down territorial sem 'Aplicar filtro' não deixa nenhum filtro preso", async () => {
       const usuario = userEvent.setup();
-      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      obterDistribuicaoMock.mockImplementation(async (parametros) =>
+        parametros.dimensao === "municipio"
+          ? { dimensao: "municipio", pontos: [{ rotulo: "Araripina", contagem: 1, valor: 200 }] }
+          : { dimensao: parametros.dimensao, pontos: [] },
+      );
+      await ligarDarkMode(usuario);
+      await waitFor(() => expect(screen.getByText("Municípios")).toBeInTheDocument());
+
+      await usuario.click(screen.getByRole("button", { name: /Filtrar por Araripina/ }));
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      await usuario.click(screen.getByRole("button", { name: "Fechar painel" }));
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ municipio: expect.anything() }),
+      ));
+    });
+
+    // D) Reentrar no Dark Mode depois de A) começa com o Executivo
+    // limpo — nenhuma comparação/estado residual sobrevive.
+    it("D) reentrar no Dark Mode depois de uma comparação começa limpo (sem 'Comparando:')", async () => {
+      const usuario = userEvent.setup();
+      await ligarDarkMode(usuario);
+      await usuario.click(screen.getByRole("button", { name: "Comparar" }));
+      await usuario.click(screen.getByRole("menuitem", { name: "Membros × Servidores" }));
+      await waitFor(() => expect(screen.getByText(/Comparando:/)).toBeInTheDocument());
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" })); // sai
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" })); // entra de novo
+      await screen.findByRole("heading", { name: "Modo Executivo" });
+
+      expect(screen.queryByText(/Comparando:/)).not.toBeInTheDocument();
+    });
+
+    // E) Um filtro operacional já existente (SEI) deve chegar ao Executivo
+    // normalmente — "isolamento" não significa zerar o recorte ao entrar,
+    // só impedir que o que é exclusivo do Executivo vaze de volta.
+    it("E) filtro operacional (SEI) já aplicado chega ao Dark Mode normalmente, sem ser descartado", async () => {
+      const usuario = userEvent.setup();
+      pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
+      obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
       render(<CentralAnalitica backendOnline />);
-      await screen.findByText(/cuja data de liberação do Documento Hábil foi atingida/);
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalledTimes(1));
+      fireEvent.change(screen.getByLabelText("SEI"), { target: { value: "19.20.0001" } });
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sei: "19.20.0001" }),
+      ));
 
-      await usuario.click(screen.getByRole("button", { name: "Dispensar" }));
+      await waitFor(() => expect(screen.getByRole("button", { name: "Dark Mode Executivo" })).toBeEnabled());
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+      await screen.findByRole("heading", { name: "Modo Executivo" });
 
-      expect(
-        screen.queryByText(/cuja data de liberação do Documento Hábil foi atingida/),
-      ).not.toBeInTheDocument();
-      // O badge do botão continua mostrando a contagem real — dispensar o
-      // aviso nunca altera a fonte da verdade (`dh` vazio + regra de data).
-      expect(screen.getByRole("button", { name: /Documentos Hábeis Pendentes \(1\)/ })).toBeInTheDocument();
+      expect(obterIndicadoresMock).toHaveBeenLastCalledWith(expect.objectContaining({ sei: "19.20.0001" }));
+    });
+
+    // F) Depois de sair do Dark Mode, os controles operacionais continuam
+    // normalmente utilizáveis (não ficam presos/desabilitados).
+    it("F) sair do Dark Mode deixa os controles operacionais utilizáveis", async () => {
+      const usuario = userEvent.setup();
+      await ligarDarkMode(usuario);
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+      await waitFor(() => expect(screen.getByRole("table")).toBeInTheDocument());
+
+      fireEvent.change(screen.getByLabelText("SEI"), { target: { value: "19.20.0002" } });
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sei: "19.20.0002" }),
+      ));
+    });
+
+    // G) Combinando duas mutações executivo-only (comparação +
+    // zoom de período) numa mesma sessão do Dark Mode: sair restaura as
+    // DUAS de uma vez — nenhuma fica "órfã".
+    it("G) nenhum filtro aplicado só dentro do Dark Mode fica preso, mesmo combinando comparação e zoom", async () => {
+      const usuario = userEvent.setup();
+      obterDistribuicaoMock.mockImplementation(async (parametros) =>
+        parametros.dimensao === "periodo"
+          ? { dimensao: "periodo", pontos: [{ rotulo: "2026-05", contagem: 8, valor: 3200 }] }
+          : { dimensao: parametros.dimensao, pontos: [] },
+      );
+      await ligarDarkMode(usuario);
+
+      await usuario.click(screen.getByRole("button", { name: "Comparar" }));
+      await usuario.click(screen.getByRole("menuitem", { name: "Membros × Servidores" }));
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ categoria_funcional: "MEMBRO" }),
+      ));
+      await waitFor(() => expect(screen.getByText("Evolução da quantidade")).toBeInTheDocument());
+      const zonaMaio = screen.getByRole("button", { name: "mai/2026: 8 — selecionar para o intervalo de zoom" });
+      fireEvent.pointerDown(zonaMaio);
+      fireEvent.pointerUp(zonaMaio);
+      await usuario.click(screen.getByRole("button", { name: "Aplicar como filtro" }));
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ periodo_inicial: "2026-05-01" }),
+      ));
+
+      await usuario.click(screen.getByRole("button", { name: "Dark Mode Executivo" }));
+
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({ categoria_funcional: expect.anything() }),
+      ));
+      const [ultimaChamada] = pesquisarDiariasMock.mock.calls.at(-1)!;
+      expect(ultimaChamada.periodo_inicial).toBeUndefined();
+      expect(ultimaChamada.categoria_funcional).toBeUndefined();
     });
   });
 
-  it("usar a barra de pesquisa global aplica o termo buscado e mostra os resultados", async () => {
-    const usuario = userEvent.setup();
-    render(<CentralAnalitica backendOnline />);
-
-    await usuario.type(
-      screen.getByRole("searchbox", { name: /Pesquisar por SEI, CPF, servidor ou município/ }),
-      "araripina{Enter}",
-    );
-
-    await waitFor(() =>
-      expect(pesquisarDiariasMock).toHaveBeenCalledWith(expect.objectContaining({ q: "araripina" })),
-    );
-  });
-
-  it("pesquisar globalmente enquanto vê o Dashboard volta para os resultados", async () => {
-    const usuario = userEvent.setup();
-    pesquisarDiariasMock.mockResolvedValue(RESULTADO_COM_ITENS);
-    obterIndicadoresMock.mockResolvedValue(INDICADORES_COM_VALOR);
-    render(<CentralAnalitica backendOnline />);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeEnabled());
-    await usuario.click(screen.getByRole("button", { name: "Gerar Dashboard" }));
-    await waitFor(() => expect(screen.getByText("Total de diárias")).toBeInTheDocument());
-
-    await usuario.type(
-      screen.getByRole("searchbox", { name: /Pesquisar por SEI, CPF, servidor ou município/ }),
-      "araripina{Enter}",
-    );
-
-    expect(screen.queryByText("Total de diárias")).not.toBeInTheDocument();
-  });
-
-  it("backend offline: mostra o aviso de aplicativo iniciando e desabilita a busca global", () => {
+  it("backend offline: mostra o aviso de aplicativo iniciando", () => {
     render(<CentralAnalitica backendOnline={false} />);
 
     expect(screen.getByText("Aguardando o aplicativo terminar de iniciar...")).toBeInTheDocument();
-    expect(screen.getByRole("searchbox", { name: /Pesquisar por SEI/ })).toBeDisabled();
   });
 
   it("backend online: não mostra o aviso", () => {
@@ -683,7 +805,7 @@ describe("CentralAnalitica", () => {
       await screen.findByRole("heading", { name: RESULTADO_COM_ITENS.itens[0].sei });
     }
 
-    it("'Ver histórico deste CPF' é alcançável na página real, aplica o CPF completo ao useDiarias, refaz a pesquisa na página 1, fecha o painel e mostra o chip mascarado", async () => {
+    it("'Ver histórico deste CPF' é alcançável na página real, aplica o CPF completo ao useDiarias, refaz a pesquisa na página 1 e fecha o painel", async () => {
       const usuario = userEvent.setup();
       await abrirPainelDoPrimeiroRegistro(usuario);
 
@@ -699,10 +821,10 @@ describe("CentralAnalitica", () => {
       expect(ultimaChamada.cpf).toBe(DETALHE_COMPLETO.cpf);
       expect(ultimaChamada.pagina).toBe(1);
 
-      // O chip visível mostra só o CPF mascarado — o completo nunca aparece
-      // na interface, mesmo estando no parâmetro enviado ao backend acima.
-      expect(screen.getByText("CPF: ***.***.***-11")).toBeInTheDocument();
-      expect(screen.queryByText(DETALHE_COMPLETO.cpf)).not.toBeInTheDocument();
+      // MS UX (2026-08-10) — `ChipsFiltroAtivo` saiu da área de filtros
+      // (item 1); o campo CPF (controlado, sem máscara própria) passa a
+      // refletir o valor aplicado diretamente.
+      expect(screen.getByLabelText("CPF")).toHaveValue(DETALHE_COMPLETO.cpf);
     });
 
     it("'Copiar SEI' usa a API real exposta em window.api (contextBridge) quando a página está montada", async () => {
@@ -723,7 +845,10 @@ describe("CentralAnalitica", () => {
   // recorte novo junto do valor_total/valor_medio de um recorte anterior
   // (ou vice-versa), porque nada garantia que as duas respostas
   // pertenciam ao mesmo recorte. Esta matriz reproduz, no nível da página
-  // real (não só no hook isolado), todas as ordens de chegada possíveis.
+  // real (não só no hook isolado), todas as ordens de chegada possíveis —
+  // MS UX (2026-08-10): o gatilho de mudança de recorte deixou de ser
+  // `FiltrosRapidos` ("Mês atual"/"Mês anterior", removido) e passou a ser
+  // o campo Período Inicial (mesmo `useDiarias.aplicarFiltro` por baixo).
   describe("matriz de dessincronia entre tabela e indicadores (correção 19.6.2.1)", () => {
     function criarPromessaControlavel<T>() {
       let resolver!: (valor: T) => void;
@@ -763,6 +888,14 @@ describe("CentralAnalitica", () => {
       return usuario;
     }
 
+    function mudarParaRecorteB() {
+      fireEvent.change(screen.getByLabelText("Período inicial"), { target: { value: "2026-02-01" } });
+    }
+
+    function mudarParaRecorteC() {
+      fireEvent.change(screen.getByLabelText("Período final"), { target: { value: "2026-03-01" } });
+    }
+
     it("/diarias(B) resolve antes de /indicadores(B): a contagem de B aparece sem nenhum indicador de A junto", async () => {
       const usuario = userEvent.setup();
       await montarComRecorteA(usuario);
@@ -772,7 +905,7 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockReturnValueOnce(diariasB.promessa);
       obterIndicadoresMock.mockReturnValueOnce(indicadoresB.promessa);
 
-      await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+      mudarParaRecorteB();
 
       // Só /diarias(B) resolveu até aqui — nenhum indicador de A pode
       // aparecer junto da nova contagem, nem o resumo antigo continuar
@@ -812,7 +945,7 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockReturnValueOnce(diariasB.promessa);
       obterIndicadoresMock.mockReturnValueOnce(indicadoresB.promessa);
 
-      await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+      mudarParaRecorteB();
 
       await act(async () => {
         indicadoresB.resolver(INDICADORES_B);
@@ -844,7 +977,7 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockRejectedValueOnce(new Error("Não foi possível acessar os registros."));
       obterIndicadoresMock.mockResolvedValueOnce(INDICADORES_B);
 
-      await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+      mudarParaRecorteB();
 
       await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeDisabled());
       expect(screen.queryByText(/registro.* no recorte atual/)).not.toBeInTheDocument();
@@ -857,7 +990,7 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockResolvedValueOnce(RESULTADO_B);
       obterIndicadoresMock.mockRejectedValueOnce(new Error("Não foi possível carregar os indicadores."));
 
-      await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+      mudarParaRecorteB();
 
       // Texto exato (sem nenhum valor concatenado) prova que nenhum
       // indicador de A foi exibido junto da nova contagem de B.
@@ -886,7 +1019,7 @@ describe("CentralAnalitica", () => {
       pesquisarDiariasMock.mockRejectedValueOnce(new Error("Não foi possível acessar os registros."));
       obterIndicadoresMock.mockRejectedValueOnce(new Error("Não foi possível carregar os indicadores."));
 
-      await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+      mudarParaRecorteB();
 
       await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Dashboard" })).toBeDisabled());
       expect(screen.queryByText(/registro.* no recorte atual/)).not.toBeInTheDocument();
@@ -900,7 +1033,7 @@ describe("CentralAnalitica", () => {
       const indicadoresB = criarPromessaControlavel<IndicadoresResposta>();
       pesquisarDiariasMock.mockReturnValueOnce(diariasB.promessa);
       obterIndicadoresMock.mockReturnValueOnce(indicadoresB.promessa);
-      await usuario.click(screen.getByRole("button", { name: "Mês atual" }));
+      mudarParaRecorteB();
 
       const RESULTADO_C: ResultadoPesquisaResposta = {
         ...RESULTADO_COM_ITENS,
@@ -917,7 +1050,7 @@ describe("CentralAnalitica", () => {
       const indicadoresC = criarPromessaControlavel<IndicadoresResposta>();
       pesquisarDiariasMock.mockReturnValueOnce(diariasC.promessa);
       obterIndicadoresMock.mockReturnValueOnce(indicadoresC.promessa);
-      await usuario.click(screen.getByRole("button", { name: "Mês anterior" }));
+      mudarParaRecorteC();
 
       // B (obsoleto) resolve primeiro; C (vigente) resolve depois — o
       // resultado final deve ser sempre C.
@@ -971,31 +1104,24 @@ describe("CentralAnalitica", () => {
       expect(obterIndicadoresMock).toHaveBeenCalledTimes(1);
     });
 
-    it("limpar filtros refaz a busca de diárias e de indicadores", async () => {
+    // F) item 13 — "Limpar filtro" (por grupo, já que "Limpar filtros"
+    // global saiu com `ChipsFiltroAtivo`) refaz a busca de diárias e de
+    // indicadores.
+    it("F) Limpar filtro de Período refaz a busca de diárias e de indicadores", async () => {
       const usuario = userEvent.setup();
       await montarComRecorteA(usuario);
 
       pesquisarDiariasMock.mockResolvedValueOnce(RESULTADO_VAZIO);
-      obterIndicadoresMock.mockResolvedValueOnce({
-        ...INDICADORES_VAZIOS,
-      });
-      await usuario.type(
-        screen.getByRole("searchbox", { name: /Pesquisar por SEI, CPF, servidor ou município/ }),
-        "araripina{Enter}",
-      );
-      await waitFor(() => expect(screen.getByRole("button", { name: "Limpar filtros" })).toBeInTheDocument());
+      obterIndicadoresMock.mockResolvedValueOnce({ ...INDICADORES_VAZIOS });
+      mudarParaRecorteB();
+      await waitFor(() => expect(screen.getByRole("button", { name: /Limpar filtro de Período/ })).toBeInTheDocument());
 
       pesquisarDiariasMock.mockResolvedValueOnce(RESULTADO_B);
       obterIndicadoresMock.mockResolvedValueOnce(INDICADORES_B);
-      await usuario.click(screen.getByRole("button", { name: "Limpar filtros" }));
+      await usuario.click(screen.getByRole("button", { name: /Limpar filtro de Período/ }));
 
-      await waitFor(() =>
-        expect(
-          screen.getByText(
-            "5 registros no recorte atual · 3 servidores · R$ 999,00 no total · R$ 333,00 em média",
-          ),
-        ).toBeInTheDocument(),
-      );
+      await waitFor(() => expect(pesquisarDiariasMock).toHaveBeenCalledTimes(3));
+      expect(obterIndicadoresMock).toHaveBeenCalledTimes(3);
     });
   });
 });

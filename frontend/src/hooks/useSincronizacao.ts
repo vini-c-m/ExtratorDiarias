@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { mensagemAmigavel } from "../lib/mensagens";
 import {
   ErroAnaliticaIndisponivel,
@@ -70,14 +70,6 @@ export function useSincronizacao(backendOnline: boolean): EstadoUseSincronizacao
     setCarregando(false);
   }, [buscarEstadoSilenciosamente]);
 
-  useEffect(() => {
-    if (!backendOnline) return;
-    atualizar();
-    // `atualizar` é estável (depende só de `buscarEstadoSilenciosamente`,
-    // que não tem dependências) — incluída mesmo assim, sem necessidade de
-    // suprimir o linter.
-  }, [backendOnline, atualizar]);
-
   const sincronizarAgora = useCallback(async () => {
     setSincronizando(true);
     setUltimaExecucao(null);
@@ -109,6 +101,26 @@ export function useSincronizacao(backendOnline: boolean): EstadoUseSincronizacao
     await buscarEstadoSilenciosamente();
     setSincronizando(false);
   }, [buscarEstadoSilenciosamente]);
+
+  // MS UX (2026-08-10) — "ao entrar na Central Analítica, tentar
+  // sincronizar automaticamente": substitui a antiga verificação de frescor
+  // silenciosa (só `GET`, via `atualizar`) por uma chamada real ao MESMO
+  // `sincronizarAgora` já homologado do botão manual (nenhum endpoint novo,
+  // nenhuma lógica paralela) — dispara sozinha uma única vez, quando o
+  // backend fica online. Sucesso automático não deixa rastro
+  // (`ultimaExecucao.tipo === "sucesso"`, o indicador correspondente não
+  // renderiza botão nenhum); falha automática popula `ultimaExecucao` com o
+  // mesmo formato que uma falha manual já usa, então o botão de recuperação
+  // aparece exatamente como apareceria se o usuário tivesse clicado e
+  // falhado. `atualizar` continua exposto (retry explícito de leitura, ex.:
+  // reabrir depois de `erro`), só deixou de ser quem dispara sozinho ao
+  // montar.
+  const disparouAutomaticoRef = useRef(false);
+  useEffect(() => {
+    if (!backendOnline || disparouAutomaticoRef.current) return;
+    disparouAutomaticoRef.current = true;
+    sincronizarAgora();
+  }, [backendOnline, sincronizarAgora]);
 
   return { carregando, erro, dado, sincronizando, ultimaExecucao, atualizar, sincronizarAgora };
 }

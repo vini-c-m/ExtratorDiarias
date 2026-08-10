@@ -88,7 +88,7 @@ function formatarDataHora(isoSemFuso: string): string {
  * correta e efetivamente usada aqui é a § 7, que já tem os mockups de
  * "janela de configuração" e "pré-visualização e confirmação"). */
 export default function ModalRelatorio({ aberto, filtros, totalRegistros, aoFechar }: Props) {
-  const { estado, preVisualizar, voltar, gerar, tentarNovamente, cancelar } = useGerarRelatorio();
+  const { estado, preVisualizar, carregandoPreVisualizacao, voltar, gerar, tentarNovamente, cancelar } = useGerarRelatorio();
 
   const [tipo, setTipo] = useState<TipoRelatorio>("executivo");
   const [formato, setFormato] = useState<FormatoRelatorio>("pdf");
@@ -272,11 +272,23 @@ export default function ModalRelatorio({ aberto, filtros, totalRegistros, aoFech
             </fieldset>
 
             <div className="flex justify-end gap-3">
-              <Botao variante="secundaria" onClick={aoFechar}>
+              {/* Sprint (Loading/Bloqueio de Ações, item 1) — estado real de
+                  operação em andamento, não debounce: `carregando` do
+                  `Botao` já desabilita nativamente + mostra spinner, e a
+                  trava síncrona dentro de `preVisualizar` (`useGerarRelatorio.ts`)
+                  garante que um segundo clique antes do primeiro re-render
+                  também não dispare uma segunda chamada. "Cancelar"
+                  também fica indisponível durante a chamada — ação
+                  incompatível com uma pré-visualização em voo. */}
+              <Botao variante="secundaria" onClick={aoFechar} disabled={carregandoPreVisualizacao}>
                 Cancelar
               </Botao>
-              <Botao variante="secundaria" onClick={() => preVisualizar(montarParametros("previsualizacao"))}>
-                Pré-visualizar
+              <Botao
+                variante="secundaria"
+                onClick={() => preVisualizar(montarParametros("previsualizacao"))}
+                carregando={carregandoPreVisualizacao}
+              >
+                {carregandoPreVisualizacao ? "Pré-visualizando..." : "Pré-visualizar"}
               </Botao>
             </div>
           </div>

@@ -8,7 +8,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev:vite": "vite",
-    "dev:electron:build": "tsc -p electron/tsconfig.json -w",
+    "dev:electron:build": "node -e \"require('fs').rmSync('dist-electron',{recursive:true,force:true})\" && tsc -p electron/tsconfig.json -w",
     "dev:electron:start": "wait-on tcp:5173 dist-electron/main.js && electron .",
     "dev": "concurrently -k -n vite,electron-build,electron \"npm:dev:vite\" \"npm:dev:electron:build\" \"npm:dev:electron:start\"",
     "build:vite": "vite build",

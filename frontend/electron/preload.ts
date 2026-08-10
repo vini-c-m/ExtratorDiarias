@@ -29,4 +29,21 @@ contextBridge.exposeInMainWorld("api", {
   // usado por "Copiar SEI" da Central Analítica.
   copiarTexto: (texto: string): Promise<void> =>
     ipcRenderer.invoke("clipboard:copiar-texto", texto),
+  // Ajuste Final (link Arquimedes, modal de Cadastro de Servidor/Membro) —
+  // abre um link no navegador padrão do sistema via `shell.openExternal`
+  // (processo main), nunca dentro de uma janela do próprio app.
+  abrirLinkExterno: (url: string): Promise<void> => ipcRenderer.invoke("link:abrir-externo", url),
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) — o
+  // processo main intercepta o fechamento nativo da janela (`main.ts`,
+  // evento `close` do `BrowserWindow` — cobre X, Alt+F4 e `app.quit()` por
+  // igual, ao contrário de `window.beforeunload`) e empurra este evento
+  // para o renderer decidir a confirmação (só ele sabe se há operação
+  // crítica ativa). `aoSolicitarFechamento` devolve uma função de
+  // cancelamento da assinatura, mesmo padrão de `useEffect` do React.
+  aoSolicitarFechamento: (callback: () => void): (() => void) => {
+    const ouvinte = () => callback();
+    ipcRenderer.on("app:solicitar-fechamento", ouvinte);
+    return () => ipcRenderer.removeListener("app:solicitar-fechamento", ouvinte);
+  },
+  confirmarFechamento: (): Promise<void> => ipcRenderer.invoke("app:confirmar-fechamento"),
 });

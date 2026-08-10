@@ -1,4 +1,3 @@
-import { useEffect, useRef } from "react";
 import Alerta from "../ui/Alerta";
 import Botao from "../ui/Botao";
 import { useSincronizacao } from "../../hooks/useSincronizacao";
@@ -20,24 +19,18 @@ interface Props {
  * compartilhado — as duas sempre leem a mesma fonte no backend, então nunca
  * divergem em quantidade/regra; a proteção contra sincronização concorrente
  * já é feita pelo backend (409), reaproveitada automaticamente por
- * `useSincronizacao` nas duas instâncias. */
+ * `useSincronizacao` nas duas instâncias.
+ *
+ * MS UX (2026-08-10) — `useSincronizacao` passou a disparar a sincronização
+ * automática sozinho ao montar (mesmo item 7 aplicado à Central Analítica);
+ * o `useEffect`/`tentouAutoSyncRef` próprios deste componente, que faziam
+ * exatamente essa mesma tentativa "na mão", viraram uma segunda lógica
+ * paralela do mesmo mecanismo — removidos, só o hook decide quando
+ * sincronizar. */
 export default function AlertaGlobalDocumentosHabeis({ backendOnline, aoAbrirPendencias }: Props) {
-  const { carregando, erro, dado, sincronizando, ultimaExecucao, sincronizarAgora } =
-    useSincronizacao(backendOnline);
+  const { erro, dado, sincronizando, ultimaExecucao, sincronizarAgora } = useSincronizacao(backendOnline);
 
-  // Só uma tentativa automática por montagem deste componente (ao abrir o
-  // app, ou ao voltar para a tela inicial) — nunca um scheduler/polling.
-  const tentouAutoSyncRef = useRef(false);
-
-  useEffect(() => {
-    if (!backendOnline || carregando || erro || sincronizando) return;
-    if (dado?.status === "atualizado") return;
-    if (tentouAutoSyncRef.current) return;
-    tentouAutoSyncRef.current = true;
-    sincronizarAgora();
-  }, [backendOnline, carregando, erro, sincronizando, dado, sincronizarAgora]);
-
-  if (!backendOnline || carregando) return null;
+  if (!backendOnline) return null;
 
   const baseConfiavel = dado?.status === "atualizado";
   const falhaSincronizacao =

@@ -371,9 +371,14 @@ def test_preencher_grava_coluna_p_para_diaria_de_membro(caminho_planilha_teste):
 
 
 def test_preencher_nao_grava_coluna_p_para_diaria_padrao(caminho_planilha_teste):
-    """A coluna P só é preenchida para Diária de Membro — mesmo que
-    valor_total_diarias esteja presente por engano, um processo com
-    tipo_processo PADRAO nunca escreve na coluna P."""
+    """A coluna P só recebe um VALOR LITERAL para Diária de Membro — mesmo
+    que valor_total_diarias esteja presente por engano, um processo com
+    tipo_processo PADRAO nunca escreve um número nela. P0 FINAL
+    (2026-08-09): desde a preparação estrutural automática, P4 deixa de
+    ficar vazio (a fórmula estrutural, copiada da linha-modelo antes da
+    gravação, agora fica lá) — o que continua nunca acontecendo é
+    `_escrever_linha` sobrescrever essa fórmula com um número para uma
+    diária que não é de Membro."""
     caminho = caminho_planilha_teste()
     diaria = Diaria(
         sei="19.20.0000.0000061/2026-99",
@@ -393,17 +398,19 @@ def test_preencher_nao_grava_coluna_p_para_diaria_padrao(caminho_planilha_teste)
 
     workbook = load_workbook(caminho)
     planilha = workbook["Controle de Diárias"]
-    assert planilha["P4"].value is None
+    assert planilha["P4"].value == "=R4+S4"
 
 
 def test_preencher_diaria_padrao_sem_valor_tambem_nao_grava_coluna_p(caminho_planilha_teste):
+    """Mesmo achado do teste acima: P4 recebe a fórmula estrutural
+    preparada automaticamente, nunca um número, para uma diária Padrão."""
     caminho = caminho_planilha_teste()
 
     preencher(caminho, [_processo()])  # tipo_processo = PADRAO por padrão
 
     workbook = load_workbook(caminho)
     planilha = workbook["Controle de Diárias"]
-    assert planilha["P4"].value is None
+    assert planilha["P4"].value == "=R4+S4"
 
 
 # --- Sprint 06 — DOC DE ORIGEM: histórico da própria planilha do DIMCAC (Prioridade 1) ---

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -29,9 +29,41 @@ beforeAll(() => {
 vi.mock("./hooks/useBackendStatus", () => ({
   useBackendStatus: () => "conectado" as const,
 }));
-vi.mock("./pages/SelecionarProcessar", () => ({
-  default: () => <div>Tela de Processamento</div>,
-}));
+// Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 14-15) — mock
+// interativo mínimo: expõe só a FIAÇÃO real do contrato
+// `aoMudarEstado`/`aoMudarSolicitarSaidaSegura` que `App.tsx` consome,
+// sem reimplementar a lógica profunda de interrupção (diálogo real,
+// abort, etc.) — essa já está coberta em `SelecionarProcessar.test.tsx`.
+// `aoConcluirPendente` é module-scoped (não `useState`) de propósito: o
+// mock nunca precisa re-renderizar sozinho, só guardar o callback que o
+// teste vai disparar depois, simulando "a interrupção terminou".
+vi.mock("./pages/SelecionarProcessar", () => {
+  let aoConcluirPendente: (() => void) | null = null;
+  return {
+    default: (props: {
+      aoMudarEstado?: (estado: string) => void;
+      aoMudarSolicitarSaidaSegura?: (funcao: ((aoConcluir: () => void) => void) | null) => void;
+    }) => (
+      <div>
+        <p>Tela de Processamento</p>
+        <button
+          type="button"
+          onClick={() => {
+            props.aoMudarEstado?.("processando");
+            props.aoMudarSolicitarSaidaSegura?.((aoConcluir: () => void) => {
+              aoConcluirPendente = aoConcluir;
+            });
+          }}
+        >
+          Simular processamento ativo
+        </button>
+        <button type="button" onClick={() => aoConcluirPendente?.()}>
+          Confirmar interrupção (simulada)
+        </button>
+      </div>
+    ),
+  };
+});
 vi.mock("./pages/Conferencia", () => ({
   default: () => <div>Tela de Conferência</div>,
 }));
@@ -62,7 +94,17 @@ const CONFIGURACAO_ATIVA = {
   configurado_em: "2026-07-30T14:32:10",
 };
 
+// Sprint (Loading/Bloqueio de Ações/Navegação Segura, item 15) — o
+// processo main pede confirmação de fechamento via um callback registrado
+// por `App.tsx` (`window.api.aoSolicitarFechamento`); os testes disparam
+// esse callback aqui para simular o evento nativo `close` do
+// `BrowserWindow` (X, Alt+F4, `app.quit()`), sem precisar de Electron de
+// verdade.
+let solicitarFechamentoCallback: (() => void) | null = null;
+const confirmarFechamentoMock = vi.fn();
+
 beforeEach(() => {
+  solicitarFechamentoCallback = null;
   window.api = {
     getPathForFile: (arquivo: File) => arquivo.name,
     abrirArquivo: vi.fn(),
@@ -70,7 +112,15 @@ beforeEach(() => {
     salvarRelatorio: vi.fn(),
     copiarHistorico: vi.fn(),
     selecionarPlanilhaOficial: vi.fn(),
+    aoSolicitarFechamento: vi.fn((callback: () => void) => {
+      solicitarFechamentoCallback = callback;
+      return () => {
+        solicitarFechamentoCallback = null;
+      };
+    }),
+    confirmarFechamento: confirmarFechamentoMock,
   };
+  confirmarFechamentoMock.mockClear();
   useConfiguracaoMock.mockReturnValue({
     estado: CONFIGURACAO_ATIVA,
     atualizar: atualizarConfiguracaoMock,
@@ -109,7 +159,7 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
     await usuario.click(screen.getByRole("button", { name: /Processamento da Planilha/ }));
 
     expect(screen.getByText("Tela de Processamento")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Hub/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Voltar/ })).toBeInTheDocument();
   });
 
   it("selecionar o card da Central Analítica abre o módulo e mostra o link de volta ao Hub", async () => {
@@ -120,28 +170,31 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
     await usuario.click(screen.getByRole("button", { name: /Central Analítica/ }));
 
     expect(screen.getByText("Tela da Central Analítica")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Hub/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Voltar/ })).toBeInTheDocument();
   });
 
-  it("'← Hub' retorna ao Hub a partir de qualquer funcionalidade", async () => {
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, item 4) — rótulo
+  // visível trocado de "Hub" para "Voltar"; rota/ação/destino inalterados
+  // (continua indo para o Hub).
+  it("'Voltar' retorna ao Hub a partir de qualquer funcionalidade", async () => {
     const usuario = userEvent.setup();
     render(<App />);
     await usuario.click(screen.getByRole("button", { name: "Começar" }));
     await usuario.click(screen.getByRole("button", { name: /Central Inteligente de Conferência/ }));
     expect(screen.getByText("Tela de Conferência")).toBeInTheDocument();
 
-    await usuario.click(screen.getByRole("button", { name: /Hub/ }));
+    await usuario.click(screen.getByRole("button", { name: /Voltar/ }));
 
     expect(screen.getByText("Processamento da Planilha")).toBeInTheDocument();
     expect(screen.queryByText("Tela de Conferência")).not.toBeInTheDocument();
   });
 
-  it("o Hub não mostra o link '← Hub' (já está nele)", async () => {
+  it("o Hub não mostra o link 'Voltar' (já está nele)", async () => {
     const usuario = userEvent.setup();
     render(<App />);
     await usuario.click(screen.getByRole("button", { name: "Começar" }));
 
-    expect(screen.queryByRole("button", { name: /^Hub$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Voltar$/ })).not.toBeInTheDocument();
   });
 });
 
@@ -187,5 +240,147 @@ describe("App — gate de Configuração Inicial (Sprint 15)", () => {
     await usuario.click(screen.getByRole("button", { name: "Configurações" }));
 
     expect(screen.getByRole("dialog", { name: "Alterar Planilha Oficial" })).toBeInTheDocument();
+  });
+});
+
+// Sprint (Loading/Bloqueio de Ações/Navegação Segura, item 14) — a
+// FIAÇÃO de `App.tsx`: Voltar/Configurações passam pela função que
+// `SelecionarProcessar` registra em vez de navegar direto. O
+// comportamento profundo (diálogo, abort, cancelar/confirmar) já está
+// coberto em `SelecionarProcessar.test.tsx` — aqui só a integração.
+describe("App — Voltar/Configurações durante processamento (item 14)", () => {
+  async function chegarNoProcessamento(usuario: ReturnType<typeof userEvent.setup>) {
+    render(<App />);
+    await usuario.click(screen.getByRole("button", { name: "Começar" }));
+    await usuario.click(screen.getByRole("button", { name: /Processamento da Planilha/ }));
+    expect(screen.getByText("Tela de Processamento")).toBeInTheDocument();
+  }
+
+  it("A) processamento ativo + Voltar não navega imediatamente", async () => {
+    const usuario = userEvent.setup();
+    await chegarNoProcessamento(usuario);
+    await usuario.click(screen.getByRole("button", { name: "Simular processamento ativo" }));
+
+    await usuario.click(screen.getByRole("button", { name: /Voltar/ }));
+
+    expect(screen.getByText("Tela de Processamento")).toBeInTheDocument();
+    expect(screen.queryByText("Processamento da Planilha")).not.toBeInTheDocument();
+  });
+
+  it("C) confirmar (simulado) conclui a interrupção e SÓ DEPOIS navega para o Hub", async () => {
+    const usuario = userEvent.setup();
+    await chegarNoProcessamento(usuario);
+    await usuario.click(screen.getByRole("button", { name: "Simular processamento ativo" }));
+    await usuario.click(screen.getByRole("button", { name: /Voltar/ }));
+    expect(screen.getByText("Tela de Processamento")).toBeInTheDocument();
+
+    await usuario.click(screen.getByRole("button", { name: "Confirmar interrupção (simulada)" }));
+
+    expect(screen.getByText("Processamento da Planilha")).toBeInTheDocument();
+    expect(screen.queryByText("Tela de Processamento")).not.toBeInTheDocument();
+  });
+
+  it("D) processamento ativo + Configurações tem o mesmo comportamento de segurança", async () => {
+    const usuario = userEvent.setup();
+    await chegarNoProcessamento(usuario);
+    await usuario.click(screen.getByRole("button", { name: "Simular processamento ativo" }));
+
+    await usuario.click(screen.getByRole("button", { name: "Configurações" }));
+    expect(screen.queryByRole("dialog", { name: "Alterar Planilha Oficial" })).not.toBeInTheDocument();
+
+    await usuario.click(screen.getByRole("button", { name: "Confirmar interrupção (simulada)" }));
+    expect(screen.getByRole("dialog", { name: "Alterar Planilha Oficial" })).toBeInTheDocument();
+  });
+
+  it("F) sem processamento ativo, Voltar navega normalmente (já coberto acima, reafirmado aqui)", async () => {
+    const usuario = userEvent.setup();
+    await chegarNoProcessamento(usuario);
+
+    await usuario.click(screen.getByRole("button", { name: /Voltar/ }));
+
+    expect(screen.getByText("Processamento da Planilha")).toBeInTheDocument();
+  });
+});
+
+// Sprint (Loading/Bloqueio de Ações/Navegação Segura, item 15) —
+// confirmação ao fechar o app. `solicitarFechamentoCallback` simula o
+// evento que o processo main dispara ao interceptar X/Alt+F4/`app.quit()`
+// (cobertos estruturalmente em `electron/ipc/fechamento.test.ts` — um
+// único handler nativo para os três, então a mesma confirmação vale para
+// os três por construção).
+describe("App — confirmação ao fechar o aplicativo (item 15)", () => {
+  it("A) fechar sem operação ativa mostra a confirmação padrão", async () => {
+    render(<App />);
+    await act(async () => solicitarFechamentoCallback?.());
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByText("Tem certeza que deseja sair do aplicativo?")).toBeInTheDocument();
+  });
+
+  it("B) Cancelar fecha o diálogo e nunca confirma o fechamento", async () => {
+    render(<App />);
+    await act(async () => solicitarFechamentoCallback?.());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(confirmarFechamentoMock).not.toHaveBeenCalled();
+  });
+
+  it("C) Confirmar (sem operação ativa) chama window.api.confirmarFechamento na hora", async () => {
+    render(<App />);
+    await act(async () => solicitarFechamentoCallback?.());
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "Sair" }));
+
+    expect(confirmarFechamentoMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("D) fechar durante processamento mostra o aviso específico de operação em andamento", async () => {
+    const usuario = userEvent.setup();
+    render(<App />);
+    await usuario.click(screen.getByRole("button", { name: "Começar" }));
+    await usuario.click(screen.getByRole("button", { name: /Processamento da Planilha/ }));
+    await usuario.click(screen.getByRole("button", { name: "Simular processamento ativo" }));
+
+    await act(async () => solicitarFechamentoCallback?.());
+
+    expect(screen.getByText("Operação em andamento")).toBeInTheDocument();
+    expect(
+      screen.getByText("Existe uma operação em andamento. Sair agora irá interrompê-la. Deseja realmente sair?"),
+    ).toBeInTheDocument();
+  });
+
+  it("E) cancelar com operação ativa mantém o app aberto e o processamento continua", async () => {
+    const usuario = userEvent.setup();
+    render(<App />);
+    await usuario.click(screen.getByRole("button", { name: "Começar" }));
+    await usuario.click(screen.getByRole("button", { name: /Processamento da Planilha/ }));
+    await usuario.click(screen.getByRole("button", { name: "Simular processamento ativo" }));
+    await act(async () => solicitarFechamentoCallback?.());
+
+    await usuario.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(confirmarFechamentoMock).not.toHaveBeenCalled();
+    expect(screen.getByText("Tela de Processamento")).toBeInTheDocument();
+  });
+
+  it("F) confirmar com operação ativa interrompe primeiro (reaproveitando o mecanismo seguro) e só fecha depois", async () => {
+    const usuario = userEvent.setup();
+    render(<App />);
+    await usuario.click(screen.getByRole("button", { name: "Começar" }));
+    await usuario.click(screen.getByRole("button", { name: /Processamento da Planilha/ }));
+    await usuario.click(screen.getByRole("button", { name: "Simular processamento ativo" }));
+    await act(async () => solicitarFechamentoCallback?.());
+
+    await usuario.click(screen.getByRole("button", { name: "Sair" }));
+    // Ainda não fechou — a interrupção segura está "pendente" (simulada),
+    // exatamente como Voltar/Configurações (item 14).
+    expect(confirmarFechamentoMock).not.toHaveBeenCalled();
+
+    await usuario.click(screen.getByRole("button", { name: "Confirmar interrupção (simulada)" }));
+
+    expect(confirmarFechamentoMock).toHaveBeenCalledTimes(1);
   });
 });

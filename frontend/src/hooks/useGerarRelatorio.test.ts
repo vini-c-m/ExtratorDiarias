@@ -77,6 +77,67 @@ describe("useGerarRelatorio", () => {
         erro: "Gráficos estão disponíveis apenas para o formato PDF.",
       });
     });
+
+    // Sprint (Loading/Bloqueio de Ações, item 1) — estado real de operação
+    // em andamento (nunca debounce): `carregandoPreVisualizacao` fica
+    // `true` durante toda a chamada, e uma trava síncrona (`useRef`)
+    // impede uma segunda chamada concorrente mesmo antes do primeiro
+    // re-render (clique duplo — item 13.B).
+    it("A/C) carregandoPreVisualizacao fica true durante a chamada e volta a false ao concluir", async () => {
+      gerarRelatorioMock.mockResolvedValueOnce(RESPOSTA_GERADA);
+      const { result } = renderHook(() => useGerarRelatorio());
+      expect(result.current.carregandoPreVisualizacao).toBe(false);
+
+      let promessa!: Promise<void>;
+      act(() => {
+        promessa = result.current.preVisualizar(PARAMETROS);
+      });
+      expect(result.current.carregandoPreVisualizacao).toBe(true); // C) permanece "desabilitado" enquanto executa
+
+      await act(async () => {
+        await promessa;
+      });
+
+      expect(result.current.carregandoPreVisualizacao).toBe(false); // D) sucesso — volta ao normal
+    });
+
+    it("E) erro também devolve carregandoPreVisualizacao a false", async () => {
+      gerarRelatorioMock.mockRejectedValueOnce(new Error("falha simulada"));
+      const { result } = renderHook(() => useGerarRelatorio());
+
+      await act(async () => {
+        await result.current.preVisualizar(PARAMETROS);
+      });
+
+      expect(result.current.carregandoPreVisualizacao).toBe(false);
+    });
+
+    it("B) clique duplo (chamada concorrente antes do primeiro terminar) dispara só UMA requisição", async () => {
+      let resolverPrimeira!: (valor: typeof RESPOSTA_GERADA) => void;
+      gerarRelatorioMock.mockImplementationOnce(
+        () => new Promise((resolve) => { resolverPrimeira = resolve; }),
+      );
+      const { result } = renderHook(() => useGerarRelatorio());
+
+      let primeiraChamada!: Promise<void>;
+      let segundaChamada!: Promise<void>;
+      act(() => {
+        primeiraChamada = result.current.preVisualizar(PARAMETROS);
+        // Segunda chamada disparada ANTES da primeira resolver — mesma
+        // janela de um clique duplo real, já que `carregando` do `Botao`
+        // só desabilita depois do primeiro re-render.
+        segundaChamada = result.current.preVisualizar(PARAMETROS);
+      });
+
+      expect(gerarRelatorioMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        resolverPrimeira(RESPOSTA_GERADA);
+        await Promise.all([primeiraChamada, segundaChamada]);
+      });
+
+      expect(gerarRelatorioMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("voltar: de 'pre-visualizando' retorna para 'configurando' sem erro", async () => {

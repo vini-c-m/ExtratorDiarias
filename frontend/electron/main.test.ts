@@ -9,12 +9,17 @@ const {
   registrarIpcConferenciaMock,
   registrarIpcConfiguracaoMock,
   registrarIpcClipboardMock,
+  registrarIpcLinkMock,
+  registrarFechamentoSeguroMock,
+  registrarIpcFechamentoMock,
 } = vi.hoisted(() => {
   // `class` (não `vi.fn(() => ...)`) porque `main.ts` usa `new
   // BrowserWindow(...)` — uma arrow function não é um construtor válido.
   class BrowserWindowMock {
     loadURL = vi.fn();
     loadFile = vi.fn();
+    on = vi.fn();
+    webContents = { send: vi.fn() };
     static getAllWindows = vi.fn().mockReturnValue([]);
   }
 
@@ -39,6 +44,13 @@ const {
     registrarIpcConferenciaMock: vi.fn(),
     registrarIpcConfiguracaoMock: vi.fn(),
     registrarIpcClipboardMock: vi.fn(),
+    registrarIpcLinkMock: vi.fn(),
+    // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) —
+    // mesmo padrão dos demais `registrarIpc*`: dublê completo, `main.test.ts`
+    // não precisa (nem deve) testar a lógica de `ipc/fechamento.ts` de novo
+    // — isso já está coberto por `ipc/fechamento.test.ts`.
+    registrarFechamentoSeguroMock: vi.fn(),
+    registrarIpcFechamentoMock: vi.fn(),
   };
 });
 
@@ -49,6 +61,11 @@ vi.mock("./ipc/relatorio", () => ({ registrarIpcRelatorio: registrarIpcRelatorio
 vi.mock("./ipc/conferencia", () => ({ registrarIpcConferencia: registrarIpcConferenciaMock }));
 vi.mock("./ipc/configuracao", () => ({ registrarIpcConfiguracao: registrarIpcConfiguracaoMock }));
 vi.mock("./ipc/clipboard", () => ({ registrarIpcClipboard: registrarIpcClipboardMock }));
+vi.mock("./ipc/link", () => ({ registrarIpcLink: registrarIpcLinkMock }));
+vi.mock("./ipc/fechamento", () => ({
+  registrarFechamentoSeguro: registrarFechamentoSeguroMock,
+  registrarIpcFechamento: registrarIpcFechamentoMock,
+}));
 
 // Sprint 19.5.8.1 — correção da lacuna N1 da Auditoria Técnica (19.5.8
 // REPROVADA): prova que `registrarIpcClipboard()` não foi omitido do
@@ -62,7 +79,7 @@ describe("main — registro dos canais IPC ao ficar pronto", () => {
     appMock.whenReady.mockResolvedValue(undefined);
   });
 
-  it("registra os 5 módulos IPC (incluindo o clipboard generalizado na 19.5.8) sem omitir nenhum", async () => {
+  it("registra os 7 módulos IPC (incluindo fechamento seguro, Sprint Loading/Bloqueio de Ações, e o link Arquimedes) sem omitir nenhum", async () => {
     await import("./main");
     // Deixa o `.then()` de `app.whenReady()` (já resolvida) rodar antes de
     // verificar as chamadas.
@@ -73,6 +90,11 @@ describe("main — registro dos canais IPC ao ficar pronto", () => {
     expect(registrarIpcConferenciaMock).toHaveBeenCalledTimes(1);
     expect(registrarIpcConfiguracaoMock).toHaveBeenCalledTimes(1);
     expect(registrarIpcClipboardMock).toHaveBeenCalledTimes(1);
+    expect(registrarIpcLinkMock).toHaveBeenCalledTimes(1);
+    expect(registrarIpcFechamentoMock).toHaveBeenCalledTimes(1);
+    // `registrarFechamentoSeguro` é por JANELA (dentro de `criarJanela()`,
+    // não de `app.whenReady()`) — uma janela criada nesta importação.
+    expect(registrarFechamentoSeguroMock).toHaveBeenCalledTimes(1);
   });
 
   // URGENTE — Central Analítica (2026-08-06, achado real — build

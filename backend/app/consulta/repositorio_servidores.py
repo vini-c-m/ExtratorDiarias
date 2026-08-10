@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 from openpyxl.worksheet.worksheet import Worksheet
 
 from app.domain.entities.servidor import Servidor
@@ -21,6 +23,8 @@ COLUNA_MATRICULA = "B"
 COLUNA_NOME = "C"
 COLUNA_PREVIDENCIA = "D"
 COLUNA_CARGO = "E"
+COLUNA_ORGAO_ORIGEM = "F"
+COLUNA_REGIME_PREVIDENCIA = "G"
 COLUNA_SITUACAO = "H"
 
 
@@ -59,3 +63,50 @@ def servidores_por_cpf(planilha: Worksheet) -> dict[str, Servidor]:
             ),
         )
     return servidores
+
+
+@dataclass(frozen=True)
+class OpcoesCadastroServidor:
+    """Valores distintos já levantados na aba `Dados`, para o modal de
+    Cadastro de Servidor/Membro (combobox pesquisável em cargo/órgão,
+    seletor fechado em previdência/regime/situação) — nunca lista
+    hardcoded no frontend."""
+
+    cargos: list[str]
+    orgaos_origem: list[str]
+    previdencias: list[str]
+    regimes_previdencia: list[str]
+    situacoes: list[str]
+
+
+def opcoes_cadastro(planilha: Worksheet) -> OpcoesCadastroServidor:
+    """Varre a aba `Dados` uma única vez e devolve os valores distintos
+    (ordenados) de cada coluna usada pelo formulário de cadastro. Só
+    leitura, mesma aba já consultada por `servidores_por_cpf` — RN-11
+    preservada."""
+    cargos: set[str] = set()
+    orgaos_origem: set[str] = set()
+    previdencias: set[str] = set()
+    regimes_previdencia: set[str] = set()
+    situacoes: set[str] = set()
+
+    for linha in range(PRIMEIRA_LINHA_DADOS, planilha.max_row + 1):
+        _adicionar_se_preenchido(cargos, planilha[f"{COLUNA_CARGO}{linha}"].value)
+        _adicionar_se_preenchido(orgaos_origem, planilha[f"{COLUNA_ORGAO_ORIGEM}{linha}"].value)
+        _adicionar_se_preenchido(previdencias, planilha[f"{COLUNA_PREVIDENCIA}{linha}"].value)
+        _adicionar_se_preenchido(regimes_previdencia, planilha[f"{COLUNA_REGIME_PREVIDENCIA}{linha}"].value)
+        _adicionar_se_preenchido(situacoes, planilha[f"{COLUNA_SITUACAO}{linha}"].value)
+
+    return OpcoesCadastroServidor(
+        cargos=sorted(cargos),
+        orgaos_origem=sorted(orgaos_origem),
+        previdencias=sorted(previdencias),
+        regimes_previdencia=sorted(regimes_previdencia),
+        situacoes=sorted(situacoes),
+    )
+
+
+def _adicionar_se_preenchido(destino: set[str], valor: object) -> None:
+    texto = str(valor or "").strip()
+    if texto:
+        destino.add(texto)

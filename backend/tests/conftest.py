@@ -230,6 +230,30 @@ def caminho_planilha_teste(tmp_path):
             ]
         )
 
+        # P0 FINAL (2026-08-09) — preparação estrutural automática (ver
+        # `escritor_planilha._preparar_estrutura_futura`) agora audita
+        # N/P/R/S/V/Z/AA em TODO fluxo, não só no Complemento: sem uma
+        # linha-modelo íntegra com essas 7 colunas em fórmula, `preencher()`
+        # levanta `EstruturaFuturaIndisponivel`. Linhas 2 e 3 desta fixture
+        # ganham essas fórmulas (mesmo padrão real confirmado em
+        # `test_escritor_planilha_complemento.py`) só para servir de modelo —
+        # nenhuma coluna A-L existente muda, então nenhuma asserção já
+        # homologada sobre B/C/D/H/I/J/L é afetada.
+        for linha_modelo in (2, 3):
+            planilha[f"N{linha_modelo}"] = f"=I{linha_modelo}-H{linha_modelo}"
+            planilha[f"P{linha_modelo}"] = f"=R{linha_modelo}+S{linha_modelo}"
+            planilha[f"R{linha_modelo}"] = (
+                f"=(VLOOKUP(Q{linha_modelo},'Tabela Valores'!A:C,2,FALSE()))*N{linha_modelo}"
+            )
+            planilha[f"S{linha_modelo}"] = (
+                f"=(VLOOKUP(Q{linha_modelo},'Tabela Valores'!A:C,3,FALSE()))*O{linha_modelo}"
+            )
+            planilha[f"V{linha_modelo}"] = f"=CONCATENATE(D{linha_modelo},H{linha_modelo},I{linha_modelo})"
+            planilha[f"Z{linha_modelo}"] = f"=H{linha_modelo}-15"
+            planilha[f"AA{linha_modelo}"] = (
+                f"=VLOOKUP(Z{linha_modelo},Z$1:AB{linha_modelo - 1},3,0)"
+            )
+
         workbook.create_sheet("Dados")
         workbook.create_sheet("Tabela Valores")
 

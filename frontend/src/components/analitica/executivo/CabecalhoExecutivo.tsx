@@ -1,17 +1,13 @@
 import { ArrowLeftRight, Download, Presentation } from "lucide-react";
-import ChipsFiltroAtivo from "../ChipsFiltroAtivo";
-import FiltroCategoriaFuncional from "../FiltroCategoriaFuncional";
-import IndicadorSincronizacao from "../IndicadorSincronizacao";
 import PainelComparacao from "./PainelComparacao";
 import type { EstadoUseComparacaoExecutiva } from "./useComparacaoExecutiva";
 import Alerta from "../../ui/Alerta";
 import Botao from "../../ui/Botao";
 import type { EstadoGeracaoRelatorio } from "../../../hooks/useGerarRelatorio";
 import { formatarDataBr, formatarPeriodoBr } from "../../../lib/datas";
-import type { CampoDeFiltro } from "../../../hooks/useDiarias";
 import { MENSAGENS } from "../../../lib/mensagens";
 import { TIPOGRAFIA } from "../../../theme/tipografia";
-import type { CategoriaFuncionalFiltro, ParametrosPesquisaDiariasQuery } from "../../../types/analitica";
+import type { ParametrosPesquisaDiariasQuery } from "../../../types/analitica";
 
 interface EstadoExportacaoExecutiva {
   estado: EstadoGeracaoRelatorio;
@@ -22,12 +18,7 @@ interface EstadoExportacaoExecutiva {
 }
 
 interface Props {
-  backendOnline: boolean;
   filtros: ParametrosPesquisaDiariasQuery;
-  onMudarFiltro: (parcial: Partial<Record<CampoDeFiltro, string | undefined>>) => void;
-  onRemoverFiltro: (campo: CampoDeFiltro) => void;
-  onLimparTudo: () => void;
-  aoVoltar: () => void;
   comparacao: EstadoUseComparacaoExecutiva;
   aoEntrarApresentacao: () => void;
   exportacao: EstadoExportacaoExecutiva;
@@ -48,43 +39,31 @@ function resumoPeriodo(filtros: ParametrosPesquisaDiariasQuery): string {
 }
 
 /** Cabeçalho do Modo Executivo (`docs/central-analitica/modo-executivo-
- * arquitetura-funcional.md § 6`, componente 2) — reaproveita integralmente
- * `useDiarias.filtros`/`aplicarFiltro`/`removerFiltro`/`limparFiltros` (via
- * as props recebidas de `ModoExecutivo`, que por sua vez as recebe de
- * `CentralAnalitica.tsx`, mesma instância de sempre — nunca um segundo
- * estado de filtro), `FiltroCategoriaFuncional` (Sprint 20, sem nenhuma
- * segunda implementação do toggle) e `IndicadorSincronizacao` (mesmo
- * carimbo de sincronização do Modo Operacional, decisão 2 da arquitetura
- * funcional). "Exportar" chega numa micro-sprint futura (21.9) — este
- * cabeçalho só traz o que já está funcional nesta entrega.
+ * arquitetura-funcional.md § 6`, componente 2) — reaproveita
+ * `useDiarias.filtros` (via as props recebidas de `ModoExecutivo`, que por
+ * sua vez as recebe de `CentralAnalitica.tsx`, mesma instância de sempre)
+ * só para o resumo textual de período; nunca editável aqui.
  *
- * Sprint 21.6 — "Comparar" (`PainelComparacao`) fica ao lado do toggle de
- * categoria; quando uma comparação está ativa, uma barra resume A × B com
- * "Trocar A/B"/"Encerrar comparação" — nunca substitui o cabeçalho normal,
- * só se soma a ele.
+ * MS UX — Simplificação da Central Analítica (2026-08-10, itens 6/8/10 do
+ * pedido): `IndicadorSincronizacao` (sincronização manual),
+ * `FiltroCategoriaFuncional` (um dos filtros removidos da interface) e
+ * `ChipsFiltroAtivo` saíram daqui — Dark Mode Executivo é "só leitura/
+ * análise/apresentação", sem ações administrativas. O botão "Voltar ao
+ * Modo Operacional" também saiu: Dark Mode Executivo virou um TOGGLE único
+ * (`CentralAnalitica.tsx`), nunca mais um par de botões separados —
+ * sair/entrar é o mesmo clique.
  *
- * Sprint 21.8 — "Modo apresentação" (`aoEntrarApresentacao`, dono do
- * estado é `useModoApresentacao` em `ModoExecutivo.tsx`) fica ao lado de
- * "Voltar ao Modo Operacional" — mesma prioridade visual, os 2 botões de
- * saída/transição de tela deste cabeçalho.
+ * Sprint 21.6 — "Comparar" (`PainelComparacao`); quando uma comparação
+ * está ativa, uma barra resume A × B com "Trocar A/B"/"Encerrar
+ * comparação" — nunca substitui o cabeçalho normal, só se soma a ele.
  *
  * Sprint 21.9 — "Exportar" (`exportacao`, dono do estado é
  * `useGerarRelatorio` em `ModoExecutivo.tsx`, mesmo hook do
- * `DashboardRecorte`) fica junto dos outros botões de ação; o aviso de
+ * `DashboardRecorte`) fica junto de "Modo apresentação"; o aviso de
  * sucesso/erro reaproveita o mesmo padrão visual do Dashboard operacional
  * (`Alerta` + "Abrir Local"/"Tentar novamente"), sem nenhum componente
  * novo. */
-export default function CabecalhoExecutivo({
-  backendOnline,
-  filtros,
-  onMudarFiltro,
-  onRemoverFiltro,
-  onLimparTudo,
-  aoVoltar,
-  comparacao,
-  aoEntrarApresentacao,
-  exportacao,
-}: Props) {
+export default function CabecalhoExecutivo({ filtros, comparacao, aoEntrarApresentacao, exportacao }: Props) {
   const avisoExportacao =
     exportacao.estado.fase === "sucesso" ? (
       <div className="flex flex-wrap items-center gap-3">
@@ -123,30 +102,13 @@ export default function CabecalhoExecutivo({
             <Presentation aria-hidden="true" className="h-4 w-4" />
             Modo apresentação
           </Botao>
-          <Botao variante="secundaria" onClick={aoVoltar}>
-            ← Voltar ao Modo Operacional
-          </Botao>
         </div>
       </div>
 
       {avisoExportacao}
 
-      {/* BI 4.0 — "menos formulário administrativo": os controles de
-          período/comparação/sincronização (secundários à leitura
-          executiva) ganham um divisor sutil e espaçamento mais compacto
-          que os separa visualmente do título/ações acima, em vez de
-          empilhar com o mesmo peso — nenhum componente/callback muda,
-          só a moldura ao redor deles. */}
       <div className="controles-executivos space-y-3 pt-4">
-        <IndicadorSincronizacao backendOnline={backendOnline} />
-
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <FiltroCategoriaFuncional
-            valor={filtros.categoria_funcional as CategoriaFuncionalFiltro | undefined}
-            onMudarFiltro={onMudarFiltro}
-          />
-          {!comparacao.ativa && <PainelComparacao onIniciar={comparacao.iniciar} />}
-        </div>
+        {!comparacao.ativa && <PainelComparacao onIniciar={comparacao.iniciar} />}
 
         {comparacao.ativa && (
           <div className={`flex flex-wrap items-center gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-2.5 ${TIPOGRAFIA.texto}`}>
@@ -164,8 +126,6 @@ export default function CabecalhoExecutivo({
             </Botao>
           </div>
         )}
-
-        <ChipsFiltroAtivo filtros={filtros} onRemover={onRemoverFiltro} onLimparTudo={onLimparTudo} />
       </div>
     </div>
   );

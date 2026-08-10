@@ -2,9 +2,15 @@ import { CORES_STATUS } from "../../theme/cores";
 import { SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import type { ResultadoConferencia } from "../../types/conferencia";
+import Botao from "../ui/Botao";
 
 interface Props {
   resultado: ResultadoConferencia;
+  /** Cadastro de Servidor/Membro pela Central de Conferência — presente só
+   * quando existe uma ação de cadastro disponível (cadastro não localizado
+   * + Planilha Oficial configurada e acessível); `undefined` esconde o
+   * botão por completo, nunca o mostra desabilitado sem explicação. */
+  aoClicarCadastrar?: () => void;
 }
 
 interface Linha {
@@ -24,7 +30,7 @@ function formatarData(iso: string): string {
 // backend); "Providência" e "Resultado" são montadas aqui a partir de
 // `resultado.providencia`/`resultado.veredito` — o contrato de API não
 // força esses dois em itens de array artificiais sem `ok` real.
-export default function ChecklistConferencia({ resultado }: Props) {
+export default function ChecklistConferencia({ resultado, aoClicarCadastrar }: Props) {
   const cadastro = resultado.checklist.find((item) => item.item === "cadastro_localizado");
   const nome = resultado.checklist.find((item) => item.item === "nome");
   const cargo = resultado.checklist.find((item) => item.item === "cargo");
@@ -75,8 +81,17 @@ export default function ChecklistConferencia({ resultado }: Props) {
             {linha.ok ? "✓" : "!"}
           </span>
           <div className="min-w-0 flex-1">
-            <div className={TIPOGRAFIA.legenda}>{linha.rotulo}</div>
-            <div className={`mt-0.5 ${TIPOGRAFIA.textoForte}`}>{linha.valor}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className={TIPOGRAFIA.legenda}>{linha.rotulo}</div>
+                <div className={`mt-0.5 ${TIPOGRAFIA.textoForte}`}>{linha.valor}</div>
+              </div>
+              {linha.rotulo === "Cadastro" && !linha.ok && aoClicarCadastrar && (
+                <Botao variante="secundaria" onClick={aoClicarCadastrar}>
+                  Cadastrar servidor/membro
+                </Botao>
+              )}
+            </div>
           </div>
         </div>
       ))}

@@ -190,6 +190,94 @@ describe("ModalRelatorio", () => {
     expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
   });
 
+  // Sprint (Loading/Bloqueio de Ações, item 1, exemplo obrigatório) —
+  // estado real de operação em andamento (nunca debounce): o botão
+  // "Pré-visualizar" mostra spinner + texto "Pré-visualizando...", fica
+  // desabilitado (nativo, via `disabled`, não só visual), "Cancelar"
+  // também fica indisponível (ação incompatível com uma chamada em voo),
+  // e tudo volta ao normal em sucesso OU erro.
+  describe("loading do botão 'Pré-visualizar' (item 13)", () => {
+    it("A/C) durante a chamada, o botão mostra spinner/texto de carregamento e fica desabilitado — 'Cancelar' também", async () => {
+      let resolverPreVisualizacao!: (valor: {
+        caminho_arquivo_temporario: string;
+        nome_sugerido: string;
+        sincronizado_em: string;
+      }) => void;
+      gerarRelatorioMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolverPreVisualizacao = resolve;
+        }),
+      );
+      render(<ModalRelatorio {...PROPS_BASE} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Pré-visualizar" }));
+
+      const botaoCarregando = await screen.findByRole("button", { name: "Pré-visualizando..." });
+      expect(botaoCarregando).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Cancelar" })).toBeDisabled();
+
+      resolverPreVisualizacao({
+        caminho_arquivo_temporario: "C:\\Temp\\abc.pdf",
+        nome_sugerido: "Relatório Executivo - 04-08-2026.pdf",
+        sincronizado_em: "2026-08-04T10:00:00",
+      });
+      await waitFor(() => expect(screen.getByText(/Pré-visualização/)).toBeInTheDocument());
+    });
+
+    it("B) clique duplo rápido dispara só uma chamada a gerarRelatorio", async () => {
+      let resolverPreVisualizacao!: (valor: {
+        caminho_arquivo_temporario: string;
+        nome_sugerido: string;
+        sincronizado_em: string;
+      }) => void;
+      gerarRelatorioMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolverPreVisualizacao = resolve;
+        }),
+      );
+      render(<ModalRelatorio {...PROPS_BASE} />);
+      const botao = screen.getByRole("button", { name: "Pré-visualizar" });
+
+      fireEvent.click(botao);
+      fireEvent.click(botao); // segundo clique na mesma janela síncrona
+
+      expect(gerarRelatorioMock).toHaveBeenCalledTimes(1);
+      resolverPreVisualizacao({
+        caminho_arquivo_temporario: "C:\\Temp\\abc.pdf",
+        nome_sugerido: "Relatório Executivo - 04-08-2026.pdf",
+        sincronizado_em: "2026-08-04T10:00:00",
+      });
+      await waitFor(() => expect(screen.getByText(/Pré-visualização/)).toBeInTheDocument());
+      expect(gerarRelatorioMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("D) sucesso: o botão de carregamento não existe mais (a fase mudou, formulário some por completo)", async () => {
+      gerarRelatorioMock.mockResolvedValueOnce({
+        caminho_arquivo_temporario: "C:\\Temp\\abc.pdf",
+        nome_sugerido: "Relatório Executivo - 04-08-2026.pdf",
+        sincronizado_em: "2026-08-04T10:00:00",
+      });
+      render(<ModalRelatorio {...PROPS_BASE} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Pré-visualizar" }));
+      await waitFor(() => expect(screen.getByText(/Pré-visualização/)).toBeInTheDocument());
+
+      expect(screen.queryByRole("button", { name: "Pré-visualizando..." })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Pré-visualizar" })).not.toBeInTheDocument();
+    });
+
+    it("E) erro: o botão volta a ficar habilitado, com o rótulo normal", async () => {
+      gerarRelatorioMock.mockRejectedValueOnce(new Error("Não foi possível pré-visualizar o relatório."));
+      render(<ModalRelatorio {...PROPS_BASE} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Pré-visualizar" }));
+
+      await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+      const botao = screen.getByRole("button", { name: "Pré-visualizar" });
+      expect(botao).toBeEnabled();
+    });
+  });
+
   it("falha ao pré-visualizar: mostra alerta inline, permanece na fase 'configurando' (formulário continua visível)", async () => {
     gerarRelatorioMock.mockRejectedValueOnce(new Error("Não foi possível pré-visualizar o relatório."));
     render(<ModalRelatorio {...PROPS_BASE} />);

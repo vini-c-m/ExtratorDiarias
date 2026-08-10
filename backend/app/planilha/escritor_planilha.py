@@ -1,13 +1,17 @@
+import datetime
 import re
 import zipfile
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from xml.etree import ElementTree
+from xml.sax.saxutils import escape as _escapar_texto_xml
 
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.utils.datetime import to_excel as _para_serial_excel
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app import diagnostico_complemento_temp as diag  # DIAGNÓSTICO TEMPORÁRIO — remover após causa raiz confirmada/corrigida
 from app.domain.entities.diaria import Diaria
 from app.extraction.enriquecimento.local_destino import remover_sufixo_uf
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
@@ -19,6 +23,14 @@ from app.domain.entities.tipo_processo import TipoProcesso
 NOME_ABA = "Controle de Diárias"
 COLUNA_LINHA_LIVRE = "B"
 PRIMEIRA_LINHA_DADOS = 2
+
+# P0 FINAL (2026-08-09) — margem permanente de linhas futuras que a
+# preparação estrutural automática garante além do próprio lote (item 5 do
+# pedido do usuário): tamanho_do_lote + esta margem, sempre. Existe para que
+# o PRÓXIMO lote processado (mesmo minutos depois) já encontre uma zona de
+# inserção pronta, sem depender de alguém ter aberto a planilha no Excel
+# entretanto.
+MARGEM_ESTRUTURAL_LINHAS_FUTURAS = 20
 
 # Mesmo mapeamento validado no script legado (legado/extrair_diárias.py) —
 # só estas colunas são escritas, o resto da planilha (estrutura, abas,
@@ -139,6 +151,13 @@ class ResultadoPreenchimento:
     # construtores existentes deste dataclass (todos os testes/chamadores
     # atuais, que nunca passam este argumento).
     sincronizacao_analitica_falhou: bool = False
+    # P0 FINAL (2026-08-09) — linhas da zona futura de inserção que a
+    # preparação estrutural automática precisou reparar (fórmula ausente ou
+    # quebrada) antes desta gravação. Vazio no caso comum (nada precisou de
+    # manutenção) — ver `_preparar_estrutura_futura`. Só existe para o
+    # relatório poder registrar a manutenção quando ela de fato ocorre
+    # (item 9 do pedido); nunca influencia gravação/deduplicação.
+    linhas_estrutura_reparadas: list[int] = field(default_factory=list)
 
     @property
     def gravados(self) -> list[ItemResultado]:
@@ -261,12 +280,96 @@ def _mapear_abas_para_xml_interno(caminho_planilha: str) -> dict[str, str]:
     return mapa
 
 
+# Auditoria P0 — regressão de performance (2026-08-09): a versão original
+# de `_reinjetar_cache_formulas` compilava e buscava um regex NOVO por
+# célula (`re.compile` + `.subn` dentro de um laço sobre
+# `cache_celulas.items()`), cada busca varrendo o XML inteiro da aba —
+# O(N × tamanho do XML) para N células de fórmula. Reproduzido: ~10s para
+# 1.800 células de cache numa planilha sintética de 2.000 linhas —
+# suficiente para explicar a queda de conexão relatada no Complemento
+# real. Este padrão substitui isso por UMA ÚNICA passada pelo XML de cada
+# aba (`re.sub` com callback, um `re.Match` por ocorrência real de
+# `<f>...</f><v/>` no documento, nunca um novo regex por célula do
+# cache) — O(tamanho do XML) + O(1) por ocorrência (lookup em dicionário).
+# Mesma semântica exata: fórmula nunca vira número, cache nunca é
+# inventado para célula fora do dicionário capturado.
+#
+# P0 FINAL (2026-08-10) — causa raiz real do "Base Local não sincroniza"
+# (achado por instrumentação de runtime contra a planilha de testes
+# configurada, nunca a produção): esta função sempre escreveu `<v>{valor}
+# </v>` cru, presumindo implicitamente que `valor` é sempre numérico —
+# verdade só para a coluna P (o caso original do Etapa 1). Fórmulas que
+# retornam TEXTO (ex.: `E` = `VLOOKUP(...)` → "FUNAFIN", "INSS"; `F`/`G` =
+# NOME/CARGO; `V` = CONCATENATE) geravam `<c ...><v>FUNAFIN</v></c>` SEM
+# `t="str"` — XML tecnicamente inválido: sem essa marcação, o tipo padrão
+# de célula é numérico, e `openpyxl`/Excel tentam interpretar o texto como
+# número e quebram (`ValueError: invalid literal for int() with base 10:
+# 'FUNAFIN'`, capturado ao vivo em `base_local.sincronizar` — a primeira
+# vez que `preencher()` completou o ciclo salvar+reinjetar contra uma
+# planilha real, já que tentativas anteriores falhavam antes de chegar
+# aqui). Nunca pego pelos testes porque nenhum deles injetava cache
+# textual — só números (ex. `462.28`). Corrigido: `valor` agora é
+# despachado por tipo — numérico grava exatamente como antes; texto grava
+# com `t="str"` adicionado ao `<c>` e com escaping XML (`&`, `<`, `>`),
+# nunca aplicado antes; booleano grava como `t="b"`/`0`|`1` (tipo Excel
+# nativo, nunca "True"/"False" como texto cru). `<f>` (a fórmula em si)
+# nunca é tocado em nenhum caso — mesma garantia de sempre.
+_PADRAO_CELULA_FORMULA_SEM_CACHE = re.compile(
+    r'<c r="([A-Za-z]+[0-9]+)"([^>]*)>(<f[^>]*>[^<]*</f>)<v\s*/>'
+)
+
+
+def _serializar_valor_cache(valor: object, atributos_celula: str) -> tuple[str, str]:
+    """Devolve `(atributos_da_celula, conteudo_de_v)` corretos para o tipo
+    real do valor — nunca presume numérico. `atributos_celula` já vem sem
+    `t="..."` (nunca duplicamos um atributo de tipo que talvez já exista,
+    embora `workbook.save()` do openpyxl nunca grave um `t` para célula de
+    fórmula, então este caminho é preventivo, não observado em produção)."""
+    if isinstance(valor, bool):
+        # Checar bool ANTES de (int, float): bool é subclasse de int em
+        # Python, mas no XML do Excel é um tipo próprio (`t="b"`,
+        # `<v>1</v>`/`<v>0</v>` — nunca a string "True"/"False").
+        if 't="b"' not in atributos_celula:
+            atributos_celula = f'{atributos_celula} t="b"'
+        return atributos_celula, "1" if valor else "0"
+    if isinstance(valor, (datetime.date, datetime.time, datetime.timedelta)):
+        # P0 (2026-08-10) — achado ao vivo contra a Planilha Oficial real
+        # (nunca pego pelos testes, que só usam fixtures sintéticas sem
+        # fórmula retornando data): fórmulas de data (ex.: coluna V de
+        # `Controle de Diárias`) têm o cache capturado como
+        # `datetime.datetime`/`datetime.date` (leitura `data_only=True`) e
+        # caíam no branch de texto abaixo, virando `t="str"` com
+        # `str(datetime(...))` — ao reler o `.tmp` para validar, a célula
+        # voltava como STRING, nunca mais como data, divergindo do valor
+        # original e derrubando `_validar_tmp`
+        # (`escritor_dados._validar_tmp`) mesmo com o cadastro em si já
+        # gravado corretamente na linha nova. `datetime.datetime` é
+        # subclasse de `datetime.date` — um único `isinstance` cobre os
+        # dois. Serial numérico do Excel (nunca texto): a célula já carrega
+        # a formatação de data original (nunca tocada aqui), então ao reler
+        # com `data_only=True` o openpyxl reconstrói o mesmo
+        # `datetime`/`date` sozinho a partir do número — sem precisar de
+        # `t="..."` (numérico é o tipo padrão de célula).
+        return atributos_celula, str(_para_serial_excel(valor))
+    if isinstance(valor, (int, float)):
+        return atributos_celula, str(valor)
+    # Texto (achado real 2026-08-10: VLOOKUP retornando PREVIDÊNCIA/NOME/
+    # CARGO) — precisa de `t="str"` para não ser lido como número, e
+    # escaping XML (nunca feito antes — um nome/cargo com `&`, `<` ou `>`
+    # já corromperia o XML mesmo com `t="str"` certo).
+    if 't="str"' not in atributos_celula:
+        atributos_celula = f'{atributos_celula} t="str"'
+    return atributos_celula, _escapar_texto_xml(str(valor))
+
+
 def _reinjetar_cache_formulas(caminho_planilha: str, cache_por_aba: dict[str, dict[str, object]]) -> None:
-    """Reescreve, célula a célula, o `<v>` vazio (`<v />`) que `openpyxl`
-    acabou de gravar para cada fórmula capturada por
-    `_capturar_cache_formulas` — nunca toca `<f>` (a fórmula em si
-    permanece exatamente a mesma), nunca escreve numa célula que não
-    estava no cache capturado antes de salvar."""
+    """Reescreve, numa única travessia por aba (não uma busca por
+    célula), o `<v>` vazio (`<v />`) que `openpyxl` acabou de gravar para
+    cada fórmula capturada por `_capturar_cache_formulas` — nunca toca
+    `<f>` (a fórmula em si permanece exatamente a mesma), nunca escreve
+    numa célula que não estava no cache capturado antes de salvar. Tipo do
+    valor (numérico/texto/booleano) é sempre respeitado — ver
+    `_serializar_valor_cache`."""
     if not cache_por_aba:
         return
 
@@ -281,14 +384,23 @@ def _reinjetar_cache_formulas(caminho_planilha: str, cache_por_aba: dict[str, di
         if arquivo_interno is None or arquivo_interno not in entradas:
             continue
 
+        alterou_esta_aba = {"valor": False}
+
+        def _substituir(encontro: re.Match, cache_celulas=cache_celulas, alterou_esta_aba=alterou_esta_aba) -> str:
+            referencia, atributos, tag_formula = encontro.group(1), encontro.group(2), encontro.group(3)
+            valor = cache_celulas.get(referencia)
+            if valor is None:
+                return encontro.group(0)
+            alterou_esta_aba["valor"] = True
+            atributos, conteudo_v = _serializar_valor_cache(valor, atributos)
+            return f'<c r="{referencia}"{atributos}>{tag_formula}<v>{conteudo_v}</v>'
+
         conteudo = entradas[arquivo_interno].decode("utf-8")
-        for referencia, valor in cache_celulas.items():
-            padrao = re.compile(rf'(<c r="{referencia}"[^>]*><f[^>]*>[^<]*</f>)<v\s*/>')
-            conteudo_novo, total = padrao.subn(rf"\1<v>{valor}</v>", conteudo, count=1)
-            if total:
-                conteudo = conteudo_novo
-                houve_alteracao = True
-        entradas[arquivo_interno] = conteudo.encode("utf-8")
+        conteudo_novo = _PADRAO_CELULA_FORMULA_SEM_CACHE.sub(_substituir, conteudo)
+
+        if alterou_esta_aba["valor"]:
+            entradas[arquivo_interno] = conteudo_novo.encode("utf-8")
+            houve_alteracao = True
 
     if not houve_alteracao:
         return
@@ -296,6 +408,139 @@ def _reinjetar_cache_formulas(caminho_planilha: str, cache_por_aba: dict[str, di
     with zipfile.ZipFile(caminho_planilha, "w", zipfile.ZIP_DEFLATED) as arquivo_zip:
         for nome, dado in entradas.items():
             arquivo_zip.writestr(nome, dado)
+
+
+class EstruturaFuturaIndisponivel(Exception):
+    """Nenhuma linha estruturalmente íntegra (fórmulas completas de
+    N/P/R/S/V/Z/AA — mesmo conjunto já exigido pela auditoria do
+    Complemento) foi encontrada para servir de modelo da preparação
+    automática — sem uma origem confiável, `preencher()` aborta ANTES de
+    gravar qualquer diária deste lote (nunca inventa fórmula do zero)."""
+
+
+@dataclass(frozen=True)
+class ResultadoPreparacaoEstrutura:
+    linhas_reparadas: list[int] = field(default_factory=list)
+
+
+def _localizar_linha_modelo(planilha: Worksheet, abaixo_de: int) -> int | None:
+    """Procura, de baixo para cima a partir da linha imediatamente anterior
+    a `abaixo_de`, a primeira linha com TODAS as colunas estruturais
+    (N/P/R/S/V/Z/AA) como fórmula. NUNCA assume que a linha imediatamente
+    anterior serve — uma diária de MEMBRO pode ter sobrescrito
+    legitimamente uma dessas colunas com um valor (ex.: P com o total já
+    calculado manualmente), o que a torna um modelo inválido; a busca
+    simplesmente continua subindo até achar uma linha genuinamente íntegra
+    (mesmo critério de `_linha_possui_formulas_necessarias`, já usado pela
+    auditoria obrigatória do Complemento)."""
+    for candidata in range(abaixo_de - 1, PRIMEIRA_LINHA_DADOS - 1, -1):
+        if _linha_possui_formulas_necessarias(planilha, candidata):
+            return candidata
+    return None
+
+
+# P0 FINAL — tradução de referência relativa, mesma semântica de "arrastar
+# fórmula" no Excel: `$?[A-Za-z]{1,3}\$?\d+` casa uma referência de célula
+# opcionalmente ancorada em coluna (`$` antes da letra) e/ou em linha (`$`
+# antes do número). Só a linha é deslocada aqui (a preparação estrutural só
+# arrasta para BAIXO, nunca para os lados); uma referência com `$` antes do
+# número da linha (linha absoluta) nunca se move. Comportamento confirmado
+# empiricamente pela própria fórmula real da coluna AA — `=VLOOKUP(Z2,Z$1:
+# AB1,3,0)` na linha 2 vira `=VLOOKUP(Z3,Z$1:AB2,3,0)` na linha 3 (`Z$1`
+# fica parado, `Z2`/`AB1` avançam) — ver `tests/unit/
+# test_escritor_planilha_complemento.py`.
+_PADRAO_REFERENCIA_CELULA = re.compile(r"(\$?)([A-Za-z]{1,3})(\$?)(\d+)")
+
+
+def _traduzir_formula(formula: str, deslocamento_linhas: int) -> str:
+    """Traduz toda referência de célula não ancorada em linha, deslocando o
+    número da linha em `deslocamento_linhas` — nunca toca coluna, nunca
+    toca uma referência com linha ancorada (`$`), nunca recalcula nada
+    (só reescreve texto de fórmula)."""
+
+    def _traduzir_referencia(encontro: re.Match) -> str:
+        dolar_coluna, coluna, dolar_linha, linha_str = encontro.groups()
+        if dolar_linha == "$":
+            return encontro.group(0)
+        nova_linha = int(linha_str) + deslocamento_linhas
+        return f"{dolar_coluna}{coluna}{dolar_linha}{nova_linha}"
+
+    return _PADRAO_REFERENCIA_CELULA.sub(_traduzir_referencia, formula)
+
+
+def _preparar_estrutura_futura(
+    planilha: Worksheet, linha_inicial: int, quantidade_a_garantir: int
+) -> ResultadoPreparacaoEstrutura:
+    """Garante que TODA a faixa `[linha_inicial, linha_inicial +
+    quantidade_a_garantir)` — sempre livre, nunca uma linha histórica, já
+    que começa exatamente em `linha_inicial` — tenha as colunas estruturais
+    (N/P/R/S/V/Z/AA) com fórmula válida, ANTES de qualquer gravação deste
+    lote (item 6 do pedido do usuário).
+
+    Só toca uma célula que ainda não seja fórmula (`fórmula já correta →
+    NÃO sobrescrever`, item 5); a fórmula-modelo vem da linha
+    estruturalmente íntegra mais próxima acima de `linha_inicial` (nunca
+    necessariamente a linha imediatamente anterior — ver
+    `_localizar_linha_modelo`), traduzida por linha como um 'arrastar
+    fórmula' do Excel (`_traduzir_formula`). Nunca toca conteúdo fora
+    dessas 7 colunas, nunca toca uma linha < `linha_inicial` (histórico
+    intocável, item 10)."""
+    if quantidade_a_garantir <= 0:
+        return ResultadoPreparacaoEstrutura()
+
+    linha_modelo = _localizar_linha_modelo(planilha, linha_inicial)
+    if linha_modelo is None:
+        raise EstruturaFuturaIndisponivel(
+            "Não foi possível preparar automaticamente a estrutura de fórmulas da "
+            "Planilha Oficial: nenhuma linha anterior com as fórmulas estruturais "
+            "completas (N/P/R/S/V/Z/AA) foi encontrada para servir de modelo. "
+            "Verifique manualmente a planilha antes de tentar novamente."
+        )
+
+    formulas_modelo = {
+        coluna: planilha[f"{coluna}{linha_modelo}"].value
+        for coluna in _COLUNAS_FORMULA_NECESSARIAS_COMPLEMENTO
+    }
+
+    linhas_reparadas: list[int] = []
+    for linha in range(linha_inicial, linha_inicial + quantidade_a_garantir):
+        deslocamento = linha - linha_modelo
+        reparou_esta_linha = False
+        for coluna in _COLUNAS_FORMULA_NECESSARIAS_COMPLEMENTO:
+            celula = planilha[f"{coluna}{linha}"]
+            if isinstance(celula.value, str) and celula.value.startswith("="):
+                continue
+            celula.value = _traduzir_formula(formulas_modelo[coluna], deslocamento)
+            reparou_esta_linha = True
+        if reparou_esta_linha:
+            linhas_reparadas.append(linha)
+
+    return ResultadoPreparacaoEstrutura(linhas_reparadas=linhas_reparadas)
+
+
+def _contar_potencialmente_gravaveis(
+    processos: list[Processo], seis_planilha: dict[str, int], modo: ModoProcessamento
+) -> int:
+    """Quantas linhas novas este lote vai efetivamente consumir — calculado
+    ANTES de escrever qualquer coisa, só para saber quanto preparar
+    estruturalmente (itens 5/6 do pedido: a preparação acontece antes da
+    primeira gravação, então ainda não sabemos `total_gravado` real).
+    Replica a MESMA regra de duplicidade do laço principal, sem gravar
+    nada. Modo Complemento nunca bloqueia por SEI duplicado (RN-14): todo
+    item é potencialmente gravável, então a contagem é trivial."""
+    if modo is ModoProcessamento.COMPLEMENTO:
+        return len(processos)
+
+    seis_no_lote: set[str] = set()
+    contagem = 0
+    for processo in processos:
+        assert processo.diaria is not None
+        sei = processo.diaria.sei.strip()
+        if sei in seis_planilha or sei in seis_no_lote:
+            continue
+        seis_no_lote.add(sei)
+        contagem += 1
+    return contagem
 
 
 def preencher(
@@ -332,6 +577,21 @@ def preencher(
     vez de gravar um complemento incompleto. Nenhum dos dois
     comportamentos ocorre no modo Padrão.
 
+    P0 FINAL (2026-08-09) — preparação estrutural automática, ANTES de
+    gravar qualquer diária deste lote, em AMBOS os modos (não é mais
+    exclusiva do Complemento): garante que a faixa de linhas futuras que
+    este lote vai efetivamente usar — mais uma margem permanente de
+    `MARGEM_ESTRUTURAL_LINHAS_FUTURAS` linhas além do lote — tenha as
+    colunas estruturais (N/P/R/S/V/Z/AA) com fórmula válida, copiando (e
+    traduzindo, como um 'arrastar fórmula' do Excel) da linha íntegra mais
+    próxima acima. Nunca sobrescreve fórmula já válida, nunca toca linha
+    histórica, nunca inventa fórmula do zero — se nenhuma linha-modelo
+    íntegra existir, `preencher()` levanta `EstruturaFuturaIndisponivel`
+    antes de gravar a primeira diária (ver `_preparar_estrutura_futura`).
+    Isto é o que elimina, na origem, o `LINHA_SEM_FORMULAS_NECESSARIAS`
+    como uma falha do dia a dia no Complemento — o código que o trata
+    continua existindo só como proteção de última linha.
+
     Sprint 06 — DOC DE ORIGEM (coluna C) por CPF: antes de gravar, a própria
     planilha oficial do DIMCAC é consultada pelo CPF do servidor (coluna D)
     nas linhas já existentes. Se houver um registro correspondente, o texto
@@ -353,6 +613,23 @@ def preencher(
     seis_no_lote: dict[str, int] = {}
     linha = _localizar_proxima_linha_livre(planilha)
     linha_inicial: int | None = None
+
+    quantidade_potencialmente_gravavel = _contar_potencialmente_gravaveis(
+        processos, seis_planilha, modo
+    )
+    linhas_estrutura_reparadas: list[int] = []
+    if quantidade_potencialmente_gravavel:
+        with diag.etapa(
+            "preparacao_estrutura_futura",
+            quantidade_a_garantir=quantidade_potencialmente_gravavel
+            + MARGEM_ESTRUTURAL_LINHAS_FUTURAS,
+        ):
+            resultado_preparacao = _preparar_estrutura_futura(
+                planilha,
+                linha,
+                quantidade_potencialmente_gravavel + MARGEM_ESTRUTURAL_LINHAS_FUTURAS,
+            )
+        linhas_estrutura_reparadas = resultado_preparacao.linhas_reparadas
 
     itens: list[ItemResultado] = []
     total_gravado = 0
@@ -451,9 +728,15 @@ def preencher(
         # arquivo no disco ainda está intocado neste ponto (ver comentário
         # de `_capturar_cache_formulas` acima: é isso que garante que o
         # valor capturado é sempre o que já estava lá, nunca inventado).
-        cache_formulas = _capturar_cache_formulas(workbook, caminho_planilha)
-        workbook.save(caminho_planilha)
-        _reinjetar_cache_formulas(caminho_planilha, cache_formulas)
+        with diag.etapa("captura_cache_formulas"):
+            cache_formulas = _capturar_cache_formulas(workbook, caminho_planilha)
+        with diag.etapa("workbook_save", total_gravado=total_gravado):
+            workbook.save(caminho_planilha)
+        with diag.etapa(
+            "reinjecao_cache",
+            celulas=sum(len(valores) for valores in cache_formulas.values()),
+        ):
+            _reinjetar_cache_formulas(caminho_planilha, cache_formulas)
 
     return ResultadoPreenchimento(
         total_gravado=total_gravado,
@@ -461,6 +744,7 @@ def preencher(
         linha_inicial=linha_inicial or 0,
         linha_final=(linha - 1) if total_gravado else 0,
         itens=itens,
+        linhas_estrutura_reparadas=linhas_estrutura_reparadas,
     )
 
 

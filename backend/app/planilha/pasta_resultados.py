@@ -10,7 +10,18 @@ _ROTULO_CATEGORIA = {
     CategoriaResultado.INSERIDO: "INSERIDO",
     CategoriaResultado.DUPLICADO_NO_LOTE: "DUPLICADO_NO_LOTE",
     CategoriaResultado.DUPLICADO_NA_PLANILHA: "DUPLICADO_NA_PLANILHA",
+    CategoriaResultado.LINHA_SEM_FORMULAS_NECESSARIAS: "LINHA_SEM_FORMULAS_NECESSARIAS",
 }
+
+# P0 FINAL (2026-08-09) — causa raiz real da falha do Complemento (capturada
+# por instrumentação de runtime, não hipótese): `CategoriaResultado` ganhou
+# `LINHA_SEM_FORMULAS_NECESSARIAS` quando o modo Complemento foi implementado,
+# mas este dicionário nunca foi atualizado — `_ROTULO_CATEGORIA[item.categoria]`
+# levantava `KeyError` sempre que um item caía nessa categoria, virando
+# exceção não tratada / erro HTTP (o frontend relatava, incorretamente,
+# "Não foi possível conectar ao aplicativo"). Este teste garante que toda
+# categoria existente sempre tem representação — ver
+# `tests/unit/test_pasta_resultados.py::test_toda_categoria_resultado_tem_rotulo_valido`.
 
 
 @dataclass(frozen=True)
@@ -82,6 +93,8 @@ def _gerar_log(
             detalhe = f"gravado na linha {item.linha}"
         elif item.categoria is CategoriaResultado.DUPLICADO_NA_PLANILHA:
             detalhe = f"já existe na linha {item.linha}"
+        elif item.categoria is CategoriaResultado.LINHA_SEM_FORMULAS_NECESSARIAS:
+            detalhe = f"linha {item.linha} disponível sem as fórmulas necessárias — não gravado"
         else:
             detalhe = "repetido neste lote"
         linhas.append(
@@ -104,6 +117,17 @@ def _gerar_log(
         f"{resultado.duplicadas_ignoradas} ignorada(s) por duplicidade, {len(erros)} erro(s), "
         f"{len(avisos)} com revisão manual pendente"
     )
+
+    # P0 FINAL (2026-08-09) — item 9 do pedido do usuário: só aparece quando a
+    # preparação estrutural automática de fato precisou reparar alguma linha
+    # futura (item vazio no caso comum não polui o relatório).
+    if resultado.linhas_estrutura_reparadas:
+        linhas.append(
+            f"[{marca}] MANUTENCAO_AUTOMATICA: Manutenção automática da Planilha "
+            f"Oficial: fórmulas estruturais restauradas em "
+            f"{len(resultado.linhas_estrutura_reparadas)} linha(s) futuras "
+            f"({', '.join(str(linha) for linha in resultado.linhas_estrutura_reparadas)})"
+        )
 
     with open(caminho_log, "w", encoding="utf-8") as arquivo:
         arquivo.write("\n".join(linhas) + "\n")

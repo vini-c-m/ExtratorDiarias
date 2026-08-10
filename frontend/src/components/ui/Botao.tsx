@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { DESABILITADO, EFEITO_RIPPLE, FOCO_ANEL, GLOW_PERIGO, PRESSIONAR } from "../../theme/estilos";
 
-type Variante = "primaria" | "secundaria" | "perigo" | "link";
+type Variante = "primaria" | "secundaria" | "perigo" | "link" | "ativa";
 type Tamanho = "padrao" | "grande";
 
 interface Props extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "className"> {
@@ -46,6 +46,10 @@ const CLASSES_VARIANTE: Record<Variante, string> = {
     "border border-white/15 bg-white/5 text-slate-200 hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/10 hover:shadow-floating",
   perigo: `border border-red-500/30 bg-red-500/10 text-red-400 hover:-translate-y-0.5 hover:bg-red-500/15 hover:${GLOW_PERIGO}`,
   link: "text-sm font-medium text-cyan-400 underline decoration-cyan-500/40 underline-offset-2 hover:text-cyan-300",
+  // MS UX (2026-08-10) — estado "ligado" de um toggle (ex.: Dark Mode
+  // Executivo): acento ciano controlado, sem glow — só precisa ficar óbvio
+  // que está ativo, nunca competir com a variante primária.
+  ativa: "border border-cyan-400/50 bg-cyan-400/[0.14] text-cyan-200 hover:-translate-y-0.5 hover:bg-cyan-400/[0.18] hover:border-cyan-400/60",
 };
 
 export default function Botao({

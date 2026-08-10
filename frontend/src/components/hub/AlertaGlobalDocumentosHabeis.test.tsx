@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AlertaGlobalDocumentosHabeis from "./AlertaGlobalDocumentosHabeis";
@@ -31,15 +31,31 @@ afterEach(() => {
   cleanup();
 });
 
-function estado(status: "nunca_sincronizado" | "atualizado" | "possivelmente_desatualizado") {
-  return {
-    sincronizado_em: status === "nunca_sincronizado" ? null : "2026-08-07T10:00:00",
-    origem: status === "nunca_sincronizado" ? null : "pos_preenchimento",
-    possivelmente_desatualizado: status === "possivelmente_desatualizado",
-    total_avisos: 0,
-    status,
-  };
-}
+const ESTADO_ATUALIZADO = {
+  sincronizado_em: "2026-08-07T10:00:00",
+  origem: "pos_preenchimento",
+  possivelmente_desatualizado: false,
+  total_avisos: 0,
+  status: "atualizado" as const,
+};
+
+const RESUMO_SUCESSO = {
+  status: "sucesso" as const,
+  sincronizado_em: "2026-08-07T10:00:00",
+  linhas_diarias: 10,
+  linhas_servidores_lidos: 10,
+  linhas_ignoradas: 0,
+  total_avisos: 0,
+};
+
+const RESUMO_FALHA = {
+  status: "falha" as const,
+  sincronizado_em: null,
+  linhas_diarias: null,
+  linhas_servidores_lidos: null,
+  linhas_ignoradas: null,
+  total_avisos: null,
+};
 
 function documentos(revisaoManual: number, aguardando: number) {
   return {
@@ -65,38 +81,34 @@ function documentos(revisaoManual: number, aguardando: number) {
   };
 }
 
+// MS UX (2026-08-10) — `useSincronizacao` passou a disparar a sincronização
+// automaticamente ao montar (mesmo item 7 aplicado à Central Analítica); a
+// checagem condicional prévia ("só sincroniza se possivelmente
+// desatualizado") saiu — agora é sempre sincronizado ao entrar, sem exceção.
 describe("AlertaGlobalDocumentosHabeis", () => {
-  it("carregamento inicial: nada aparece antes da resposta do backend", () => {
-    consultarMock.mockReturnValue(new Promise(() => {}));
-
-    render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
-
-    expect(screen.queryByText(/DOCUMENTOS HÁBEIS PENDENTES/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Atualizando dados/)).not.toBeInTheDocument();
-  });
-
-  it("dispara sincronização automática quando a Base Local pode estar desatualizada", async () => {
-    consultarMock.mockResolvedValueOnce(estado("possivelmente_desatualizado"));
+  it("enquanto sincroniza automaticamente, mostra o texto de atualização, nunca as pendências direto", () => {
     dispararMock.mockReturnValue(new Promise(() => {})); // nunca resolve nesta asserção
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
 
-    expect(await screen.findByText(/Atualizando dados da Planilha Oficial/)).toBeInTheDocument();
-    await waitFor(() => expect(dispararMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/Atualizando dados da Planilha Oficial/)).toBeInTheDocument();
+    expect(screen.queryByText(/DOCUMENTOS HÁBEIS PENDENTES/)).not.toBeInTheDocument();
+  });
+
+  it("dispara sincronização automática ao montar, sempre — mesmo mecanismo do botão manual", async () => {
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
+    documentosMock.mockResolvedValueOnce(documentos(0, 0));
+
+    render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
+
+    await screen.findByText("✓ Nenhum Documento Hábil exige atenção hoje.");
+    expect(dispararMock).toHaveBeenCalledTimes(1);
   });
 
   it("sincronização automática com sucesso: consulta e exibe Documentos Hábeis Pendentes", async () => {
-    consultarMock
-      .mockResolvedValueOnce(estado("possivelmente_desatualizado"))
-      .mockResolvedValueOnce(estado("atualizado"));
-    dispararMock.mockResolvedValueOnce({
-      status: "sucesso",
-      sincronizado_em: "2026-08-07T10:00:00",
-      linhas_diarias: 10,
-      linhas_servidores_lidos: 10,
-      linhas_ignoradas: 0,
-      total_avisos: 0,
-    });
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(0, 0));
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
@@ -105,16 +117,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("falha na sincronização automática: mostra fallback sem consultar Documentos Hábeis Pendentes", async () => {
-    consultarMock.mockResolvedValueOnce(estado("possivelmente_desatualizado"));
-    dispararMock.mockResolvedValueOnce({
-      status: "falha",
-      sincronizado_em: null,
-      linhas_diarias: null,
-      linhas_servidores_lidos: null,
-      linhas_ignoradas: null,
-      total_avisos: null,
-    });
-    consultarMock.mockResolvedValueOnce(estado("possivelmente_desatualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_FALHA);
+    consultarMock.mockResolvedValue({ ...ESTADO_ATUALIZADO, status: "possivelmente_desatualizado", possivelmente_desatualizado: true });
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
 
@@ -128,7 +132,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("alerta com 1 DH pendente usa singular", async () => {
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(1, 0));
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
@@ -139,7 +144,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("alerta com vários DHs pendentes usa plural", async () => {
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(3, 0));
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
@@ -152,7 +158,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("sem revisão manual pendente mas com aguardando liberação: mostra linha informativa", async () => {
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(0, 1));
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
@@ -163,7 +170,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("sem nenhuma pendência: mensagem discreta de tudo certo", async () => {
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(0, 0));
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
@@ -172,7 +180,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("botão 'Ver Pendências' aciona o callback de navegação", async () => {
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(2, 0));
     const aoAbrirPendencias = vi.fn();
     const usuario = userEvent.setup();
@@ -184,31 +193,16 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("botão 'Sincronizar Agora' no fallback usa o mesmo mecanismo existente e atualiza o alerta", async () => {
-    consultarMock.mockResolvedValueOnce(estado("possivelmente_desatualizado"));
-    dispararMock.mockResolvedValueOnce({
-      status: "falha",
-      sincronizado_em: null,
-      linhas_diarias: null,
-      linhas_servidores_lidos: null,
-      linhas_ignoradas: null,
-      total_avisos: null,
-    });
-    consultarMock.mockResolvedValueOnce(estado("possivelmente_desatualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_FALHA);
+    consultarMock.mockResolvedValue({ ...ESTADO_ATUALIZADO, status: "possivelmente_desatualizado", possivelmente_desatualizado: true });
 
     const usuario = userEvent.setup();
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
 
     const botao = await screen.findByRole("button", { name: "Sincronizar Agora" });
 
-    dispararMock.mockResolvedValueOnce({
-      status: "sucesso",
-      sincronizado_em: "2026-08-07T11:00:00",
-      linhas_diarias: 5,
-      linhas_servidores_lidos: 5,
-      linhas_ignoradas: 0,
-      total_avisos: 0,
-    });
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(0, 0));
 
     await usuario.click(botao);
@@ -218,10 +212,8 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   });
 
   it("proteção contra sincronização simultânea: 409 nunca vira falha, estado real prevalece", async () => {
-    consultarMock
-      .mockResolvedValueOnce(estado("possivelmente_desatualizado"))
-      .mockResolvedValueOnce(estado("atualizado"));
     dispararMock.mockRejectedValueOnce(new SincronizacaoEmAndamentoError());
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     documentosMock.mockResolvedValueOnce(documentos(0, 0));
 
     render(<AlertaGlobalDocumentosHabeis backendOnline aoAbrirPendencias={vi.fn()} />);
@@ -233,5 +225,6 @@ describe("AlertaGlobalDocumentosHabeis", () => {
   it("backend offline: não renderiza nada", () => {
     render(<AlertaGlobalDocumentosHabeis backendOnline={false} aoAbrirPendencias={vi.fn()} />);
     expect(consultarMock).not.toHaveBeenCalled();
+    expect(dispararMock).not.toHaveBeenCalled();
   });
 });

@@ -25,7 +25,7 @@ analitico` → `RegistroAnalitico.valor_total_diarias`."""
 
 from datetime import date
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 from app.consulta import base_local, base_local_sqlite, repositorio_analitico
 from app.consulta.repositorio_analitico import FiltrosDiaria
@@ -79,6 +79,33 @@ def _montar_planilha(tmp_path, nome_arquivo, linhas_controle, linhas_dados):
     caminho = tmp_path / nome_arquivo
     workbook.save(caminho)
     return str(caminho)
+
+
+def _adicionar_formulas_estruturais(caminho_planilha, linha):
+    """P0 FINAL (2026-08-09) — a preparação estrutural automática
+    (`escritor_planilha._preparar_estrutura_futura`) agora audita
+    N/P/R/S/V/Z/AA em TODO fluxo que chama `preencher()` (não só
+    Complemento): sem uma linha-modelo íntegra acima da linha livre,
+    `preencher()` levanta `EstruturaFuturaIndisponivel`. `_linha_controle`
+    só monta P como fórmula (o que este arquivo testa); esta função
+    completa as outras 6 colunas estruturais só para a linha servir de
+    modelo — nunca mexe no que já é testado (P e seu cache). PRECISA rodar
+    ANTES de `injetar_cache_formula`: como as demais, faz um
+    `workbook.save()` cru, que apagaria qualquer cache já injetado."""
+    workbook = load_workbook(caminho_planilha)
+    planilha = workbook["Controle de Diárias"]
+    planilha[f"N{linha}"] = f"=I{linha}-H{linha}"
+    planilha[f"R{linha}"] = (
+        f"=(VLOOKUP(Q{linha},'Tabela Valores'!A:C,2,FALSE()))*N{linha}"
+    )
+    planilha[f"S{linha}"] = (
+        f"=(VLOOKUP(Q{linha},'Tabela Valores'!A:C,3,FALSE()))*O{linha}"
+    )
+    planilha[f"V{linha}"] = f"=CONCATENATE(D{linha},H{linha},I{linha})"
+    planilha[f"Z{linha}"] = f"=H{linha}-15"
+    planilha[f"AA{linha}"] = f"=VLOOKUP(Z{linha},Z$1:AB{linha - 1},3,0)"
+    workbook.save(caminho_planilha)
+    workbook.close()
 
 
 def _sincronizar_e_buscar_registros(caminho_planilha, tmp_path):
@@ -299,6 +326,7 @@ def test_preencher_real_preserva_valor_historico_com_cache_de_formula(tmp_path, 
         ],
         [[77777777777, 1007, "Servidor Histórico", "INSS", _CARGO_SERVIDOR, None, "RGPS", "Em exercício"]],
     )
+    _adicionar_formulas_estruturais(caminho, 2)
     injetar_cache_formula(caminho, "P2", 462.28)
 
     registros_antes = _sincronizar_e_buscar_registros(caminho, tmp_path)
@@ -382,3 +410,48 @@ def test_preencher_real_preserva_valor_historico_com_cache_de_formula_modo_compl
     registros_depois = _sincronizar_e_buscar_registros(str(caminho), tmp_path)
     por_sei = {registro.sei: registro for registro in registros_depois}
     assert por_sei["19.20.0001.0009101/2025-01"].valor_total_diarias == 462.28
+
+
+def test_preencher_real_preserva_cache_de_formula_em_multiplas_abas(tmp_path, injetar_cache_formula):
+    """ETAPA de performance (2026-08-09) — `_reinjetar_cache_formulas`
+    reescreve o XML de cada aba separadamente; este teste garante que a
+    reescrita de uma aba nunca vaza/afeta a outra e que fórmulas com
+    cache em MAIS DE UMA aba sobrevivem na mesma chamada de `preencher()`."""
+    caminho = _montar_planilha(
+        tmp_path,
+        "planilha_multiplas_abas.xlsx",
+        [
+            _linha_controle(
+                dh=None, sei="19.20.0005.0000001/2025-01", cpf=55555555555,
+                periodo_inicial=date(2025, 1, 8), periodo_final=date(2025, 1, 10),
+                valor_p="=R2+S2", valor_r=300.00, valor_s=162.28,
+            )
+        ],
+        [[55555555555, 1005, "Servidor Multi Abas", "INSS", _CARGO_SERVIDOR, None, "RGPS", "Em exercício"]],
+    )
+    # Fórmula também na aba "Tabela Valores" (sem relação com Controle de
+    # Diárias) — precisa existir ANTES de injetar qualquer cache: um
+    # `workbook.save()` cru (sem a proteção de `preencher()`) apagaria o
+    # cache que já tivesse sido injetado.
+    workbook = load_workbook(caminho)
+    tabela_valores = workbook["Tabela Valores"]
+    tabela_valores["B1"] = "=1+1"
+    workbook.save(caminho)
+    workbook.close()
+
+    _adicionar_formulas_estruturais(caminho, 2)
+    injetar_cache_formula(caminho, "P2", 462.28)
+    injetar_cache_formula(caminho, "B1", 2, nome_arquivo_interno="xl/worksheets/sheet3.xml")
+
+    nova_diaria = Diaria(
+        sei="19.20.0005.0000002/2026-02", doc_origem="PJNOVO", cpf="66666666666",
+        periodo_inicial=date(2026, 3, 1), periodo_final=date(2026, 3, 3),
+        cidade_origem="RECIFE", cidade_destino="CARUARU", motivo="Diligência nova",
+    )
+    processo = Processo(arquivo_origem="novo.pdf", status=StatusProcesso.SUCESSO, diaria=nova_diaria)
+    resultado = preencher(caminho, [processo])
+    assert resultado.total_gravado == 1
+
+    workbook_depois = load_workbook(caminho, data_only=True)
+    assert workbook_depois["Controle de Diárias"]["P2"].value == 462.28
+    assert workbook_depois["Tabela Valores"]["B1"].value == 2

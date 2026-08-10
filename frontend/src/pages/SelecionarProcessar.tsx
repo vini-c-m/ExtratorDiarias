@@ -74,9 +74,21 @@ interface Props {
    * preenchendo/concluído). Opcional só para não obrigar quem testa este
    * componente isoladamente a passar um callback que não usa. */
   aoMudarEstado?: (estado: EstadoApp) => void;
+  /** Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 5-7) —
+   * reporta pra cima (a cada mudança de `processando`, e `null` ao
+   * desmontar) uma função "tente sair com segurança": `App.tsx` chama essa
+   * função quando o usuário aciona Voltar/Configurações, em vez de navegar
+   * direto. Sem processamento ativo, ela só chama `aoConcluir` na hora.
+   * Com processamento ativo, mostra a MESMA confirmação/interrupção já
+   * usada pelo botão "Interromper Processamento" (nunca uma segunda
+   * implementação) e só chama `aoConcluir` depois que a interrupção
+   * realmente terminar — nunca antes (item 6: "não navegar antes da
+   * interrupção terminar"). Se o usuário cancelar, `aoConcluir` nunca é
+   * chamado — nem depois, quando o processamento terminar sozinho. */
+  aoMudarSolicitarSaidaSegura?: (funcao: ((aoConcluir: () => void) => void) | null) => void;
 }
 
-export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Props) {
+export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMudarSolicitarSaidaSegura }: Props) {
   const [fila, setFila] = useState<ItemFila[]>([]);
   const [avisoFila, setAvisoFila] = useState<string | null>(null);
 
@@ -102,6 +114,13 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
   const abortControllerRef = useRef<AbortController | null>(null);
   const [confirmandoInterrupcao, setConfirmandoInterrupcao] = useState(false);
   const [mensagemCancelamento, setMensagemCancelamento] = useState<string | null>(null);
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 5-7) —
+  // guarda a ação pendente ("ir para o Hub"/"abrir Configurações") quando
+  // `solicitarSaidaSegura` precisa mostrar a confirmação antes de concluir.
+  // `null` = nenhuma saída pendente (inclusive o caso comum de
+  // "Interromper Processamento" clicado direto, sem nenhuma navegação
+  // associada).
+  const aoConcluirSaidaRef = useRef<(() => void) | null>(null);
 
   // Sprint 15 — substitui a antiga seleção manual de planilha por
   // execução: a planilha oficial é única e já configurada (§7.1 do doc
@@ -274,12 +293,52 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado }: Pr
 
   function continuarProcessando() {
     setConfirmandoInterrupcao(false);
+    // Descarta qualquer saída pendente (Voltar/Configurações) — cancelar a
+    // interrupção não pode navegar mais tarde, quando o processamento
+    // terminar sozinho (item 6: "permanece na tela; processamento continua").
+    aoConcluirSaidaRef.current = null;
   }
 
   function confirmarInterrupcao() {
     setConfirmandoInterrupcao(false);
     abortControllerRef.current?.abort();
   }
+
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 5-7) — ponto
+  // único que `App.tsx` chama para Voltar/Configurações. Sem processamento
+  // ativo, conclui na hora (comportamento normal, item 6). Com
+  // processamento ativo, reaproveita a MESMA confirmação/estado de
+  // `solicitarInterrupcao` acima — só registra o que fazer depois.
+  function solicitarSaidaSegura(aoConcluir: () => void) {
+    if (!processando) {
+      aoConcluir();
+      return;
+    }
+    aoConcluirSaidaRef.current = aoConcluir;
+    setConfirmandoInterrupcao(true);
+  }
+
+  // Reporta a função pra cima a cada mudança de `processando` (fecha sobre
+  // o valor certo em cada versão) — e `null` ao desmontar, para `App.tsx`
+  // nunca guardar uma referência de um componente que já saiu da árvore.
+  useEffect(() => {
+    aoMudarSolicitarSaidaSegura?.(solicitarSaidaSegura);
+    return () => aoMudarSolicitarSaidaSegura?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processando, aoMudarSolicitarSaidaSegura]);
+
+  // A interrupção em si (`confirmarInterrupcao`) só aciona o abort — a
+  // conclusão da saída pendente (navegar/abrir Configurações) só dispara
+  // DEPOIS que `processando` realmente vira `false` (o mesmo `finally` de
+  // `processar()` abaixo), nunca antes (item 6: "não navegar antes da
+  // interrupção terminar").
+  useEffect(() => {
+    if (processando) return;
+    if (!aoConcluirSaidaRef.current) return;
+    const concluir = aoConcluirSaidaRef.current;
+    aoConcluirSaidaRef.current = null;
+    concluir();
+  }, [processando]);
 
   async function preencherPlanilhaClique() {
     if (preenchendo) return;

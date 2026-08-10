@@ -38,6 +38,14 @@ const ESTADO_INICIAL: EstadoGeracaoRelatorio = { fase: "configurando", erro: nul
 export interface EstadoUseGerarRelatorio {
   estado: EstadoGeracaoRelatorio;
   preVisualizar: (parametros: ParametrosRelatorioQuery) => Promise<void>;
+  /** Sprint (Loading/Bloqueio de Ações) — `true` só durante a chamada de
+   * `preVisualizar`: a fase `"configurando"` não tinha (e continua sem)
+   * uma sub-fase própria no diagrama de estados documentado acima, mas o
+   * clique em "Pré-visualizar" precisa de estado real de operação em
+   * andamento (nunca debounce) para não disparar duas chamadas
+   * concorrentes num clique duplo — mesmo princípio já aplicado à fase
+   * `"gerando"`, só que sem merecer uma fase nova nesse diagrama. */
+  carregandoPreVisualizacao: boolean;
   voltar: () => void;
   gerar: (parametros: ParametrosRelatorioQuery) => Promise<void>;
   tentarNovamente: () => void;
@@ -53,8 +61,18 @@ export interface EstadoUseGerarRelatorio {
 export function useGerarRelatorio(): EstadoUseGerarRelatorio {
   const [estado, setEstado] = useState<EstadoGeracaoRelatorio>(ESTADO_INICIAL);
   const ultimosParametrosRef = useRef<ParametrosRelatorioQuery | null>(null);
+  // Sprint (Loading/Bloqueio de Ações) — trava síncrona contra reentrância
+  // (mesmo padrão de `processandoRef` em `SelecionarProcessar.tsx`): a
+  // fase `"configurando"` não muda enquanto pré-visualiza, então só o
+  // estado React (`carregandoPreVisualizacao`) não é suficiente para
+  // impedir um segundo clique disparado antes do primeiro re-render.
+  const carregandoPreVisualizacaoRef = useRef(false);
+  const [carregandoPreVisualizacao, setCarregandoPreVisualizacao] = useState(false);
 
   const preVisualizar = useCallback(async (parametros: ParametrosRelatorioQuery) => {
+    if (carregandoPreVisualizacaoRef.current) return;
+    carregandoPreVisualizacaoRef.current = true;
+    setCarregandoPreVisualizacao(true);
     try {
       const previa = await gerarRelatorio({ ...parametros, modo: "previsualizacao" });
       setEstado({
@@ -70,6 +88,9 @@ export function useGerarRelatorio(): EstadoUseGerarRelatorio {
         fase: "configurando",
         erro: mensagemAmigavel(erroCaptura, "Não foi possível pré-visualizar o relatório."),
       });
+    } finally {
+      carregandoPreVisualizacaoRef.current = false;
+      setCarregandoPreVisualizacao(false);
     }
   }, []);
 
@@ -128,5 +149,5 @@ export function useGerarRelatorio(): EstadoUseGerarRelatorio {
     setEstado({ fase: "configurando", erro: null });
   }, []);
 
-  return { estado, preVisualizar, voltar, gerar, tentarNovamente, cancelar };
+  return { estado, preVisualizar, carregandoPreVisualizacao, voltar, gerar, tentarNovamente, cancelar };
 }

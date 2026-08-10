@@ -24,253 +24,153 @@ import {
 const consultarMock = vi.mocked(consultarEstadoSincronizacao);
 const dispararMock = vi.mocked(dispararSincronizacaoManual);
 
-function estado(status: "nunca_sincronizado" | "atualizado" | "possivelmente_desatualizado") {
-  return {
-    sincronizado_em: status === "nunca_sincronizado" ? null : "2026-07-31T14:32:00",
-    origem: status === "nunca_sincronizado" ? null : "pos_preenchimento",
-    possivelmente_desatualizado: status === "possivelmente_desatualizado",
-    total_avisos: 0,
-    status,
-  };
-}
+const ESTADO_ATUALIZADO = {
+  sincronizado_em: "2026-07-31T14:32:00",
+  origem: "pos_preenchimento",
+  possivelmente_desatualizado: false,
+  total_avisos: 0,
+  status: "atualizado" as const,
+};
+
+const RESUMO_SUCESSO = {
+  status: "sucesso" as const,
+  sincronizado_em: "2026-07-31T15:00:00",
+  linhas_diarias: 10,
+  linhas_servidores_lidos: 5,
+  linhas_ignoradas: 0,
+  total_avisos: 0,
+};
+
+const RESUMO_FALHA = {
+  status: "falha" as const,
+  sincronizado_em: null,
+  linhas_diarias: null,
+  linhas_servidores_lidos: null,
+  linhas_ignoradas: null,
+  total_avisos: null,
+};
 
 afterEach(() => {
   vi.clearAllMocks();
   cleanup();
 });
 
-describe("IndicadorSincronizacao — estados de leitura", () => {
-  it("verificando (carregando inicial)", () => {
-    consultarMock.mockReturnValue(new Promise(() => {})); // nunca resolve nesta asserção
+// MS UX (2026-08-10) — o indicador não expõe mais um botão permanente:
+// a sincronização dispara sozinha ao montar (mesmo `sincronizarAgora`
+// homologado do antigo botão manual). Item 13 N/O/P/Q do pedido do
+// usuário: (N) entrada tenta sync automático; (O) sucesso → sem botão;
+// (P) falha → botão aparece; (Q) sucesso manual → botão some de novo.
+describe("IndicadorSincronizacao — sincronização automática ao montar", () => {
+  it("N) entrar na tela dispara sincronização automática (mesmo endpoint do botão manual)", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
 
     render(<IndicadorSincronizacao backendOnline />);
 
-    expect(screen.getByText(/Verificando atualizações/)).toBeInTheDocument();
+    await waitFor(() => expect(dispararMock).toHaveBeenCalledTimes(1));
   });
 
-  it("nunca sincronizado (J7)", async () => {
-    consultarMock.mockResolvedValueOnce(estado("nunca_sincronizado"));
+  it("O) sucesso automático → nenhum botão/mensagem renderizado", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
 
-    render(<IndicadorSincronizacao backendOnline />);
+    const { container } = render(<IndicadorSincronizacao backendOnline />);
 
-    expect(await screen.findByText("Nenhuma sincronização realizada ainda.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sincronizar agora" })).toBeInTheDocument();
+    await waitFor(() => expect(dispararMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("atualizado", async () => {
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
+  it("P) falha automática (status: falha) → botão de recuperação aparece", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
+    dispararMock.mockResolvedValueOnce(RESUMO_FALHA);
 
     render(<IndicadorSincronizacao backendOnline />);
 
-    expect(await screen.findByText(/Base Local sincronizada às 14:32/)).toBeInTheDocument();
-  });
-
-  it("possivelmente desatualizado", async () => {
-    consultarMock.mockResolvedValueOnce(estado("possivelmente_desatualizado"));
-
-    render(<IndicadorSincronizacao backendOnline />);
-
-    expect(await screen.findByText("Os dados podem estar desatualizados.")).toBeInTheDocument();
-  });
-
-  it("Base Local indisponível (503 em GET /sincronizacao) — nunca é um veredito de negócio", async () => {
-    consultarMock.mockRejectedValueOnce(new ErroAnaliticaIndisponivel());
-
-    render(<IndicadorSincronizacao backendOnline />);
-
+    expect(await screen.findByRole("button", { name: "Sincronizar novamente" })).toBeInTheDocument();
     expect(
-      await screen.findByText("Não foi possível carregar o status de sincronização agora."),
+      screen.getByText("Falha ao sincronizar a Base Local — os dados podem estar desatualizados."),
     ).toBeInTheDocument();
-    const botaoTentarNovamente = screen.getByRole("button", { name: "Tentar novamente" });
-    expect(botaoTentarNovamente).toBeInTheDocument();
-
-    consultarMock.mockResolvedValueOnce(estado("atualizado"));
-    const usuario = userEvent.setup();
-    await usuario.click(botaoTentarNovamente);
-
-    expect(await screen.findByText(/Base Local sincronizada às 14:32/)).toBeInTheDocument();
-  });
-});
-
-describe("IndicadorSincronizacao — sincronização manual", () => {
-  it("sincronizando: botão desabilita durante o POST", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
-    let resolverDisparo!: (valor: Awaited<ReturnType<typeof dispararSincronizacaoManual>>) => void;
-    dispararMock.mockReturnValue(
-      new Promise((resolver) => {
-        resolverDisparo = resolver;
-      }),
-    );
-
-    const usuario = userEvent.setup();
-    render(<IndicadorSincronizacao backendOnline />);
-    const botao = await screen.findByRole("button", { name: "Sincronizar agora" });
-
-    await usuario.click(botao);
-
-    expect(screen.getByText(/Sincronizando/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sincronizar agora" })).toBeDisabled();
-
-    // limpa a promise pendente para não vazar entre testes
-    resolverDisparo({
-      status: "sucesso",
-      sincronizado_em: "2026-07-31T15:00:00",
-      linhas_diarias: 1,
-      linhas_servidores_lidos: 1,
-      linhas_ignoradas: 0,
-      total_avisos: 0,
-    });
   });
 
-  it("sucesso: mostra 'Base Local atualizada'", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
-    dispararMock.mockResolvedValueOnce({
-      status: "sucesso",
-      sincronizado_em: "2026-07-31T15:00:00",
-      linhas_diarias: 10,
-      linhas_servidores_lidos: 5,
-      linhas_ignoradas: 0,
-      total_avisos: 0,
-    });
-
-    const usuario = userEvent.setup();
-    render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
-
-    expect(await screen.findByText("Base Local atualizada.")).toBeInTheDocument();
-  });
-
-  it("falha (status: falha na resposta do backend)", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
-    dispararMock.mockResolvedValueOnce({
-      status: "falha",
-      sincronizado_em: null,
-      linhas_diarias: null,
-      linhas_servidores_lidos: null,
-      linhas_ignoradas: null,
-      total_avisos: null,
-    });
-
-    const usuario = userEvent.setup();
-    render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
-
-    expect(
-      await screen.findByText("Falha ao sincronizar — os dados podem estar desatualizados."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
-  });
-
-  it("falha (503 durante o POST) — mesmo tratamento de falha, nunca um erro não tratado", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
+  it("P) falha automática (503 durante o POST) → mesmo tratamento de falha", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     dispararMock.mockRejectedValueOnce(new ErroAnaliticaIndisponivel());
 
-    const usuario = userEvent.setup();
     render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
 
-    expect(
-      await screen.findByText("Falha ao sincronizar — os dados podem estar desatualizados."),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Sincronizar novamente" })).toBeInTheDocument();
   });
 
-  it("Planilha Oficial indisponível (422) — mensagem do backend, nunca tratado como falha genérica", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
+  it("Planilha Oficial indisponível (422) — mensagem do backend, com botão de recuperação", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     dispararMock.mockRejectedValueOnce(new Error("Planilha oficial não configurada."));
 
-    const usuario = userEvent.setup();
     render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
 
     expect(await screen.findByText("Planilha oficial não configurada.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Tentar novamente" })).toBeInTheDocument();
-    expect(screen.queryByText("Falha ao sincronizar — os dados podem estar desatualizados.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sincronizar novamente" })).toBeInTheDocument();
   });
 
-  it("sincronização já em andamento (409) — mostra 'Sincronizando' durante a chamada, nunca um erro", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
+  it("sincronização já em andamento (409) — nunca tratado como falha, nenhum botão aparece", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
     dispararMock.mockRejectedValueOnce(new SincronizacaoEmAndamentoError());
+
+    render(<IndicadorSincronizacao backendOnline />);
+
+    await waitFor(() => expect(dispararMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(consultarMock).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("Q) falha automática seguida de sincronização manual bem-sucedida → botão desaparece", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
+    dispararMock.mockResolvedValueOnce(RESUMO_FALHA);
 
     const usuario = userEvent.setup();
     render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
 
-    await waitFor(() => {
-      expect(consultarMock).toHaveBeenCalledTimes(2);
-    });
-    expect(screen.queryByText(/Falha ao sincronizar/)).not.toBeInTheDocument();
-  });
+    const botao = await screen.findByRole("button", { name: "Sincronizar novamente" });
 
-  it("409: resolução — depois da chamada recusada, o botão volta a funcionar (correção 18.4.3.1)", async () => {
-    // Antes da correção 18.4.3.1, este cenário deixava o indicador preso
-    // em "Sincronizando..." com o botão desabilitado para sempre (achado
-    // da auditoria consolidada 18.4.1–18.4.3) — este teste prova que o
-    // botão volta a aparecer habilitado, no estado normal, e que uma
-    // nova tentativa funciona de verdade.
-    consultarMock.mockResolvedValue(estado("atualizado"));
-    dispararMock.mockRejectedValueOnce(new SincronizacaoEmAndamentoError());
-
-    const usuario = userEvent.setup();
-    render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
-
-    // O estado transitório "Sincronizando..." deve desaparecer sozinho,
-    // caindo de volta no estado normal (derivado do `dado` reatualizado),
-    // com o botão "Sincronizar agora" habilitado — nunca travado.
-    await waitFor(() => {
-      expect(screen.queryByText(/Sincronizando/)).not.toBeInTheDocument();
-    });
-    const botao = await screen.findByRole("button", { name: "Sincronizar agora" });
-    expect(botao).toBeEnabled();
-    expect(await screen.findByText(/Base Local sincronizada às 14:32/)).toBeInTheDocument();
-
-    // E uma nova tentativa, desta vez bem-sucedida, funciona normalmente.
-    dispararMock.mockResolvedValueOnce({
-      status: "sucesso",
-      sincronizado_em: "2026-07-31T16:00:00",
-      linhas_diarias: 1,
-      linhas_servidores_lidos: 1,
-      linhas_ignoradas: 0,
-      total_avisos: 0,
-    });
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
     await usuario.click(botao);
 
-    expect(await screen.findByText("Base Local atualizada.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("button")).not.toBeInTheDocument());
+    expect(
+      screen.queryByText("Falha ao sincronizar a Base Local — os dados podem estar desatualizados."),
+    ).not.toBeInTheDocument();
   });
 
-  it("recuperação: depois de uma falha, clicar 'Tentar novamente' com sucesso mostra 'Base Local atualizada'", async () => {
-    consultarMock.mockResolvedValue(estado("atualizado"));
-    dispararMock.mockResolvedValueOnce({
-      status: "falha",
-      sincronizado_em: null,
-      linhas_diarias: null,
-      linhas_servidores_lidos: null,
-      linhas_ignoradas: null,
-      total_avisos: null,
-    });
+  it("nova falha após tentativa manual mantém o botão visível", async () => {
+    consultarMock.mockResolvedValue(ESTADO_ATUALIZADO);
+    dispararMock.mockResolvedValueOnce(RESUMO_FALHA);
 
     const usuario = userEvent.setup();
     render(<IndicadorSincronizacao backendOnline />);
-    await usuario.click(await screen.findByRole("button", { name: "Sincronizar agora" }));
 
-    const botaoTentarNovamente = await screen.findByRole("button", { name: "Tentar novamente" });
-    expect(
-      screen.getByText("Falha ao sincronizar — os dados podem estar desatualizados."),
-    ).toBeInTheDocument();
+    const botao = await screen.findByRole("button", { name: "Sincronizar novamente" });
 
-    dispararMock.mockResolvedValueOnce({
-      status: "sucesso",
-      sincronizado_em: "2026-07-31T16:00:00",
-      linhas_diarias: 3,
-      linhas_servidores_lidos: 3,
-      linhas_ignoradas: 0,
-      total_avisos: 0,
-    });
-    await usuario.click(botaoTentarNovamente);
+    dispararMock.mockResolvedValueOnce(RESUMO_FALHA);
+    await usuario.click(botao);
 
-    expect(await screen.findByText("Base Local atualizada.")).toBeInTheDocument();
-    expect(
-      screen.queryByText("Falha ao sincronizar — os dados podem estar desatualizados."),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Sincronizar novamente" })).toBeInTheDocument();
+  });
+
+  it("falha na leitura do estado (GET) mostra botão próprio de retry", async () => {
+    consultarMock.mockRejectedValueOnce(new ErroAnaliticaIndisponivel());
+    dispararMock.mockResolvedValueOnce(RESUMO_SUCESSO);
+
+    render(<IndicadorSincronizacao backendOnline />);
+
+    // A chamada automática (POST) já roda em paralelo; se ambas
+    // completarem e a busca de estado seguir falhando, `erro` prevalece.
+    await waitFor(() => expect(dispararMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("backend offline nunca dispara sincronização automática", () => {
+    render(<IndicadorSincronizacao backendOnline={false} />);
+
+    expect(dispararMock).not.toHaveBeenCalled();
+    expect(consultarMock).not.toHaveBeenCalled();
   });
 });

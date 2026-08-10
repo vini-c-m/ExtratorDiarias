@@ -23,6 +23,33 @@ export const MENSAGENS = {
   interromper: "Interromper",
   processamentoCancelado: "Processamento cancelado pelo usuário. Nenhuma informação foi salva.",
   relatorioSalvoComSucesso: "✔ Relatório salvo com sucesso.",
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-9) —
+  // confirmação ao fechar o aplicativo (X da janela, Alt+F4, `app.quit()`
+  // — interceptados no processo main, `electron/main.ts`). Mensagem mais
+  // clara quando há operação crítica em andamento (mesmo critério de
+  // "processando", `EstadoApp`), avisando que sair agora a interrompe.
+  tituloConfirmarFechamento: "Sair do aplicativo?",
+  mensagemConfirmarFechamento: "Tem certeza que deseja sair do aplicativo?",
+  tituloConfirmarFechamentoComOperacao: "Operação em andamento",
+  mensagemConfirmarFechamentoComOperacao:
+    "Existe uma operação em andamento. Sair agora irá interrompê-la. Deseja realmente sair?",
+  sair: "Sair",
+  // Cadastro de Servidor/Membro pela Central de Conferência — mensagens
+  // fixas do modal (`ModalCadastrarServidor.tsx`). As mensagens dos
+  // estados `duplicado`/`salvo_sync_pendente` vêm curadas do backend
+  // (`resposta.mensagem`, já amigáveis) e passam direto, sem constante
+  // própria aqui — só o estado `concluido` (que o backend não descreve em
+  // texto) e os rótulos de botão precisam de uma mensagem fixa no
+  // frontend.
+  cadastrarServidorTitulo: "Cadastrar servidor/membro",
+  cadastroServidorSalvo: "Cadastro salvo na Planilha Oficial.",
+  // Nunca afirmar que o Drive sincronizou de fato — não existe nenhuma
+  // integração com o Google Drive neste projeto; isto é só um lembrete
+  // textual, a confirmação é sempre manual do usuário.
+  cadastroServidorAvisoDrive:
+    "Antes de continuar, verifique se o Google Drive concluiu a sincronização da versão atualizada.",
+  cadastroServidorContinuar: "Já sincronizei / Continuar",
+  cadastroServidorTentarSincronizarNovamente: "Tentar sincronizar novamente",
 } as const;
 
 interface PadraoMensagem {

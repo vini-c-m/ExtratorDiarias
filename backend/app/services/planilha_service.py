@@ -2,11 +2,17 @@ import logging
 import os
 from dataclasses import replace
 
+from app import diagnostico_complemento_temp as diag  # DIAGNÓSTICO TEMPORÁRIO — remover após causa raiz confirmada/corrigida
 from app.consulta import base_local
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
 from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo
-from app.planilha.escritor_planilha import NOME_ABA, ResultadoPreenchimento, preencher
+from app.planilha.escritor_planilha import (
+    NOME_ABA,
+    EstruturaFuturaIndisponivel,
+    ResultadoPreenchimento,
+    preencher,
+)
 from app.planilha.pasta_resultados import ArquivosGerados, montar
 from app.planilha.relatorio import ItemAviso, ItemErro
 
@@ -53,13 +59,16 @@ def preencher_planilha(
         raise ErroPreenchimentoPlanilha(f"Planilha não encontrada: {caminho_planilha}")
 
     try:
-        resultado = preencher(caminho_planilha, processos, modo)
+        with diag.etapa("escritor_planilha_preencher", modo=str(modo), processos=len(processos)):
+            resultado = preencher(caminho_planilha, processos, modo)
     except KeyError:
         raise ErroPreenchimentoPlanilha(f"Aba '{NOME_ABA}' não encontrada na planilha")
     except PermissionError:
         raise ErroPreenchimentoPlanilha(
             "Não foi possível gravar a planilha — feche o arquivo no Excel e tente novamente"
         )
+    except EstruturaFuturaIndisponivel as erro:
+        raise ErroPreenchimentoPlanilha(str(erro)) from erro
 
     avisos_completos = [*(avisos or []), *_avisos_doc_origem_sem_historico(resultado)]
 
@@ -96,7 +105,8 @@ def preencher_planilha(
 
     if resultado.total_gravado > 0:
         try:
-            base_local.sincronizar(caminho_planilha, ao_falhar_sqlite=_marcar_falha_sincronizacao)
+            with diag.etapa("planilha_service_sincronizacao", total_gravado=resultado.total_gravado):
+                base_local.sincronizar(caminho_planilha, ao_falhar_sqlite=_marcar_falha_sincronizacao)
         except Exception:
             _logger.exception("Falha ao sincronizar a Base Local de Consulta")
             sincronizacao_analitica_falhou = True

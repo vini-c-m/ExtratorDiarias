@@ -95,17 +95,24 @@ function useViewportLargo(): boolean {
 function CartaoInsight({
   insight,
   ativo,
+  destaqueSequencial,
   aoPassarMouseInsight,
   aoClicarInsight,
   acionar,
-  copiaVisual = false,
 }: {
   insight: Insight;
   ativo: boolean;
+  /** MS — Insights vivos por destaque sequencial: sinal INDEPENDENTE de
+   * `ativo` (que é a conexão visual insight↔gráfico, hover/clique em
+   * `GradeGraficosExecutivos`, inalterada por esta Sprint) — este vem de
+   * `MarketTapeInsights`, é a vez deste item na sequência automática (ou o
+   * usuário está com mouse/foco sobre ele). Os dois podem estar ativos ao
+   * mesmo tempo, em itens diferentes ou no mesmo item, sem conflito: cada
+   * um pinta um detalhe visual distinto (traço à esquerda × cartão/glow). */
+  destaqueSequencial: boolean;
   aoPassarMouseInsight?: (id: string | null) => void;
   aoClicarInsight?: (insight: Insight) => void;
   acionar: (insight: Insight) => void;
-  copiaVisual?: boolean;
 }) {
   const temGraficoRelacionado = INSIGHTS_COM_GRAFICO_RELACIONADO.has(insight.id) && aoClicarInsight !== undefined;
   const destaque = extrairDestaque(insight.texto);
@@ -115,7 +122,7 @@ function CartaoInsight({
 
   return (
     <div
-      className={`conteudo-insight-market-tape ${ativo ? "insight-item-ativo" : ""}`}
+      className={`conteudo-insight-market-tape ${ativo ? "insight-item-ativo" : ""} ${destaqueSequencial ? "market-tape-item-spotlight" : ""}`}
       onMouseEnter={() => aoPassarMouseInsight?.(insight.id)}
       onMouseLeave={() => aoPassarMouseInsight?.(null)}
     >
@@ -129,7 +136,16 @@ function CartaoInsight({
         {destaque && <div className="insight-destaque">{destaque}</div>}
         <p className="insight-contexto">{insight.texto}</p>
       </Conteudo>
-      {insight.acao && !copiaVisual && (
+      {/* MS — Insights vivos por destaque sequencial (item 7): o CTA
+          "Aplicar filtro" do insight de concentração territorial (Municípios)
+          foi removido — o insight continua informativo e mantém a conexão
+          visual com o gráfico (`INSIGHTS_COM_GRAFICO_RELACIONADO`, acima),
+          só deixa de oferecer esse atalho de filtro na lateral. `acao` com
+          `municipio` nunca renderiza mais o botão; ações de diagnóstico
+          ("Abrir diagnóstico") continuam intactas. Cálculo do insight
+          (`insightConcentracaoGastos`, `insightsExecutivos.ts`) inalterado —
+          `acao.municipio` continua computado, só não é mais lido aqui. */}
+      {insight.acao && !("municipio" in insight.acao) && (
         <div className="mt-2.5">
           <Botao variante="secundaria" onClick={() => acionar(insight)}>
             {insight.acao.rotulo}
@@ -147,18 +163,18 @@ function CartaoInsight({
  * (`insights.length === 0`) não é um erro — é o recorte não ter nada a
  * destacar, estado normal, sem alerta nenhum.
  *
- * BI 4.0 (2026-08-08) — "Insights em movimento": timeline executiva com UM
- * insight dominante por vez (a cada `INTERVALO_ROTACAO_MS`, o item ativo
- * recolhe e o próximo expande — fade + slide de ~12px, `CartaoInsight`
- * acima; claramente perceptível, nunca um "fade de 2px"). Pausa no hover
- * do painel, retoma ao sair; marcador/cabeçalho de cada item viram
- * paginação manual clicável quando há mais de 1 insight; teclado continua
- * acessível (marcador é `<button>` real). `prefers-reduced-motion` desliga
- * o avanço automático E a transição em si (troca fica instantânea) — sem
- * remover a função: o item dominante continua trocável manualmente,
- * "versão estática premium", nunca um painel morto. Nunca um carrossel
- * horizontal/ticker. Independente da conexão insight↔gráfico
- * (`insightEmDestaque`, hover/clique, inalterada por esta Sprint). */
+ * MS — Insights vivos por destaque sequencial (2026-08-10) — os insights
+ * ficam FIXOS na lateral (`MarketTapeInsights`, sem scroll/ticker); um por
+ * vez "acende" em sequência, sempre de cima para baixo, em loop, como se o
+ * usuário tivesse passado o mouse sobre ele. Pausa com hover/foco em
+ * qualquer ponto da lista, retoma de onde parou ao sair — nunca reinicia
+ * do primeiro item. AJUSTE FINAL (2026-08-10): `prefers-reduced-motion`
+ * NUNCA desliga a sequência (nenhuma configuração do Windows precisa
+ * mudar para o usuário ver algum destaque) — só reduz a PELE do card ativo
+ * a luminância/background/contraste de texto, sem nenhum deslocamento
+ * espacial (`modoExecutivo.css`). Independente da conexão insight↔gráfico
+ * (`insightEmDestaque`, hover/clique em `GradeGraficosExecutivos`,
+ * inalterada por esta Sprint). */
 export default function PainelInsights({
   insights,
   carregando,
@@ -219,7 +235,20 @@ export default function PainelInsights({
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className={TIPOGRAFIA.eyebrow}>Leitura gerencial</div>
-          <h3 className={`mt-1 ${TIPOGRAFIA.subtitulo}`}>Insights</h3>
+          {/* MS FINAL — indicador "ao vivo" discreto (item 11): nunca
+              pisca/anima — só o ponto ciano mínimo já permitido pela
+              paleta desta faixa (item 12, "pequeno indicador"), texto em
+              slate neutro. Fora do `<h3>` de propósito: `ModoApresentacao.
+              tsx` (fora do escopo desta Sprint) identifica a seção 2 pelo
+              nome acessível deste heading — precisa continuar sendo
+              exatamente "Insights". */}
+          <div className="mt-1 flex items-center gap-2">
+            <h3 className={TIPOGRAFIA.subtitulo}>Insights</h3>
+            <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-cyan-400/70" />
+              Ao vivo
+            </span>
+          </div>
         </div>
         <button
           type="button"
@@ -234,14 +263,14 @@ export default function PainelInsights({
           <MarketTapeInsights
             itens={insights}
             chave={(insight) => insight.id}
-            renderizar={(insight, copiaVisual) => (
+            renderizar={(insight, destaqueSequencial) => (
               <CartaoInsight
                 insight={insight}
-                ativo={!copiaVisual && insightEmDestaque === insight.id}
-                aoPassarMouseInsight={copiaVisual ? undefined : aoPassarMouseInsight}
-                aoClicarInsight={copiaVisual ? undefined : aoClicarInsight}
-                acionar={copiaVisual ? () => {} : acionar}
-                copiaVisual={copiaVisual}
+                ativo={insightEmDestaque === insight.id}
+                destaqueSequencial={destaqueSequencial}
+                aoPassarMouseInsight={aoPassarMouseInsight}
+                aoClicarInsight={aoClicarInsight}
+                acionar={acionar}
               />
             )}
           />

@@ -165,24 +165,15 @@ describe("ModoExecutivo", () => {
     expect(screen.getByText("01–30/06/2026")).toBeInTheDocument();
   });
 
-  it("'← Voltar ao Modo Operacional' aciona o callback recebido", () => {
-    mockarTudo();
-    const aoVoltar = vi.fn();
-    render(<ModoExecutivo {...PROPS_BASE} aoVoltar={aoVoltar} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "← Voltar ao Modo Operacional" }));
-    expect(aoVoltar).toHaveBeenCalledTimes(1);
-  });
-
-  it("toggle de categoria funcional chama onMudarFiltro com categoria_funcional=MEMBRO — mesmo mecanismo da Sprint 20, sem segunda implementação", async () => {
-    mockarTudo();
-    const onMudarFiltro = vi.fn();
-    render(<ModoExecutivo {...PROPS_BASE} onMudarFiltro={onMudarFiltro} />);
-
-    await userEvent.click(screen.getByRole("radio", { name: "Membros" }));
-
-    expect(onMudarFiltro).toHaveBeenCalledWith({ categoria_funcional: "MEMBRO" });
-  });
+  // MS UX — Simplificação da Central Analítica (2026-08-10, itens 6/8/10):
+  // "Voltar ao Modo Operacional" deixou de existir como botão separado
+  // dentro de `CabecalhoExecutivo` — Dark Mode Executivo virou um TOGGLE
+  // único, testado em `CentralAnalitica.test.tsx` (dono do estado
+  // `visualizacao`). `FiltroCategoriaFuncional` também saiu do cabeçalho
+  // executivo (um dos filtros removidos da interface, item 1) — os 2
+  // testes que cobriam essas 2 peças foram removidos junto com elas; o
+  // "Membros × Servidores" da comparação (`PainelComparacao`, mecanismo
+  // diferente, não tocado) continua coberto abaixo.
 
   describe("painel lateral contextual (Sprint 21.4)", () => {
     it("clicar num município do gráfico abre o painel lateral com o resumo do ponto, sem aplicar filtro nem sair do Modo Executivo sozinho", async () => {
@@ -458,7 +449,12 @@ describe("ModoExecutivo", () => {
       expect(screen.queryByText("Atenção (diagnóstico)")).not.toBeInTheDocument();
     });
 
-    it("mostra o insight de concentração de gastos com ação 'Aplicar filtro' para o município top", async () => {
+    // MS — Insights vivos por destaque sequencial (item 7): o insight de
+    // concentração de gastos nunca mais oferece "Aplicar filtro" na
+    // lateral — continua informativo (texto/cálculo inalterados), só perde
+    // o CTA (a conexão visual com o gráfico de Municípios continua via
+    // clique, testada em "conexão visual insight ↔ gráfico" abaixo).
+    it("mostra o insight de concentração de gastos sem nenhum 'Aplicar filtro' na lateral", async () => {
       mockarTudo();
       obterDistribuicaoMock.mockImplementation(async (parametros) =>
         parametros.dimensao === "municipio"
@@ -475,11 +471,9 @@ describe("ModoExecutivo", () => {
       const onMudarFiltro = vi.fn();
       render(<ModoExecutivo {...PROPS_BASE} onMudarFiltro={onMudarFiltro} />);
 
-      await waitFor(() => expect(screen.getAllByText(/município\(s\) concentram/)).toHaveLength(2));
-      await userEvent.hover(screen.getByTestId("market-tape-continuo"));
-      fireEvent.click(screen.getByRole("button", { name: "Aplicar filtro" }));
-
-      expect(onMudarFiltro).toHaveBeenCalledWith({ municipio: "Araripina-PE" });
+      await waitFor(() => expect(screen.getAllByText(/município\(s\) concentram/)).toHaveLength(1));
+      expect(screen.queryByRole("button", { name: "Aplicar filtro" })).not.toBeInTheDocument();
+      expect(onMudarFiltro).not.toHaveBeenCalled();
     });
 
     it("com período definido no recorte, mostra o insight de variação vs. período anterior", async () => {

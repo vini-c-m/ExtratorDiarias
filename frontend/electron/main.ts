@@ -4,6 +4,8 @@ import * as path from "path";
 import { registrarIpcClipboard } from "./ipc/clipboard";
 import { registrarIpcConferencia } from "./ipc/conferencia";
 import { registrarIpcConfiguracao } from "./ipc/configuracao";
+import { type EstadoFechamento, registrarFechamentoSeguro, registrarIpcFechamento } from "./ipc/fechamento";
+import { registrarIpcLink } from "./ipc/link";
 import { registrarIpcPlanilha } from "./ipc/planilha";
 import { registrarIpcRelatorio } from "./ipc/relatorio";
 
@@ -17,6 +19,11 @@ const APP_ID = "com.viniciusmendes.extratordiarias";
 
 let backendProcess: ChildProcessWithoutNullStreams | null = null;
 let janelaPrincipal: BrowserWindow | null = null;
+// Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) — guarda
+// contra loop infinito no `close` de `registrarFechamentoSeguro`: só vira
+// `true` depois que o renderer confirma (`app:confirmar-fechamento`), e o
+// `close()` disparado ali mesmo passa direto pelo guard na segunda vez.
+const estadoFechamento: EstadoFechamento = { podeFechar: false };
 
 // Sprint 08 — em desenvolvimento, sobe o backend a partir do `.venv` (fluxo
 // inalterado desde sempre); empacotado, não há Python instalado na máquina
@@ -102,6 +109,18 @@ function criarJanela(): void {
     },
   });
 
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) —
+  // confirmação ao fechar o app: interceptar o evento nativo `close` do
+  // `BrowserWindow` é o único ponto que cobre de verdade X da janela,
+  // Alt+F4 e `app.quit()` por igual — diferente de `window.beforeunload`,
+  // que o Electron não garante disparar de forma confiável para
+  // fechamento nativo (item 10, "preferir controle no Electron main
+  // process"). A decisão de qual mensagem mostrar (há operação crítica
+  // ativa?) é do renderer, único lugar que sabe disso — `registrarFechamentoSeguro`
+  // só pausa o fechamento e pergunta (extraído para `ipc/fechamento.ts`,
+  // testável isoladamente, mesmo padrão dos demais `registrarIpc*`).
+  registrarFechamentoSeguro(janelaPrincipal, estadoFechamento);
+
   if (!app.isPackaged) {
     janelaPrincipal.loadURL("http://localhost:5173");
   } else {
@@ -117,6 +136,14 @@ app.whenReady().then(() => {
   registrarIpcConferencia();
   registrarIpcConfiguracao();
   registrarIpcClipboard();
+  registrarIpcLink();
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) —
+  // handler único (nunca por janela — evitaria "segundo handler para o
+  // mesmo canal" se a janela principal for recriada, `app.on("activate")`
+  // abaixo); o renderer chama isto depois de confirmar (e, se havia
+  // processamento ativo, depois que a interrupção segura já terminou) —
+  // nunca antes.
+  registrarIpcFechamento(() => janelaPrincipal, estadoFechamento);
   subirBackend();
   criarJanela();
 

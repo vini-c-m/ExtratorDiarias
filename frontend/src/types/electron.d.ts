@@ -18,6 +18,18 @@ declare global {
       // (Central de Conferência, Sprint 13) que montam o objeto inteiro;
       // no app real (`preload.ts`) está sempre definido.
       copiarTexto?: (texto: string) => Promise<void>;
+      // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) —
+      // mesmo critério de opcionalidade acima. `aoSolicitarFechamento`
+      // registra o callback chamado quando o processo main intercepta um
+      // fechamento nativo da janela (X, Alt+F4, `app.quit()`) e devolve uma
+      // função de cancelamento da assinatura. `confirmarFechamento` avisa o
+      // main que pode fechar de verdade agora.
+      aoSolicitarFechamento?: (callback: () => void) => () => void;
+      confirmarFechamento?: () => Promise<void>;
+      // Ajuste Final (link Arquimedes) — mesmo critério de opcionalidade
+      // acima. Abre um link no navegador padrão do sistema
+      // (`shell.openExternal`, processo main), nunca dentro do app.
+      abrirLinkExterno?: (url: string) => Promise<void>;
     };
   }
 }

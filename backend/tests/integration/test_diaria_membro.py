@@ -71,6 +71,14 @@ def test_processos_padrao_nao_ganham_tipo_membro_nem_valor(pdfs_exemplo):
 
 
 def _planilha_vazia(caminho) -> None:
+    """P0 FINAL (2026-08-09) — "vazia" quer dizer sem nenhuma diária ainda,
+    não sem nenhuma linha: a preparação estrutural automática (ver
+    `escritor_planilha._preparar_estrutura_futura`) exige uma linha-modelo
+    íntegra (N/P/R/S/V/Z/AA em fórmula) acima da primeira linha livre para
+    QUALQUER gravação, em qualquer modo — sem isso, `preencher()` aborta
+    antes de gravar (comportamento novo e intencional, não um bug deste
+    teste). Uma linha 2 puramente estrutural (nenhum dado de diária real)
+    supre esse modelo sem afetar nada do que este teste verifica."""
     workbook = Workbook()
     planilha = workbook.active
     planilha.title = "Controle de Diárias"
@@ -90,6 +98,22 @@ def _planilha_vazia(caminho) -> None:
             "MOTIVO",
         ]
     )
+    planilha.append(
+        [
+            None, "SEI-MODELO-ESTRUTURAL", "PJMODELO", 0, None, None, None,
+            "01/01/2020", "03/01/2020", "MODELO-MODELO", "CARRO", "Linha-modelo estrutural",
+        ]
+    )
+    for coluna, formula in (
+        ("N", "=I2-H2"),
+        ("P", "=R2+S2"),
+        ("R", "=(VLOOKUP(Q2,'Tabela Valores'!A:C,2,FALSE()))*N2"),
+        ("S", "=(VLOOKUP(Q2,'Tabela Valores'!A:C,3,FALSE()))*O2"),
+        ("V", "=CONCATENATE(D2,H2,I2)"),
+        ("Z", "=H2-15"),
+        ("AA", "=VLOOKUP(Z2,Z$1:AB1,3,0)"),
+    ):
+        planilha[f"{coluna}2"] = formula
     workbook.save(caminho)
 
 
@@ -121,7 +145,12 @@ def test_coluna_p_e_preenchida_somente_para_diaria_de_membro(
     )
 
     assert planilha[f"P{linha_membro}"].value is not None
-    assert planilha[f"P{linha_padrao}"].value is None
+    # P0 FINAL (2026-08-09): P do processo Padrão nunca recebe um VALOR
+    # literal (regra intacta) — mas deixa de ficar vazio, porque a
+    # preparação estrutural automática já copiou a fórmula da linha-modelo
+    # antes desta gravação (mesmo achado de `test_escritor_planilha.py::
+    # test_preencher_nao_grava_coluna_p_para_diaria_padrao`).
+    assert planilha[f"P{linha_padrao}"].value == f"=R{linha_padrao}+S{linha_padrao}"
 
     # Demais colunas já homologadas continuam preenchidas normalmente para
     # os dois tipos de processo.

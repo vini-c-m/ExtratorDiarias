@@ -166,17 +166,32 @@ def test_modo_padrao_continua_bloqueando_sei_ja_existente_exatamente_como_hoje(t
     assert resultado.itens[0].linha == 2
 
 
-def test_modo_complemento_aborta_gravacao_quando_linha_livre_sem_formulas(tmp_path):
+def test_modo_complemento_repara_automaticamente_linha_livre_sem_formulas(tmp_path):
+    """P0 FINAL (2026-08-09) — antes desta correção, uma linha livre sem as
+    fórmulas pré-copiadas bloqueava a gravação daquele item
+    (`LINHA_SEM_FORMULAS_NECESSARIAS`). Agora a preparação estrutural
+    automática (`_preparar_estrutura_futura`) roda ANTES do laço de
+    gravação: encontra a linha 2 (íntegra) como modelo e repara a linha 3
+    sozinha, então o Complemento passa a gravar normalmente — sem exigir
+    que um humano já tenha arrastado as fórmulas manualmente no Excel.
+    `LINHA_SEM_FORMULAS_NECESSARIAS` continua existindo só como proteção de
+    última linha (ver `test_preparacao_estrutural.py` para o cenário em
+    que NENHUMA linha-modelo íntegra existe — aí sim a gravação aborta)."""
     caminho = _criar_planilha(tmp_path, linha_livre_com_formulas=False)
     diaria = _diaria_complemento()
 
     resultado = preencher(caminho, [_processo(diaria)], modo=ModoProcessamento.COMPLEMENTO)
 
-    assert resultado.total_gravado == 0
-    assert resultado.itens[0].categoria == CategoriaResultado.LINHA_SEM_FORMULAS_NECESSARIAS
+    assert resultado.total_gravado == 1
+    assert resultado.itens[0].categoria == CategoriaResultado.INSERIDO
+    # Margem permanente (item 5 do pedido): 1 item + 20 linhas futuras — a
+    # linha 3 (onde o item foi gravado) e as 20 seguintes, todas reparadas
+    # de uma vez, ANTES da gravação.
+    assert resultado.linhas_estrutura_reparadas == list(range(3, 24))
     workbook = load_workbook(caminho)
     planilha = workbook["Controle de Diárias"]
-    assert planilha["B3"].value is None  # nada foi gravado na linha
+    assert planilha["B3"].value == "19.20.0000.0000001/2026-11"
+    assert planilha["N3"].value == "=I3-H3"  # fórmula estrutural reparada, traduzida da linha 2
 
 
 def test_modo_complemento_preserva_linha_original_intacta(tmp_path):

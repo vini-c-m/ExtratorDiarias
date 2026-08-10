@@ -2,6 +2,7 @@ import { useState } from "react";
 import ChecklistConferencia from "../components/conferencia/ChecklistConferencia";
 import FormularioConferencia from "../components/conferencia/FormularioConferencia";
 import FormularioHistorico from "../components/conferencia/FormularioHistorico";
+import ModalCadastrarServidor from "../components/conferencia/ModalCadastrarServidor";
 import PainelContinuidadeProcessual from "../components/conferencia/PainelContinuidadeProcessual";
 import Alerta from "../components/ui/Alerta";
 import Botao from "../components/ui/Botao";
@@ -15,9 +16,21 @@ import {
 } from "../services/api";
 import { TIPOGRAFIA } from "../theme/tipografia";
 import type { CandidatoDiariaOriginal, ResultadoConferencia } from "../types/conferencia";
+import type { EstadoConfiguracao } from "../types/configuracao";
 
 interface Props {
   backendOnline: boolean;
+  /** Cadastro de Servidor/Membro (item 12 do pedido aprovado): só libera a
+   * ação de cadastro quando a Planilha Oficial está configurada, acessível
+   * e sem revalidação pendente — mesmo critério já usado por
+   * `SelecionarProcessar.podePreencherPlanilha`, para nunca deixar o
+   * usuário abrir um cadastro que o backend já sabe que vai recusar. */
+  configuracaoAtiva?: EstadoConfiguracao | null;
+}
+
+function podeCadastrarServidor(estado: EstadoConfiguracao | null | undefined): boolean {
+  if (!estado || !estado.configurado || !estado.planilha_acessivel) return false;
+  return !estado.requer_revalidacao;
 }
 
 const VEREDITO_BANNER: Record<
@@ -48,8 +61,9 @@ const VEREDITO_BANNER: Record<
 // de 2026-08-06): aí a Central oferece "Voltar" ou "Prosseguir mesmo
 // assim", puramente de UX — nenhuma regra de negócio muda e o backend de
 // geração do histórico já não depende do veredito.
-export default function Conferencia({ backendOnline }: Props) {
+export default function Conferencia({ backendOnline, configuracaoAtiva }: Props) {
   const [cpf, setCpf] = useState("");
+  const [modalCadastroAberto, setModalCadastroAberto] = useState(false);
   const [periodoInicial, setPeriodoInicial] = useState("");
   const [periodoFinal, setPeriodoFinal] = useState("");
 
@@ -98,7 +112,15 @@ export default function Conferencia({ backendOnline }: Props) {
     limparDiagnostico();
   }
 
-  async function realizarConferencia() {
+  // Extraído de `realizarConferencia` (item 6 do pedido "Ajuste Funcional +
+  // UX" — CPF agora editável no modal de cadastro): a reconsulta pós-
+  // cadastro precisa usar o CPF FINAL salvo (que pode ser diferente do CPF
+  // originalmente pesquisado), nunca o `cpf` do estado. `realizarConferencia`
+  // continua sem parâmetro nenhum — é passada direto como `onClick`/
+  // `onSubmit` para botões (`Botao`/`<button>` repassa o `MouseEvent` real
+  // como primeiro argumento), então NUNCA pode aceitar um parâmetro
+  // posicional que um clique acidentalmente preencheria com o evento.
+  async function consultarCpf(cpfAlvo: string) {
     if (carregandoConferencia || !periodoInicial || !periodoFinal) return;
 
     setCarregandoConferencia(true);
@@ -110,7 +132,7 @@ export default function Conferencia({ backendOnline }: Props) {
 
     try {
       const resposta = await conferir(
-        cpf,
+        cpfAlvo,
         periodoInicial,
         periodoFinal,
         modoComplemento ? "COMPLEMENTO" : "PADRAO",
@@ -120,7 +142,7 @@ export default function Conferencia({ backendOnline }: Props) {
       if (modoComplemento) {
         setCarregandoCandidatos(true);
         try {
-          const encontrados = await buscarCandidatosComplemento(cpf, periodoInicial, periodoFinal);
+          const encontrados = await buscarCandidatosComplemento(cpfAlvo, periodoInicial, periodoFinal);
           setCandidatos(encontrados);
         } catch {
           // Continuidade Processual é só informativa — uma falha aqui não
@@ -136,6 +158,10 @@ export default function Conferencia({ backendOnline }: Props) {
     } finally {
       setCarregandoConferencia(false);
     }
+  }
+
+  function realizarConferencia() {
+    consultarCpf(cpf);
   }
 
   async function gerarHistoricoClique() {
@@ -169,6 +195,25 @@ export default function Conferencia({ backendOnline }: Props) {
     resultado?.veredito === "REVISAR" && cadastroOk && duplicidadeOk && !janelaOk;
   const mostrarEtapaHistorico =
     resultado?.veredito === "APTO_PARA_PROCESSAMENTO" || (apenasJanelaPendente && prosseguirMesmoAssim);
+
+  // Cadastro de Servidor/Membro — CPF ainda não localizado + Planilha
+  // Oficial disponível para escrita agora.
+  const podeAbrirCadastro = !!resultado && !cadastroOk && podeCadastrarServidor(configuracaoAtiva);
+
+  // RN-11: nunca aceitar o resultado do cadastro como dado pronto para a
+  // tela — reconsulta pela MESMA chamada já usada na Etapa 1, para o
+  // veredito/checklist exibido continuar vindo sempre do backend.
+  //
+  // `cpfFinal` (item 6 do pedido "Ajuste Funcional + UX"): como o CPF
+  // passou a ser editável no modal, o valor efetivamente salvo pode ser
+  // diferente do `cpf` originalmente pesquisado (ex.: usuário corrigiu um
+  // CPF digitado errado antes de salvar) — atualiza o campo de busca da
+  // tela E reconsulta por ESTE CPF, nunca pelo antigo.
+  function aoCpfCadastradoResolvido(cpfFinal: string) {
+    setModalCadastroAberto(false);
+    setCpf(cpfFinal);
+    consultarCpf(cpfFinal);
+  }
 
   return (
     <div className="mx-auto max-w-2xl animate-entrada-conteudo px-6 py-14 md:px-10">
@@ -240,7 +285,10 @@ export default function Conferencia({ backendOnline }: Props) {
             </div>
           </div>
 
-          <ChecklistConferencia resultado={resultado} />
+          <ChecklistConferencia
+            resultado={resultado}
+            aoClicarCadastrar={podeAbrirCadastro ? () => setModalCadastroAberto(true) : undefined}
+          />
 
           {apenasJanelaPendente && !prosseguirMesmoAssim && (
             <div className={`${SUPERFICIE_BASE} p-6`}>
@@ -279,6 +327,14 @@ export default function Conferencia({ backendOnline }: Props) {
             />
           )}
         </div>
+      )}
+
+      {modalCadastroAberto && (
+        <ModalCadastrarServidor
+          cpf={cpf}
+          onFechar={() => setModalCadastroAberto(false)}
+          onCpfResolvido={aoCpfCadastradoResolvido}
+        />
       )}
     </div>
   );

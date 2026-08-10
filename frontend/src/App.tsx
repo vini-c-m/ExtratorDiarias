@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Cabecalho, { type EstadoApp } from "./components/layout/Cabecalho";
 import ModalAlterarPlanilhaOficial from "./components/configuracao/ModalAlterarPlanilhaOficial";
 import FundoDecorativo from "./components/layout/FundoDecorativo";
 import LimiteDeErro from "./components/layout/LimiteDeErro";
+import DialogoConfirmacao from "./components/ui/DialogoConfirmacao";
 import { useBackendStatus } from "./hooks/useBackendStatus";
 import { useConfiguracao } from "./hooks/useConfiguracao";
+import { MENSAGENS } from "./lib/mensagens";
 import BoasVindas from "./pages/BoasVindas";
 import CentralAnalitica from "./pages/CentralAnalitica";
 import Conferencia from "./pages/Conferencia";
@@ -67,6 +69,70 @@ export default function App() {
   // nenhuma navegação/estado de página muda, só esta informação de tema.
   const [temaExecutivoAtivo, setTemaExecutivoAtivo] = useState(false);
 
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 5-7) —
+  // função reportada por `SelecionarProcessar` (via `aoMudarSolicitarSaidaSegura`)
+  // sempre que ela está montada; `null` quando não está (nenhum
+  // processamento possível fora dela, então Voltar/Configurações navegam
+  // direto, comportamento normal). `useRef`, não `useState`: só uma forma
+  // de guardar uma função pra chamar depois, nunca precisa causar
+  // re-render por si só (item 11 — reaproveitar o estado existente,
+  // não criar uma arquitetura paralela).
+  const solicitarSaidaSeguraRef = useRef<((aoConcluir: () => void) => void) | null>(null);
+  const aoMudarSolicitarSaidaSegura = useCallback((funcao: ((aoConcluir: () => void) => void) | null) => {
+    solicitarSaidaSeguraRef.current = funcao;
+  }, []);
+
+  function irParaHubComSeguranca() {
+    if (solicitarSaidaSeguraRef.current) solicitarSaidaSeguraRef.current(() => setPagina("hub"));
+    else setPagina("hub");
+  }
+
+  function abrirConfiguracoesComSeguranca() {
+    if (solicitarSaidaSeguraRef.current) solicitarSaidaSeguraRef.current(() => setModalConfiguracoesAberto(true));
+    else setModalConfiguracoesAberto(true);
+  }
+
+  // Sprint (Loading/Bloqueio de Ações/Navegação Segura, itens 8-10) —
+  // confirmação ao fechar o app: o processo main (`electron/main.ts`)
+  // intercepta o fechamento nativo da janela (X, Alt+F4, `app.quit()` —
+  // nunca só `window.beforeunload`, que o Electron não garante para esses
+  // casos) e pede confirmação aqui, no renderer, porque só o renderer sabe
+  // se há uma operação crítica em andamento (reaproveita `estadoApp`,
+  // mesma fonte única já usada pelo indicador do Cabeçalho — item 11,
+  // nenhum booleano paralelo). `window.api.aoSolicitarFechamento` é
+  // opcional só para não quebrar testes que montam `window.api` parcial
+  // (mesmo critério já usado por `copiarTexto`); no app real está sempre
+  // definido.
+  const [confirmandoFechamento, setConfirmandoFechamento] = useState(false);
+
+  useEffect(() => {
+    if (typeof window.api?.aoSolicitarFechamento !== "function") return;
+    return window.api.aoSolicitarFechamento(() => setConfirmandoFechamento(true));
+  }, []);
+
+  function confirmarFechamento() {
+    setConfirmandoFechamento(false);
+    const concluirFechamento = () => window.api.confirmarFechamento?.();
+    if (solicitarSaidaSeguraRef.current) solicitarSaidaSeguraRef.current(concluirFechamento);
+    else concluirFechamento();
+  }
+
+  function cancelarFechamento() {
+    setConfirmandoFechamento(false);
+  }
+
+  const operacaoCriticaAtiva = estadoApp === "processando";
+  const dialogoFechamento = confirmandoFechamento && (
+    <DialogoConfirmacao
+      titulo={operacaoCriticaAtiva ? MENSAGENS.tituloConfirmarFechamentoComOperacao : MENSAGENS.tituloConfirmarFechamento}
+      mensagem={operacaoCriticaAtiva ? MENSAGENS.mensagemConfirmarFechamentoComOperacao : MENSAGENS.mensagemConfirmarFechamento}
+      rotuloConfirmar={MENSAGENS.sair}
+      rotuloCancelar="Cancelar"
+      onConfirmar={confirmarFechamento}
+      onCancelar={cancelarFechamento}
+    />
+  );
+
   // Sprint 15 — bloqueia Hub e Boas-vindas por igual enquanto não houver
   // nenhuma planilha oficial configurada (`configuracao` só é `null`
   // brevemente, antes da primeira resposta do backend). `atualizar` é
@@ -79,6 +145,7 @@ export default function App() {
         <div className="relative z-10">
           <ConfiguracaoInicial aoConcluir={atualizarConfiguracao} />
         </div>
+        {dialogoFechamento}
       </div>
     );
   }
@@ -93,6 +160,7 @@ export default function App() {
         <div className="relative z-10">
           <BoasVindas aoComecar={() => setPagina("hub")} />
         </div>
+        {dialogoFechamento}
       </div>
     );
   }
@@ -107,8 +175,8 @@ export default function App() {
         <Cabecalho
           status={status}
           estadoApp={estadoApp}
-          aoVoltarAoHub={pagina !== "hub" ? () => setPagina("hub") : undefined}
-          aoAbrirConfiguracoes={() => setModalConfiguracoesAberto(true)}
+          aoVoltarAoHub={pagina !== "hub" ? irParaHubComSeguranca : undefined}
+          aoAbrirConfiguracoes={abrirConfiguracoesComSeguranca}
         />
 
         <LimiteDeErro>
@@ -155,14 +223,20 @@ export default function App() {
               </div>
 
               {subPaginaProcessamento === "processar" && (
-                <SelecionarProcessar backendOnline={status === "conectado"} aoMudarEstado={setEstadoApp} />
+                <SelecionarProcessar
+                  backendOnline={status === "conectado"}
+                  aoMudarEstado={setEstadoApp}
+                  aoMudarSolicitarSaidaSegura={aoMudarSolicitarSaidaSegura}
+                />
               )}
               {subPaginaProcessamento === "finalizar" && (
                 <FinalizarDiarias backendOnline={status === "conectado"} />
               )}
             </div>
           )}
-          {pagina === "conferencia" && <Conferencia backendOnline={status === "conectado"} />}
+          {pagina === "conferencia" && (
+            <Conferencia backendOnline={status === "conectado"} configuracaoAtiva={configuracao} />
+          )}
           {pagina === "analitica" && (
             <CentralAnalitica
               backendOnline={status === "conectado"}
@@ -179,6 +253,7 @@ export default function App() {
           aoConfigurar={atualizarConfiguracao}
         />
       )}
+      {dialogoFechamento}
     </div>
   );
 }

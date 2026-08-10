@@ -59,3 +59,37 @@ export interface CandidatoDiariaOriginal {
   registro: RegistroCandidato;
   evidencias: string[];
 }
+
+// Cadastro de Servidor/Membro pela Central de Conferência — espelha 1:1
+// `app/schemas/cadastro_dados.py`. Módulo de escrita separado de
+// `app/api/conferencia.py` (RN-11 preservada — ver `docs/central-conferencia/README.md`).
+export type EstadoCadastroServidor = "duplicado" | "nao_salvo" | "salvo_sync_pendente" | "concluido";
+
+export interface RequisicaoCadastroServidor {
+  cpf: string;
+  nome: string;
+  matricula: string;
+  cargo: string;
+  previdencia?: string | null;
+  orgao_origem?: string | null;
+  regime_previdencia?: string | null;
+  situacao?: string | null;
+}
+
+export interface RespostaCadastroServidor {
+  estado: EstadoCadastroServidor;
+  mensagem: string | null;
+  servidor: ServidorConferencia | null;
+}
+
+/** `GET /api/v1/dados/opcoes-cadastro` — valores reais já levantados na aba
+ * `Dados` (RN-01), para o combobox pesquisável (cargo/órgão de origem) e o
+ * seletor fechado (previdência/regime/situação) do modal de Cadastro de
+ * Servidor/Membro. Nunca uma lista hardcoded no frontend. */
+export interface OpcoesCadastroServidorResposta {
+  cargos: string[];
+  orgaos_origem: string[];
+  previdencias: string[];
+  regimes_previdencia: string[];
+  situacoes: string[];
+}

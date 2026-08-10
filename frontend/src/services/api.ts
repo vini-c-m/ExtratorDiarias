@@ -19,7 +19,14 @@ import type {
   ResultadoPesquisaResposta,
 } from "../types/analitica";
 import type { ConfiguracaoAtiva, EstadoConfiguracao } from "../types/configuracao";
-import type { CandidatoDiariaOriginal, ModoConferencia, ResultadoConferencia } from "../types/conferencia";
+import type {
+  CandidatoDiariaOriginal,
+  ModoConferencia,
+  OpcoesCadastroServidorResposta,
+  RequisicaoCadastroServidor,
+  RespostaCadastroServidor,
+  ResultadoConferencia,
+} from "../types/conferencia";
 import type {
   ItemParaConfirmar,
   RespostaAnaliseFinalizacao,
@@ -361,6 +368,50 @@ export async function buscarCandidatosComplemento(
 
   const dados: { candidatos: CandidatoDiariaOriginal[] } = await resposta.json();
   return dados.candidatos;
+}
+
+/** Cadastro de Servidor/Membro pela Central de Conferência — único endpoint
+ * de escrita desta feature, num módulo backend separado de
+ * `app/api/conferencia.py` (RN-11 preservada). Sempre responde 200 com um
+ * `estado` explícito (`duplicado`/`nao_salvo`/`salvo_sync_pendente`/
+ * `concluido`) — nunca um HTTP de erro para um resultado de negócio, mesmo
+ * padrão de `conferir`. "Tentar sincronizar novamente" reenvia esta mesma
+ * função com os mesmos dados (nunca reescreve a linha duas vezes — ver
+ * `cadastro_dados_service.cadastrar_servidor_membro`). */
+export async function cadastrarServidor(
+  requisicao: RequisicaoCadastroServidor,
+): Promise<RespostaCadastroServidor> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/dados/servidores`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requisicao),
+  });
+
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** `GET /api/v1/dados/opcoes-cadastro` — valores reais já levantados na aba
+ * `Dados` (RN-01), fonte do combobox pesquisável e do seletor fechado do
+ * modal de Cadastro de Servidor/Membro (nunca lista hardcoded). Mesmo
+ * padrão de `ErroConferenciaIndisponivel`/503 de `conferir`, já que lê a
+ * mesma Base Local. */
+export async function obterOpcoesCadastroServidor(): Promise<OpcoesCadastroServidorResposta> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/dados/opcoes-cadastro`);
+
+  if (resposta.status === 503) {
+    throw new ErroConferenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
 }
 
 // "FINALIZAR DIÁRIAS" (2026-08-07) — mesmo padrão das demais funções deste
