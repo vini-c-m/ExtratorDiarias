@@ -1,0 +1,14 @@
+# Garante que arquivos binários nunca sejam tocados pela conversão CRLF/LF
+# do Git (especialmente core.autocrlf=true, padrão do Git for Windows).
+# Sem isso, checkout em máquinas Windows corrompe silenciosamente PDFs,
+# planilhas e imagens versionados.
+
+*.pdf binary
+*.xlsx binary
+*.xls binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.gif binary
+*.ico binary
