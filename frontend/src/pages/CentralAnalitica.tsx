@@ -34,6 +34,14 @@ interface Props {
    * global e ao fundo da janela, não só à Central. Opcional — nenhum
    * outro consumidor/teste deste componente precisa passar isto. */
   aoMudarTemaExecutivo?: (ativo: boolean) => void;
+  /** Micro-sprint B ("Central de Regularização de DH") — navegação pura
+   * (item 4 do pedido: "o clique apenas navega", nunca recria a consulta):
+   * repassada até `PainelDocumentosHabeisPendentes`, exibida como uma ação
+   * adicional na tela de Documentos Hábeis Pendentes já existente. Opcional
+   * — quando omitida (nenhum teste existente desta Central precisa passá-la),
+   * a ação simplesmente não aparece, preservando 100% o comportamento
+   * anterior a esta Micro-sprint. */
+  aoIrParaCentralRegularizacaoDH?: () => void;
 }
 
 // Sprint 21.2 (Modo Executivo) — `"executivo"` é uma 5ª visualização, no
@@ -79,6 +87,7 @@ export default function CentralAnalitica({
   backendOnline,
   abrirEmDocumentosHabeisPendentes,
   aoMudarTemaExecutivo,
+  aoIrParaCentralRegularizacaoDH,
 }: Props) {
   const [visualizacao, setVisualizacao] = useState<Visualizacao>(
     abrirEmDocumentosHabeisPendentes ? "documentos_habeis_pendentes" : "resultados",
@@ -384,6 +393,7 @@ export default function CentralAnalitica({
             }}
             aoSelecionarRegistro={selecionarRegistroDocumentosHabeisPendentes}
             filtroInicial={filtroInicialDocumentosHabeis}
+            aoIrParaCentralRegularizacaoDH={aoIrParaCentralRegularizacaoDH}
           />
         </div>
       )}

@@ -410,3 +410,153 @@ def test_multiplos_lotes_consecutivos_nunca_corrompem_nem_reduzem_margem(tmp_pat
         if planilha[f"B{linha}"].value
     }
     assert len(seis_gravados) == 9
+
+
+# --- P0 (2026-08-11) — buracos no meio do histórico NUNCA são reaproveitados ---
+#
+# Regra de negócio definitiva: não importa se existe 1, 5 ou 100 linhas
+# vazias no meio da planilha — se há diárias reais abaixo delas, essas
+# linhas não são candidatas a inserção. A próxima diária sempre entra
+# imediatamente depois da ÚLTIMA diária real (`_localizar_ultima_linha_
+# real`, busca de baixo para cima). Causa raiz: `_localizar_proxima_linha_
+# livre` procurava a primeira célula B vazia de CIMA para BAIXO — em uso
+# normal isso sempre coincidia com "logo depois da última diária real" (só
+# existe uma zona livre, no fim), mas a bateria de 81 diárias de teste
+# (limpeza que deixou linhas vazias espalhadas pelo meio do histórico, não
+# só no fim) expôs a premissa errada: 54 diárias reais e alheias ao teste
+# foram sobrescritas porque `preencher()` gravou sequencialmente a partir da
+# primeira vaga encontrada, sem checar se as linhas seguintes também
+# estavam livres.
+
+
+def test_buraco_intercalado_simples_nunca_e_reaproveitado(tmp_path):
+    """Exemplo literal do pedido: linha 10 = diária, 11 = vazia, 12 =
+    diária, 13 = vazia, 14 = diária. Lote de 3 diárias -> grava em 15/16/17;
+    11 e 13 permanecem EXATAMENTE como estavam (nem SEI, nem fórmula)."""
+    caminho = _planilha_base(tmp_path)
+    for linha, sei, cpf in (
+        (10, "SEI-A", 11111111111),
+        (12, "SEI-B", 22222222222),
+        (14, "SEI-C", 33333333333),
+    ):
+        _escrever_linha_historica(caminho, linha, sei=sei, cpf=cpf, formulas_completas=True)
+
+    processos = [_processo(_diaria(f"SEI-NOVO-{i}")) for i in range(3)]
+    resultado = preencher(caminho, processos)
+
+    assert resultado.total_gravado == 3
+    assert resultado.linha_inicial == 15
+    assert resultado.linha_final == 17
+
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+    assert [planilha[f"B{linha}"].value for linha in (15, 16, 17)] == [
+        "SEI-NOVO-0",
+        "SEI-NOVO-1",
+        "SEI-NOVO-2",
+    ]
+    for linha in (11, 13):
+        assert planilha[f"B{linha}"].value is None
+        assert planilha[f"A{linha}"].value is None
+        for coluna in ("N", "P", "R", "S", "V", "Z", "AA"):
+            assert planilha[f"{coluna}{linha}"].value is None
+    # As diárias históricas reais (10/12/14) seguem intocadas.
+    assert planilha["B10"].value == "SEI-A"
+    assert planilha["B12"].value == "SEI-B"
+    assert planilha["B14"].value == "SEI-C"
+    workbook.close()
+
+
+def test_dezenas_de_buracos_antes_do_ultimo_registro_real_sao_ignorados(tmp_path):
+    """~100 diárias reais espalhadas a cada 5 linhas até a linha 500 (isto
+    é, ~400 linhas vazias intercaladas entre elas) — a última diária real é
+    a 500, então a próxima inserção tem que ser 501, nunca uma das vagas."""
+    caminho = _planilha_base(tmp_path)
+    linhas_reais = list(range(5, 501, 5))  # 5, 10, ..., 500
+    for indice, linha in enumerate(linhas_reais):
+        _escrever_linha_historica(
+            caminho, linha, sei=f"SEI-{indice}", cpf=10000000000 + indice, formulas_completas=True
+        )
+
+    resultado = preencher(caminho, [_processo(_diaria("SEI-NOVO"))])
+
+    assert resultado.total_gravado == 1
+    assert resultado.linha_inicial == 501
+    assert resultado.linha_final == 501
+
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+    assert planilha["B501"].value == "SEI-NOVO"
+    # Amostra de buracos que precisam continuar vazios.
+    for linha in (6, 7, 8, 9, 246, 247, 248, 249, 496, 497, 498, 499):
+        assert planilha[f"B{linha}"].value is None
+    workbook.close()
+
+
+@pytest.mark.parametrize("modo", [ModoProcessamento.PADRAO, ModoProcessamento.COMPLEMENTO])
+def test_buracos_ignorados_em_qualquer_modo_e_tipo_membro_ou_servidor(tmp_path, modo):
+    """Lote misto (Membro + Servidor), nos dois modos de processamento —
+    nenhum fluxo pode usar uma vaga histórica no meio do caminho."""
+    caminho = _planilha_base(tmp_path)
+    for linha, sei, cpf in ((10, "SEI-A", 11111111111), (12, "SEI-B", 22222222222)):
+        _escrever_linha_historica(caminho, linha, sei=sei, cpf=cpf, formulas_completas=True)
+    # Linha 11 fica vazia — buraco intercalado entre as duas diárias reais.
+
+    kwargs_complemento = (
+        dict(
+            quantidade_diaria_parcial_complementar=0,
+            fonte_quantidade_complementar="Padrão institucional do modo Complemento de Diárias.",
+        )
+        if modo is ModoProcessamento.COMPLEMENTO
+        else {}
+    )
+    diaria_membro = _diaria(
+        "SEI-MEMBRO",
+        tipo_processo=TipoProcesso.DIARIA_MEMBRO,
+        valor_total_diarias="500,00",
+        **kwargs_complemento,
+    )
+    diaria_servidor = _diaria("SEI-SERVIDOR", **kwargs_complemento)
+
+    resultado = preencher(caminho, [_processo(diaria_membro), _processo(diaria_servidor)], modo=modo)
+
+    assert resultado.total_gravado == 2
+    assert resultado.linha_inicial == 13  # imediatamente após a última real (12) — nunca a linha 11
+    assert resultado.linha_final == 14
+
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+    assert planilha["B11"].value is None  # o buraco continua vazio
+    assert planilha["B13"].value == "SEI-MEMBRO"
+    assert planilha["B14"].value == "SEI-SERVIDOR"
+    workbook.close()
+
+
+def test_preparacao_estrutural_nunca_altera_linha_igual_ou_anterior_a_ultima_real(tmp_path):
+    """Invariante permanente (item 9 do pedido): nenhuma célula em linha
+    <= última_linha_real pode ser alterada pela preparação estrutural
+    automática de processamento de novas diárias. A linha 11 (buraco
+    completo, sem NENHUMA fórmula) fica ENTRE duas diárias reais — se a
+    preparação a "consertasse" (mesmo com boa intenção), isso já seria uma
+    violação: só é permitido preparar a partir de última_real + 1."""
+    caminho = _planilha_base(tmp_path)
+    for linha, sei, cpf in ((10, "SEI-A", 11111111111), (12, "SEI-B", 22222222222)):
+        _escrever_linha_historica(caminho, linha, sei=sei, cpf=cpf, formulas_completas=True)
+    # Linha 11: buraco completo, nunca recebeu fórmula nenhuma.
+
+    resultado = preencher(caminho, [_processo(_diaria("SEI-NOVO"))])
+
+    assert resultado.total_gravado == 1
+    assert resultado.linha_inicial == 13
+    assert 11 not in resultado.linhas_estrutura_reparadas
+
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+    for coluna in ("N", "P", "R", "S", "V", "Z", "AA"):
+        assert planilha[f"{coluna}11"].value is None
+    # As duas diárias históricas reais também seguem 100% intocadas.
+    assert planilha["B10"].value == "SEI-A"
+    assert planilha["C10"].value == "PJTESTE"
+    assert planilha["B12"].value == "SEI-B"
+    assert planilha["C12"].value == "PJTESTE"
+    workbook.close()

@@ -21,7 +21,6 @@ from app.domain.entities.processo import Processo
 from app.domain.entities.tipo_processo import TipoProcesso
 
 NOME_ABA = "Controle de Diárias"
-COLUNA_LINHA_LIVRE = "B"
 PRIMEIRA_LINHA_DADOS = 2
 
 # P0 FINAL (2026-08-09) — margem permanente de linhas futuras que a
@@ -790,15 +789,46 @@ def _historico_doc_origem_por_cpf(planilha: Worksheet) -> dict[str, str]:
     return historico
 
 
+# P0 (2026-08-11) — regra de negócio definitiva: uma linha vazia no MEIO do
+# histórico nunca é candidata a inserção, não importa quantas existam. A
+# causa raiz do "buraco reaproveitado" descoberto na bateria de 81 diárias de
+# teste era `_localizar_proxima_linha_livre` varrendo de CIMA para BAIXO a
+# partir de `PRIMEIRA_LINHA_DADOS`, parando na primeira célula B vazia — em
+# uso normal isso sempre coincidia com "logo depois da última diária real"
+# (só existe uma zona livre, no fim), então o bug nunca se manifestou; mas a
+# premissa (zona livre = sempre contígua e no fim) nunca foi verdadeira em
+# geral, só na ausência de buracos no meio do histórico. Não há, no
+# histórico deste repositório, uma implementação anterior "de baixo para
+# cima" — este é o comportamento documentado desde o commit inicial
+# (`8f9be7f`), então esta correção não é uma reversão, é uma correção de um
+# bug latente nunca antes exercitado (nenhuma fixture de teste existente
+# modela um buraco seguido de mais diárias reais).
+def _localizar_ultima_linha_real(planilha: Worksheet) -> int:
+    """Última linha da planilha que representa uma diária REAL — mesmo
+    critério já homologado por `_seis_existentes` (coluna B/SEI preenchida;
+    a coluna A tem linhas preenchidas com A vazio na planilha real, o que a
+    tornaria um indicador não confiável). Varre de BAIXO para CIMA a partir
+    da última linha existente no arquivo (`planilha.max_row` — que pode se
+    estender bem além da última diária real, já que a preparação estrutural
+    grava fórmula em N/P/R/S/V/Z/AA de linhas futuras ainda vazias) até
+    `PRIMEIRA_LINHA_DADOS`, ignorando por completo qualquer linha vazia no
+    meio do caminho — mesmo dezenas delas, mesmo já estruturalmente
+    preparada: fórmula futura NUNCA torna uma linha uma diária real. Devolve
+    `PRIMEIRA_LINHA_DADOS - 1` quando a planilha ainda não tem nenhuma
+    diária (nenhuma linha com B preenchido)."""
+    for linha in range(planilha.max_row, PRIMEIRA_LINHA_DADOS - 1, -1):
+        if planilha[f"{COLUNA_SEI}{linha}"].value not in (None, ""):
+            return linha
+    return PRIMEIRA_LINHA_DADOS - 1
+
+
 def _localizar_proxima_linha_livre(planilha: Worksheet) -> int:
-    """A coluna B é a primeira que o próprio extrator preenche, então uma
-    célula B vazia indica com segurança que a linha ainda não recebeu dados
-    deste fluxo (validado contra a planilha real — a coluna A tem linhas
-    preenchidas com A vazio, o que a tornaria um indicador não confiável)."""
-    linha = PRIMEIRA_LINHA_DADOS
-    while planilha[f"{COLUNA_LINHA_LIVRE}{linha}"].value not in (None, ""):
-        linha += 1
-    return linha
+    """Próxima linha disponível para gravação: SEMPRE imediatamente após a
+    última diária real (`_localizar_ultima_linha_real` acima) — nunca uma
+    linha vazia no meio do histórico, não importa quantas existam. Mantém
+    o nome/assinatura já homologados (usado por `preencher()` e por todo o
+    conjunto de testes existente) — só o critério de busca mudou."""
+    return _localizar_ultima_linha_real(planilha) + 1
 
 
 def _linha_possui_formulas_necessarias(planilha: Worksheet, linha: int) -> bool:

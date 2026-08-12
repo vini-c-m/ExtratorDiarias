@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Guia do Usuário — Automatizador de Diárias</title>
+<style>
+  @page { size: A4; margin: 20mm 18mm 18mm 18mm; }
+
+  :root {
+    --tinta: #1a1e2a;
+    --tinta-suave: #4b5266;
+    --linha: #e2e5ec;
+    --fundo: #ffffff;
+    --fundo-alt: #f6f7fb;
+    --azul: #2563eb;
+    --azul-escuro: #1d4ed8;
+    --ciano: #0891b2;
+    --roxo: #7c3aed;
+    --verde: #0f9d58;
+    --verde-bg: #eafaf1;
+    --verde-borda: #b7ebce;
+    --ambar: #b45309;
+    --ambar-bg: #fef6e7;
+    --ambar-borda: #f3ddab;
+    --vermelho: #c0362c;
+    --vermelho-bg: #fdecea;
+    --vermelho-borda: #f3c6c2;
+    --azul-bg: #eaf1fe;
+    --azul-borda: #c6d9fb;
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--fundo);
+    color: var(--tinta);
+    font-family: "Segoe UI", "Segoe UI Semibold", Calibri, Arial, sans-serif;
+    font-size: 10.6pt;
+    line-height: 1.55;
+  }
+  h1, h2, h3, h4 { font-family: "Segoe UI Semibold", "Segoe UI", Calibri, Arial, sans-serif; color: var(--tinta); margin: 0; }
+  p { margin: 0 0 8pt 0; }
+  a { color: var(--azul-escuro); }
+
+  /* ---------- Capa ---------- */
+  .capa {
+    height: 253mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    position: relative;
+    page-break-after: always;
+  }
+  .capa .tarja {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 10mm;
+    background: linear-gradient(180deg, #2563eb 0%, #0891b2 45%, #7c3aed 100%);
+  }
+  .capa .conteudo { padding-left: 16mm; max-width: 150mm; }
+  .capa .eyebrow {
+    font-size: 10pt; font-weight: 700; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--ciano); margin-bottom: 10mm;
+  }
+  .capa h1 {
+    font-size: 33pt; font-weight: 800; line-height: 1.08; letter-spacing: -0.01em;
+    color: var(--tinta);
+  }
+  .capa h1 span { display:block; color: var(--azul-escuro); }
+  .capa .subtitulo { margin-top: 6mm; font-size: 13.5pt; color: var(--tinta-suave); font-weight: 600; }
+  .capa .ficha {
+    margin-top: 20mm; padding-top: 8mm; border-top: 1px solid var(--linha);
+    display: flex; gap: 14mm; font-size: 9.5pt; color: var(--tinta-suave);
+  }
+  .capa .ficha b { color: var(--tinta); display:block; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 2pt;}
+
+  /* ---------- Sumário ---------- */
+  .sumario { page-break-after: always; padding-top: 4mm; }
+  .sumario h2 { font-size: 20pt; margin-bottom: 10mm; }
+  .sumario ol { list-style: none; margin: 0; padding: 0; counter-reset: item; }
+  .sumario li {
+    display: flex; align-items: baseline; gap: 3mm;
+    padding: 3.2mm 0; border-bottom: 1px dotted var(--linha);
+    font-size: 11pt;
+  }
+  .sumario li .num {
+    font-weight: 800; color: var(--azul-escuro); min-width: 8mm; font-size: 11pt;
+  }
+  .sumario li .titulo { flex: 1; font-weight: 600; }
+  .sumario li .pag { color: var(--tinta-suave); font-weight: 700; }
+
+  /* ---------- Seções ---------- */
+  section.pagina { page-break-before: always; padding-top: 2mm; }
+  .cabecalho-secao {
+    display: flex; align-items: center; gap: 4mm; margin-bottom: 3mm;
+    border-bottom: 2.5px solid var(--tinta); padding-bottom: 3mm;
+  }
+  .cabecalho-secao .badge-num {
+    width: 11mm; height: 11mm; border-radius: 3mm; flex-shrink:0;
+    background: linear-gradient(135deg, var(--azul), var(--roxo));
+    color: white; display: flex; align-items:center; justify-content:center;
+    font-weight: 800; font-size: 13pt;
+  }
+  .cabecalho-secao h2 { font-size: 18pt; font-weight: 800; letter-spacing: -0.01em; }
+  .cabecalho-secao .kicker { font-size: 8.5pt; text-transform: uppercase; letter-spacing: .1em; color: var(--ciano); font-weight: 700; margin-bottom: 1mm;}
+
+  h3.sub { font-size: 12.5pt; font-weight: 700; margin: 7mm 0 3mm 0; color: var(--tinta); }
+  h4.subsub { font-size: 11pt; font-weight: 700; margin: 5mm 0 2mm 0; color: var(--azul-escuro); }
+
+  /* ---------- Callouts ---------- */
+  .caixa { border-radius: 2.5mm; padding: 3.5mm 5mm; margin: 4mm 0; border: 1px solid; font-size: 10pt; page-break-inside: avoid; }
+  .caixa .rotulo { font-weight: 800; font-size: 8.7pt; text-transform: uppercase; letter-spacing: .07em; display:flex; align-items:center; gap: 2mm; margin-bottom: 1.3mm; }
+  .caixa.atencao { background: var(--ambar-bg); border-color: var(--ambar-borda); }
+  .caixa.atencao .rotulo { color: var(--ambar); }
+  .caixa.dica { background: var(--azul-bg); border-color: var(--azul-borda); }
+  .caixa.dica .rotulo { color: var(--azul-escuro); }
+  .caixa.sucesso { background: var(--verde-bg); border-color: var(--verde-borda); }
+  .caixa.sucesso .rotulo { color: var(--verde); }
+  .caixa.erro { background: var(--vermelho-bg); border-color: var(--vermelho-borda); }
+  .caixa.erro .rotulo { color: var(--vermelho); }
+
+  /* ---------- Screenshots ---------- */
+  figure.tela {
+    margin: 4mm 0; page-break-inside: avoid;
+  }
+  figure.tela { text-align: center; }
+  figure.tela .moldura {
+    display: inline-flex; flex-direction: column; max-width: 100%;
+    border-radius: 2.5mm; overflow: hidden; border: 1px solid var(--linha);
+    box-shadow: 0 1.5mm 5mm rgba(20,25,50,0.12);
+  }
+  figure.tela .barra {
+    background: #0b1120; height: 6mm; display: flex; align-items: center; gap: 1.6mm; padding: 0 3mm; flex-shrink: 0;
+  }
+  figure.tela .barra i { width: 2.1mm; height: 2.1mm; border-radius: 50%; display:inline-block; }
+  figure.tela .barra i:nth-child(1){ background:#f26a5b;}
+  figure.tela .barra i:nth-child(2){ background:#f5bd4f;}
+  figure.tela .barra i:nth-child(3){ background:#39c268;}
+  figure.tela img { display: block; max-width: 100%; max-height: 122mm; width: auto; height: auto; }
+  figure.tela figcaption {
+    margin-top: 1.8mm; font-size: 8.7pt; color: var(--tinta-suave); text-align: center; font-style: italic;
+  }
+  .duas-colunas { display: flex; gap: 5mm; }
+  .duas-colunas figure.tela { flex: 1; margin: 4mm 0; }
+
+  /* ---------- Passo a passo ---------- */
+  ol.passos { margin: 3mm 0 3mm 0; padding-left: 0; list-style: none; counter-reset: passo; }
+  ol.passos li {
+    counter-increment: passo; position: relative; padding: 0 0 3mm 9mm; margin-bottom: 1mm;
+  }
+  ol.passos li::before {
+    content: counter(passo); position: absolute; left: 0; top: -0.3mm;
+    width: 6mm; height: 6mm; border-radius: 50%; background: var(--fundo-alt); border: 1.4px solid var(--azul);
+    color: var(--azul-escuro); font-weight: 800; font-size: 9pt; display:flex; align-items:center; justify-content:center;
+  }
+  ol.passos li b { color: var(--tinta); }
+
+  .fluxo-mini { display:flex; align-items:center; gap: 2.5mm; flex-wrap: wrap; margin: 3mm 0 4mm 0; font-size: 9.3pt; }
+  .fluxo-mini .caixa-passo {
+    background: var(--fundo-alt); border: 1px solid var(--linha); border-radius: 1.8mm;
+    padding: 2mm 3.5mm; font-weight: 700; color: var(--tinta);
+  }
+  .fluxo-mini .seta { color: var(--azul); font-weight: 900; font-size: 11pt; }
+
+  table.legenda { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 9.6pt;}
+  table.legenda td { padding: 2.2mm 2.5mm; vertical-align: top; border-bottom: 1px solid var(--linha); }
+  table.legenda td.icone { width: 8mm; font-size: 12pt; text-align:center; }
+  .pill { display:inline-block; padding: 0.6mm 2.4mm; border-radius: 2mm; font-size: 8.4pt; font-weight: 800; }
+  .pill.verde { background: var(--verde-bg); color: var(--verde); border: 1px solid var(--verde-borda);}
+  .pill.ambar { background: var(--ambar-bg); color: var(--ambar); border: 1px solid var(--ambar-borda);}
+  .pill.vermelho { background: var(--vermelho-bg); color: var(--vermelho); border: 1px solid var(--vermelho-borda);}
+  .pill.azul { background: var(--azul-bg); color: var(--azul-escuro); border: 1px solid var(--azul-borda);}
+
+  table.status-tab { width: 100%; border-collapse: collapse; margin: 3mm 0; font-size: 9.4pt; }
+  table.status-tab th { text-align:left; font-size: 8.3pt; text-transform: uppercase; letter-spacing: .04em; color: var(--tinta-suave); border-bottom: 1.5px solid var(--tinta); padding: 1.6mm 2.5mm; }
+  table.status-tab td { padding: 2mm 2.5mm; border-bottom: 1px solid var(--linha); vertical-align: top; }
+
+  .banner-obrigatorio {
+    background: var(--verde-bg); border: 1.5px solid var(--verde-borda); border-radius: 2.5mm;
+    padding: 4mm 5mm; margin: 4mm 0; font-weight: 700; color: #0b6b3a; font-size: 10.6pt;
+    page-break-inside: avoid;
+  }
+
+  .pastas {
+    font-family: "Consolas", "Cascadia Mono", monospace; font-size: 9.6pt; background: var(--fundo-alt);
+    border: 1px solid var(--linha); border-radius: 2.5mm; padding: 4mm 5mm; line-height: 1.65; margin: 3mm 0;
+    white-space: pre;
+  }
+
+  .rodape-pagina { font-size: 8pt; color: #9aa0b0; margin-top: 10mm; }
+
+  /* ---------- Fluxograma final ---------- */
+  .diagrama {
+    display: flex; flex-direction: column; align-items: center; gap: 0; margin: 6mm 0;
+  }
+  .diagrama .titulo-central {
+    background: linear-gradient(135deg, var(--azul), var(--roxo)); color: white; font-weight: 800;
+    padding: 3mm 8mm; border-radius: 2.5mm; font-size: 11pt; margin-bottom: 3mm;
+  }
+  .diagrama .ramos { display: flex; gap: 14mm; }
+  .diagrama .ramo { display: flex; flex-direction: column; align-items: center; gap: 2mm; }
+  .diagrama .ramo .no {
+    border: 1.4px solid var(--linha); border-radius: 2mm; padding: 2.4mm 5mm; font-size: 9.4pt; font-weight: 700;
+    background: var(--fundo-alt); text-align:center; min-width: 46mm;
+  }
+  .diagrama .ramo .no.destaque { border-color: var(--azul); background: var(--azul-bg); color: var(--azul-escuro); }
+  .diagrama .ramo .seta-baixo { color: var(--tinta-suave); font-size: 10pt; }
+
+  .boas-praticas { list-style: none; margin: 3mm 0; padding: 0; }
+  .boas-praticas li { padding: 2mm 0 2mm 7mm; position: relative; border-bottom: 1px dotted var(--linha); font-size: 10pt;}
+  .boas-praticas li::before { content: "✓"; position: absolute; left: 0; color: var(--verde); font-weight: 900; }
+</style>
+</head>
+<body>
+
+<!-- =========================== CAPA =========================== -->
+<div class="capa">
+  <div class="tarja"></div>
+  <div class="conteudo">
+    <div class="eyebrow">DIMCAC · Coordenadoria de Meios de Fiscalização e Controle</div>
+    <h1>GUIA DO USUÁRIO<span>AUTOMATIZADOR DE DIÁRIAS</span></h1>
+    <p class="subtitulo">Guia rápido de instalação e operação</p>
+    <div class="ficha">
+      <div><b>Versão do aplicativo</b>2.0.0</div>
+      <div><b>Data</b>Agosto de 2026</div>
+      <div><b>Público-alvo</b>Servidores do DIMCAC</div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================== SUMÁRIO =========================== -->
+<div class="sumario">
+  <h2>Sumário</h2>
+  <ol>
+    <li><span class="num">1</span><span class="titulo">Antes de começar — organize sua pasta de trabalho</span><span class="pag">3</span></li>
+    <li><span class="num">2</span><span class="titulo">Instalando o Automatizador de Diárias</span><span class="pag">4</span></li>
+    <li><span class="num">3</span><span class="titulo">Configurando a Planilha Oficial</span><span class="pag">5</span></li>
+    <li><span class="num">4</span><span class="titulo">Tela inicial (Hub)</span><span class="pag">6</span></li>
+    <li><span class="num">5</span><span class="titulo">Processando Diárias</span><span class="pag">8</span></li>
+    <li><span class="num">6</span><span class="titulo">Central de Conferência</span><span class="pag">12</span></li>
+    <li><span class="num">7</span><span class="titulo">Central Analítica</span><span class="pag">16</span></li>
+    <li><span class="num">8</span><span class="titulo">Finalizando (confirmando) diárias</span><span class="pag">17</span></li>
+    <li><span class="num">9</span><span class="titulo">Fechando o aplicativo</span><span class="pag">22</span></li>
+    <li><span class="num">10</span><span class="titulo">Boas práticas e fluxo resumido</span><span class="pag">23</span></li>
+  </ol>
+  <div class="caixa dica" style="margin-top: 14mm;">
+    <div class="rotulo">💡 Dica</div>
+    Este guia foi feito para ser consultado por partes — não precisa ler tudo de uma vez. Use o sumário
+    para ir direto à tela que você está usando agora.
+  </div>
+</div>
+
+<!-- =========================== 1. PASTA DE TRABALHO =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">1</div>
+    <div><div class="kicker">Antes de abrir o aplicativo</div><h2>Organize sua pasta de trabalho</h2></div>
+  </div>
+
+  <p>Antes de instalar ou usar o Automatizador de Diárias, organize manualmente a pasta onde fica a sua
+  Planilha Oficial. Recomendamos criar <b>três pastas</b> no mesmo diretório da planilha:</p>
+
+  <div class="pastas">DIMCAC/
+│
+├── CONTROLE DIÁRIAS MEMBROS E SERVIDORES - Banco de Dados 2026.xlsx
+│
+├── PDFS A PROCESSAR/
+├── PDFS PROCESSADOS/
+└── PDFS DIÁRIAS PARA CONFIRMAR/</div>
+
+  <table class="legenda">
+    <tr><td class="icone">📥</td><td><b>PDFS A PROCESSAR</b><br>Coloque aqui os PDFs de processos do SEI que ainda serão utilizados na tela de <b>Processamento da Planilha</b>.</td></tr>
+    <tr><td class="icone">✅</td><td><b>PDFS PROCESSADOS</b><br>Use para guardar os PDFs cujo processamento e preenchimento na planilha já foram concluídos e conferidos.</td></tr>
+    <tr><td class="icone">📋</td><td><b>PDFS DIÁRIAS PARA CONFIRMAR</b><br>Coloque aqui os processos que serão usados depois na função <b>Finalizar Diárias</b> (confirmação de comprovantes).</td></tr>
+  </table>
+
+  <div class="caixa atencao">
+    <div class="rotulo">⚠ Atenção</div>
+    O aplicativo <b>não move os PDFs automaticamente</b> entre essas pastas. Essa organização é
+    inteiramente manual — você mesmo arrasta os arquivos de uma pasta para outra, conforme avança no
+    trabalho. Pense nelas como uma esteira de organização, não como uma função do programa.
+  </div>
+</section>
+
+<!-- =========================== 2. INSTALAÇÃO =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">2</div>
+    <div><div class="kicker">Primeiro acesso</div><h2>Instalando o Automatizador de Diárias</h2></div>
+  </div>
+
+  <p>A instalação é feita com um único arquivo instalador, sem necessidade de nenhum programa adicional.</p>
+
+  <ol class="passos">
+    <li><b>Localize o instalador</b> recebido — um arquivo com nome parecido com
+    <i>“Automatizador de Diárias Setup.exe”</i>, geralmente enviado pela pasta compartilhada do setor.</li>
+    <li><b>Dê duplo clique</b> no arquivo para executá-lo.</li>
+    <li>Se o Windows perguntar <i>“Deseja permitir que este aplicativo faça alterações no dispositivo?”</i>,
+    clique em <b>Sim</b>.</li>
+    <li><b>Siga o assistente de instalação</b> normalmente, usando as opções padrão sugeridas — não é
+    necessário alterar a pasta de destino.</li>
+    <li>Ao final, clique em <b>Concluir</b>. O instalador cria automaticamente um atalho na Área de
+    Trabalho e no Menu Iniciar chamado <b>“Automatizador de Diárias”</b>.</li>
+    <li><b>Abra o aplicativo</b> por esse atalho. Na primeira execução, a tela abaixo é exibida:</li>
+  </ol>
+
+  <figure class="tela" style="max-width: 110mm; margin-left:auto; margin-right:auto;">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/01-boas-vindas.png" />
+    </div>
+    <figcaption>Tela de boas-vindas — confirma que o aplicativo abriu corretamente.</figcaption>
+  </figure>
+
+  <div class="caixa dica">
+    <div class="rotulo">💡 Dica</div>
+    Você não precisa de nenhum conhecimento técnico para instalar ou usar este aplicativo — não é
+    necessário instalar Python, Node ou qualquer outro programa. Tudo já vem pronto dentro do instalador.
+  </div>
+
+  <p>Clique em <b>Começar</b> para seguir para a tela inicial.</p>
+</section>
+
+<!-- =========================== 3. CONFIGURANDO A PLANILHA =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">3</div>
+    <div><div class="kicker">Configuração obrigatória</div><h2>Configurando a Planilha Oficial</h2></div>
+  </div>
+
+  <p>Na primeira vez que o aplicativo é aberto (ou sempre que a Planilha Oficial mudar de lugar), é preciso
+  indicar qual arquivo <code>.xlsx</code> o aplicativo deve usar como planilha oficial do setor.</p>
+
+  <ol class="passos">
+    <li>Clique em <b>Selecionar planilha oficial (.xlsx)</b>.</li>
+    <li>Na janela do Windows que abrir, localize e selecione o arquivo da Planilha Oficial do DIMCAC.</li>
+    <li>Aguarde a validação — o aplicativo confirma que a planilha tem a estrutura correta antes de liberar
+    o restante das funcionalidades.</li>
+    <li>Com a planilha validada, clique em <b>Continuar</b> (na primeira configuração) ou <b>Fechar</b>
+    (ao alterar depois).</li>
+  </ol>
+
+  <figure class="tela" style="max-width: 120mm; margin-left:auto; margin-right:auto;">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/03-configuracao-planilha.png" />
+    </div>
+    <figcaption>Tela “Alterar Planilha Oficial”, com a planilha já validada.</figcaption>
+  </figure>
+
+  <div class="caixa atencao">
+    <div class="rotulo">⚠ Atenção</div>
+    Sempre selecione a <b>Planilha Oficial</b> utilizada pelo setor — nunca uma cópia pessoal, um rascunho
+    ou uma versão de teste. Todo processamento e toda finalização gravam diretamente no arquivo que estiver
+    configurado aqui.
+  </div>
+
+  <div class="caixa erro">
+    <div class="rotulo">✕ Se a planilha estiver indisponível</div>
+    Se o arquivo configurado for movido, renomeado, excluído, ou estiver aberto e bloqueado por outro
+    programa (como o Excel), o aplicativo avisa que a planilha está inacessível e pede para você
+    selecioná-la novamente em <b>Alterar Planilha Oficial</b>. Feche o Excel antes de processar ou
+    finalizar diárias.
+  </div>
+</section>
+
+<!-- =========================== 4. TELA INICIAL / HUB =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">4</div>
+    <div><div class="kicker">Navegação</div><h2>Tela inicial (Hub)</h2></div>
+  </div>
+
+  <p>Depois de configurada a planilha, esta é a tela central do aplicativo — a partir dela você escolhe o
+  que precisa fazer.</p>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/02-hub.png" />
+    </div>
+    <figcaption>Tela inicial — os três módulos disponíveis e o alerta de Documentos Hábeis pendentes.</figcaption>
+  </figure>
+
+  <table class="legenda">
+    <tr><td class="icone">📄</td><td><b>Processamento da Planilha</b> — processa PDFs do SEI e preenche automaticamente a planilha oficial.</td></tr>
+    <tr><td class="icone">☑️</td><td><b>Central Inteligente de Conferência</b> — consulta servidores, duplicidades e informações operacionais antes de processar.</td></tr>
+    <tr><td class="icone">📊</td><td><b>Central Analítica</b> — pesquisa, filtra e analisa diárias já lançadas, com dashboards e relatórios.</td></tr>
+  </table>
+
+  <p>No canto superior esquerdo de qualquer tela de funcionalidade, dois botões ficam sempre disponíveis:</p>
+  <table class="legenda">
+    <tr><td class="icone">←</td><td><b>Voltar</b> — retorna para esta tela inicial.</td></tr>
+    <tr><td class="icone">⚙️</td><td><b>Configurações</b> — abre a tela para alterar a Planilha Oficial a qualquer momento.</td></tr>
+  </table>
+
+  <div class="caixa dica">
+    <div class="rotulo">💡 Dica</div>
+    Se aparecer o aviso <b>“Documentos Hábeis Pendentes”</b>, clique em <b>Ver Pendências</b> — ele leva
+    direto para a Central Analítica já filtrada nesses processos, sem precisar configurar filtro nenhum.
+  </div>
+</section>
+
+<!-- =========================== 5. PROCESSANDO DIÁRIAS =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">5</div>
+    <div><div class="kicker">Módulo 1</div><h2>Processando Diárias</h2></div>
+  </div>
+
+  <p>Abra pelo card <b>Processamento da Planilha</b>. Esta é a função usada no dia a dia para transformar
+  PDFs de processos do SEI em linhas novas na Planilha Oficial.</p>
+
+  <div class="fluxo-mini">
+    <div class="caixa-passo">PDF</div><div class="seta">→</div>
+    <div class="caixa-passo">Selecionar</div><div class="seta">→</div>
+    <div class="caixa-passo">Processar</div><div class="seta">→</div>
+    <div class="caixa-passo">Conferir</div><div class="seta">→</div>
+    <div class="caixa-passo">Preencher planilha</div><div class="seta">→</div>
+    <div class="caixa-passo">Resultado</div>
+  </div>
+
+  <ol class="passos">
+    <li>Clique em <b>Selecionar PDFs</b> (ou arraste os arquivos diretamente para a janela) — use os PDFs
+    da pasta <b>PDFS A PROCESSAR</b>.</li>
+    <li>Confira a lista de arquivos selecionados. É possível remover um item clicando no <b>×</b> ao lado dele.</li>
+    <li>Clique em <b>Processar</b>. Nesta etapa, <b>nada ainda é gravado na planilha</b> — o aplicativo
+    apenas lê e extrai as informações dos PDFs.</li>
+  </ol>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/04-processamento-fila.png" />
+    </div>
+    <figcaption>Fila de PDFs selecionados, pronta para processar.</figcaption>
+  </figure>
+
+  <ol class="passos" start="4" style="counter-reset: passo 3;">
+    <li><b>Aguarde a conclusão</b> — os contadores de <b>Total</b>, <b>Sucesso</b> e <b>Erro</b> aparecem
+    assim que o processamento termina.</li>
+    <li><b>Confira a pré-visualização</b> antes de gravar qualquer coisa na planilha: SEI, CPF, período e
+    trecho extraídos de cada PDF.</li>
+  </ol>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/05-processamento-previsualizacao.png" />
+    </div>
+    <figcaption>Pré-visualização dos dados extraídos, antes de preencher a planilha.</figcaption>
+  </figure>
+
+  <ol class="passos" start="6" style="counter-reset: passo 5;">
+    <li>Estando tudo correto, clique em <b>Preencher planilha</b>. Só agora os dados são gravados na
+    Planilha Oficial, sempre a partir da primeira linha livre.</li>
+  </ol>
+
+  <div class="caixa atencao">
+    <div class="rotulo">⚠ Atenção</div>
+    Enquanto o aplicativo estiver processando ou preenchendo a planilha, <b>não feche o aplicativo nem
+    troque a Planilha Oficial</b>. Os botões ficam bloqueados automaticamente durante essas operações —
+    se você tentar sair, o aplicativo pede confirmação antes de interromper.
+  </div>
+
+  <h3 class="sub">Conferindo o resultado final</h3>
+  <p>Depois de preencher a planilha, a tela final mostra o resumo completo e disponibiliza as ações mais
+  usadas em seguida:</p>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/06-processamento-concluido.png" />
+    </div>
+    <figcaption>Tela de processamento concluído.</figcaption>
+  </figure>
+
+  <table class="legenda">
+    <tr><td class="icone">📗</td><td><b>Abrir Planilha</b> — abre a Planilha Oficial no Excel.</td></tr>
+    <tr><td class="icone">💾</td><td><b>Salvar Como...</b> — salva uma cópia da planilha em outro local.</td></tr>
+    <tr><td class="icone">📄</td><td><b>Abrir Relatório</b> / <b>Salvar Relatório</b> — o relatório detalhado desta execução.</td></tr>
+    <tr><td class="icone">📁</td><td><b>Abrir Pasta dos Resultados</b> — pasta com os arquivos gerados neste lote.</td></tr>
+  </table>
+
+  <h3 class="sub">Entendendo os resultados e possíveis erros</h3>
+  <p>Cada PDF processado recebe um status na tabela de resultado. Se apenas alguns PDFs de um lote grande
+  derem problema, <b>não é preciso refazer o lote inteiro</b> — confira só os arquivos apontados:</p>
+
+  <table class="status-tab">
+    <tr><th>Status</th><th>O que significa</th></tr>
+    <tr><td><span class="pill verde">Inserido</span></td><td>A diária foi gravada normalmente na planilha.</td></tr>
+    <tr><td><span class="pill ambar">Inserido (SEI já existente)</span></td><td>Gravado mesmo assim — só ocorre no Modo Complemento de Diárias.</td></tr>
+    <tr><td><span class="pill ambar">Duplicado no lote</span></td><td>O mesmo SEI apareceu duas vezes no lote enviado — só a primeira ocorrência é gravada.</td></tr>
+    <tr><td><span class="pill ambar">Já existe na planilha</span></td><td>Esse SEI já estava cadastrado — nenhuma linha nova foi criada.</td></tr>
+    <tr><td><span class="pill vermelho">Necessita inserção manual</span></td><td>O PDF não pôde ser gravado automaticamente — insira essa diária manualmente e revise o motivo indicado na coluna “Motivo”.</td></tr>
+  </table>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/07-processamento-resultado-tabela.png" />
+    </div>
+    <figcaption>Tabela detalhada de resultado, com o status de cada PDF.</figcaption>
+  </figure>
+
+  <p>Terminado o lote, clique em <b>Novo Processo</b> para reiniciar a tela e processar o próximo grupo de
+  PDFs.</p>
+
+  <h3 class="sub">Modo Complemento de Diárias</h3>
+  <p>Use quando o PDF se refere a um <b>complemento</b> de uma diária já lançada anteriormente (não a um
+  processo novo). Na mesma tela de Processamento, ative o botão <b>Modo Complemento de Diárias</b> antes
+  de processar. Com o modo ativo:</p>
+  <ul>
+    <li>Um SEI já existente na planilha <b>não impede</b> mais a gravação da nova linha.</li>
+    <li>A coluna de aviso da planilha recebe automaticamente a marcação <b>“COMPLEMENTO DE DIÁRIAS”</b>.</li>
+  </ul>
+  <p>O restante do fluxo (selecionar, processar, conferir, preencher) é idêntico ao processamento normal.</p>
+</section>
+
+<!-- =========================== 6. CENTRAL DE CONFERÊNCIA =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">6</div>
+    <div><div class="kicker">Módulo 2</div><h2>Central de Conferência</h2></div>
+  </div>
+
+  <p>Use antes de processar um PDF para checar rapidamente a situação de um servidor: se ele já está
+  cadastrado, se já existe diária no mesmo período (duplicidade) e se a janela de prazo já está liberada.
+  <b>Nada é gravado nesta tela</b> — ela só consulta e informa.</p>
+
+  <ol class="passos">
+    <li>Informe o <b>CPF do servidor</b>, o <b>período inicial</b> e o <b>período final</b> da diária.</li>
+    <li>Clique em <b>Realizar Conferência</b>.</li>
+  </ol>
+
+  <figure class="tela" style="max-width: 130mm; margin-left:auto; margin-right:auto;">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/08-conferencia-formulario.png" />
+    </div>
+    <figcaption>Formulário da Central de Conferência.</figcaption>
+  </figure>
+
+  <p>O resultado aparece com um selo de veredito:</p>
+  <table class="legenda">
+    <tr><td class="icone">🟢</td><td><b>APTO PARA PROCESSAMENTO</b> — pode seguir com tranquilidade para o Processamento.</td></tr>
+    <tr><td class="icone">🟠</td><td><b>REVISAR</b> — algo precisa da sua atenção antes de continuar (veja o checklist abaixo do selo).</td></tr>
+  </table>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/09-conferencia-checklist.png" />
+    </div>
+    <figcaption>Checklist de conferência — neste exemplo, o CPF ainda não está cadastrado.</figcaption>
+  </figure>
+
+  <h3 class="sub">CPF não cadastrado — o que fazer?</h3>
+
+  <div class="fluxo-mini">
+    <div class="caixa-passo">CPF não localizado</div><div class="seta">→</div>
+    <div class="caixa-passo">Cadastrar servidor/membro</div><div class="seta">→</div>
+    <div class="caixa-passo">Consultar no Arquimedes</div><div class="seta">→</div>
+    <div class="caixa-passo">Preencher cadastro</div><div class="seta">→</div>
+    <div class="caixa-passo">Salvar</div><div class="seta">→</div>
+    <div class="caixa-passo">Verificar sync. do Drive</div>
+  </div>
+
+  <p>Quando o checklist mostrar <b>“Servidor ainda não cadastrado”</b>, um botão
+  <b>Cadastrar servidor/membro</b> aparece ao lado do item. Ao clicar:</p>
+
+  <figure class="tela" style="max-width: 130mm; margin-left:auto; margin-right:auto;">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/10-cadastro-servidor.png" />
+    </div>
+    <figcaption>Modal de cadastro de servidor/membro, com o link para o Arquimedes.</figcaption>
+  </figure>
+
+  <ol class="passos">
+    <li>Clique no link <b>Arquimedes</b> para consultar os dados cadastrais oficiais do servidor.</li>
+    <li>O campo <b>CPF</b> vem pré-preenchido, mas pode ser <b>corrigido</b> se estiver digitado errado.</li>
+    <li>Preencha <b>Nome</b>, <b>Matrícula</b> e <b>Cargo</b> (obrigatórios); Previdência, Órgão de origem,
+    Regime de previdência e Situação são opcionais.</li>
+    <li>Clique em <b>Salvar</b>.</li>
+  </ol>
+
+  <div class="caixa atencao">
+    <div class="rotulo">⚠ Atenção</div>
+    Depois de salvar, o aplicativo pede para você confirmar que o <b>Google Drive já sincronizou</b> a
+    versão atualizada da planilha antes de continuar (clique em <b>Já sincronizei / Continuar</b>). O
+    aplicativo não verifica essa sincronização sozinho — a confirmação é sempre manual.
+  </div>
+
+  <h4 class="subsub">Gerando o Histórico para o e-Fisco</h4>
+  <p>Quando o resultado for <b>APTO PARA PROCESSAMENTO</b>, um segundo formulário aparece para gerar o
+  texto de histórico usado no e-Fisco. Informe o <b>Número do SEI</b> e o <b>Destino</b>, clique em
+  <b>Gerar Histórico</b> e depois em <b>Copiar Histórico</b> para colar diretamente no e-Fisco.</p>
+
+  <div class="caixa dica">
+    <div class="rotulo">💡 Dica</div>
+    No <b>Modo Complemento de Diárias</b> (mesmo botão de alternância presente nesta tela), se a simulação
+    representar uma parcial isolada (sem diária integral), marque a opção correspondente no formulário —
+    o texto gerado passa a mencionar <b>“UMA PARCIAL”</b> corretamente nesse cenário específico.
+  </div>
+</section>
+
+<!-- =========================== 7. CENTRAL ANALÍTICA =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">7</div>
+    <div><div class="kicker">Módulo 3</div><h2>Central Analítica</h2></div>
+  </div>
+
+  <p>A Central Analítica utiliza os dados já sincronizados da Planilha Oficial para permitir pesquisas,
+  filtros, dashboards e relatórios sem precisar abrir o Excel.</p>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/11-central-analitica.png" />
+    </div>
+    <figcaption>Central Analítica — filtros, indicadores e listagem de diárias.</figcaption>
+  </figure>
+
+  <table class="legenda">
+    <tr><td class="icone">🔎</td><td><b>Filtros</b> — pesquise por SEI, CPF ou período (inicial/final).</td></tr>
+    <tr><td class="icone">📈</td><td><b>Gerar Dashboard</b> / <b>Gerar Relatório</b> — indicadores e relatório exportável do recorte filtrado.</td></tr>
+    <tr><td class="icone">🌓</td><td><b>Dark Mode Executivo</b> — visual alternativo, pensado para apresentações e leitura executiva.</td></tr>
+    <tr><td class="icone">⚙️</td><td><b>Colunas</b> — escolha quais colunas aparecem na tabela de resultados.</td></tr>
+  </table>
+
+  <div class="caixa dica">
+    <div class="rotulo">💡 Dica</div>
+    O resumo acima da tabela (“N registros no recorte atual · N servidores · valor total · valor médio”)
+    atualiza sozinho a cada filtro aplicado — não é preciso clicar em nenhum botão de atualizar.
+  </div>
+</section>
+
+<!-- =========================== 8. FINALIZANDO DIÁRIAS =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">8</div>
+    <div><div class="kicker">Módulo 4 · Aba “Finalizar Diárias”</div><h2>Finalizando (confirmando) diárias</h2></div>
+  </div>
+
+  <p>Esta função confirma, na Planilha Oficial, que o <b>comprovante</b> e a <b>confirmação de diárias</b>
+  de um processo já foram recebidos — é o que grava “SIM” nas colunas correspondentes. Está dentro de
+  <b>Processamento da Planilha</b>, na aba <b>Finalizar Diárias</b>. Use os PDFs separados na pasta
+  <b>PDFS DIÁRIAS PARA CONFIRMAR</b>.</p>
+
+  <div class="fluxo-mini">
+    <div class="caixa-passo">Selecionar PDFs</div><div class="seta">→</div>
+    <div class="caixa-passo">Analisar</div><div class="seta">→</div>
+    <div class="caixa-passo">Sistema localiza os SEIs</div><div class="seta">→</div>
+    <div class="caixa-passo">Alertas (se houver)</div><div class="seta">→</div>
+    <div class="caixa-passo">Você decide finalizar</div><div class="seta">→</div>
+    <div class="caixa-passo">Planilha recebe SIM/SIM</div>
+  </div>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/12-finalizar-inicial.png" />
+    </div>
+    <figcaption>Tela inicial de Finalizar Diárias.</figcaption>
+  </figure>
+
+  <ol class="passos">
+    <li>Clique em <b>Selecionar PDFs</b> e escolha os processos da pasta <b>PDFS DIÁRIAS PARA CONFIRMAR</b>.</li>
+    <li>Clique em <b>Analisar</b>. O aplicativo localiza o SEI de cada processo na Planilha Oficial e
+    separa o lote em quatro grupos.</li>
+  </ol>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/13-finalizar-analise-buckets.png" />
+    </div>
+    <figcaption>Resultado da análise, separado em grupos, com alertas informativos.</figcaption>
+  </figure>
+
+  <table class="status-tab">
+    <tr><th>Status</th><th>O que significa</th></tr>
+    <tr><td><span class="pill azul">Já confirmada na Planilha Oficial</span></td><td>Comprovante e confirmação já estavam “SIM/SIM” — nada será alterado.</td></tr>
+    <tr><td><span class="pill verde">Pronto para confirmação</span></td><td>O SEI foi localizado e o processo pode ser finalizado.</td></tr>
+    <tr><td><span class="pill vermelho">SEI não identificado no processo</span></td><td>O aplicativo não conseguiu extrair um número de SEI deste PDF.</td></tr>
+    <tr><td><span class="pill vermelho">SEI não localizado na Planilha Oficial</span></td><td>O SEI extraído não foi encontrado na planilha — nada é alterado para este processo.</td></tr>
+    <tr><td><span class="pill vermelho">Estado parcial — revisão manual</span></td><td>As colunas de comprovante/confirmação têm um valor fora do padrão — revise manualmente na planilha.</td></tr>
+    <tr><td><span class="pill vermelho">Erro ao ler o PDF</span></td><td>Falha técnica real na leitura do arquivo — tente novamente ou abra o PDF para conferir se não está corrompido.</td></tr>
+  </table>
+
+  <h3 class="sub">Sobre os alertas</h3>
+  <div class="caixa atencao">
+    <div class="rotulo">⚠ Possível pendência não é erro</div>
+    Um alerta (⚠) ao lado de um processo <b>“pronto para confirmação”</b> não significa que o processo
+    está errado. Significa apenas que o aplicativo <b>não conseguiu confirmar automaticamente</b> alguma
+    informação — por exemplo, não encontrou o documento de confirmação de serviços ou um comprovante
+    anexado. <b>A decisão de finalizar continua sendo sua.</b> O aplicativo nunca bloqueia a finalização
+    por causa de um alerta — só a localização do SEI decide isso.
+  </div>
+
+  <p>Role a tela para ver a tabela completa e o botão de confirmação, com a contagem exata de processos que
+  realmente precisam de alguma gravação:</p>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/14-finalizar-tabela.png" />
+    </div>
+    <figcaption>Tabela completa da análise, com o botão “Finalizar processos restantes”.</figcaption>
+  </figure>
+
+  <ol class="passos" start="3" style="counter-reset: passo 2;">
+    <li>Clique em <b>Finalizar N processo(s) restante(s)</b>.</li>
+    <li>Confirme na caixa de diálogo que aparece — ela vale para <b>todo o lote</b>, não é preciso confirmar processo por processo.</li>
+  </ol>
+
+  <figure class="tela" style="max-width: 120mm; margin-left:auto; margin-right:auto;">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/15-finalizar-dialogo.png" />
+    </div>
+    <figcaption>Confirmação final antes da gravação na planilha.</figcaption>
+  </figure>
+
+  <h3 class="sub">Resultado e aviso obrigatório</h3>
+  <p>A tela final reconcilia <b>todo o lote enviado</b> — nenhum processo desaparece da lista, mesmo os que
+  não puderam ser finalizados:</p>
+
+  <figure class="tela">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/16-finalizar-resultado-banner.png" />
+    </div>
+    <figcaption>Tela de finalização concluída, com o aviso obrigatório em destaque.</figcaption>
+  </figure>
+
+  <div class="banner-obrigatorio">
+    📌 NÃO ESQUEÇA DE INCLUIR OS PROCESSOS FINALIZADOS NESTE LOTE NO BLOCO INTERNO
+    “DIÁRIAS CONFIRMADAS 2026” NO SEI.
+  </div>
+
+  <p>Esse aviso só aparece quando pelo menos um processo foi <b>realmente confirmado nesta operação</b> —
+  se todos já estavam “SIM/SIM”, ele não é exibido, porque nenhuma gravação nova aconteceu.</p>
+</section>
+
+<!-- =========================== 9. FECHAR APP =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">9</div>
+    <div><div class="kicker">Encerrando o trabalho</div><h2>Fechando o aplicativo</h2></div>
+  </div>
+
+  <p>Ao clicar no <b>X</b> da janela, o aplicativo sempre pede confirmação antes de fechar:</p>
+
+  <figure class="tela" style="max-width: 120mm; margin-left:auto; margin-right:auto;">
+    <div class="moldura"><div class="barra"><i></i><i></i><i></i></div>
+      <img src="imagens/17-sair-confirmacao.png" />
+    </div>
+    <figcaption>Confirmação de saída do aplicativo.</figcaption>
+  </figure>
+
+  <ol class="passos">
+    <li>Clique em <b>Sair</b> para fechar definitivamente, ou em <b>Cancelar</b> para continuar trabalhando.</li>
+  </ol>
+
+  <div class="caixa atencao">
+    <div class="rotulo">⚠ Atenção</div>
+    Se houver uma operação crítica em andamento (processamento ou preenchimento da planilha), a mensagem
+    muda para avisar que sair agora vai <b>interromper essa operação</b>. Evite fechar o aplicativo nesse
+    momento — espere a operação terminar antes de sair, sempre que possível.
+  </div>
+</section>
+
+<!-- =========================== 10. BOAS PRÁTICAS + FLUXO =========================== -->
+<section class="pagina">
+  <div class="cabecalho-secao">
+    <div class="badge-num">10</div>
+    <div><div class="kicker">Referência rápida</div><h2>Boas práticas e fluxo resumido</h2></div>
+  </div>
+
+  <h3 class="sub">Boas práticas</h3>
+  <ul class="boas-praticas">
+    <li>Confira sempre se a <b>Planilha Oficial correta</b> está selecionada antes de processar ou finalizar.</li>
+    <li>Aguarde cada operação terminar antes de iniciar a próxima — não processe dois lotes ao mesmo tempo.</li>
+    <li>Leia os <b>alertas</b> exibidos nas telas — mesmo quando não bloqueiam, eles indicam algo que vale revisar.</li>
+    <li>Não edite a mesma Planilha Oficial simultaneamente em vários computadores.</li>
+    <li>Mantenha os PDFs organizados nas três pastas de trabalho (seção 1).</li>
+    <li>Depois de um cadastro ou alteração importante, confira se o <b>Google Drive já sincronizou</b> a nova versão da planilha.</li>
+    <li>Nunca ignore uma mensagem de erro — revise o motivo indicado antes de tentar novamente.</li>
+    <li>Revise sempre os processos sinalizados pelo aplicativo (⚠ e ✕) antes de considerar o trabalho concluído.</li>
+  </ul>
+
+  <h3 class="sub">Fluxo geral do aplicativo</h3>
+
+  <div class="diagrama">
+    <div class="titulo-central">AUTOMATIZADOR DE DIÁRIAS</div>
+    <div class="ramos">
+      <div class="ramo">
+        <div class="no destaque">NOVA DIÁRIA</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">PDFS A PROCESSAR</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">Processar</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">Preencher planilha</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">Conferir resultado</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">PDFS PROCESSADOS <i>(mover manualmente)</i></div>
+      </div>
+      <div class="ramo">
+        <div class="no destaque">DIÁRIA CONCLUÍDA</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">PDFS DIÁRIAS PARA CONFIRMAR</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">Finalizar Diárias</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">SIM / SIM na planilha</div>
+        <div class="seta-baixo">↓</div>
+        <div class="no">Aviso: bloco “DIÁRIAS CONFIRMADAS 2026” no SEI</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="caixa sucesso" style="margin-top:8mm;">
+    <div class="rotulo">✔ Pronto</div>
+    Este guia cobre o uso operacional do Automatizador de Diárias 2.0.0. Em caso de dúvidas sobre uma
+    regra de negócio específica (ex.: janela de processamento, cálculo de diárias), consulte o setor
+    responsável — este documento descreve apenas o funcionamento do aplicativo.
+  </div>
+</section>
+
+</body>
+</html>

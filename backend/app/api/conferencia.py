@@ -10,14 +10,18 @@ from app.schemas.conferencia import (
     RequisicaoCandidatosComplemento,
     RequisicaoConferencia,
     RequisicaoHistorico,
+    RequisicaoValorDiaria,
     RespostaCandidatosComplemento,
     RespostaHistorico,
+    RespostaValorDiaria,
     ResultadoConferenciaResposta,
     ServidorResposta,
 )
 from app.services.conferencia_service import (
     BaseLocalIndisponivel,
     ServidorNaoEncontrado,
+    TabelaValoresIndisponivel,
+    calcular_valor_diaria,
     conferir_cpf,
     gerar_historico,
     gerar_historico_complemento,
@@ -164,4 +168,40 @@ def candidatos_complemento(
             )
             for candidato in candidatos
         ]
+    )
+
+
+@router.post("/conferencia/valor", response_model=RespostaValorDiaria)
+def valor_diaria(requisicao: RequisicaoValorDiaria) -> RespostaValorDiaria:
+    """Micro-sprint A ("Valor Automático da Diária na Central de
+    Conferência") — endpoint independente de `POST /conferencia/historico`
+    de propósito: uma falha de leitura da Tabela Valores (503) nunca deve
+    impedir o Histórico e-Fisco de ser gerado normalmente (P0 da
+    Micro-sprint A). RN-11 inalterado — nunca grava nada."""
+    try:
+        resultado = calcular_valor_diaria(
+            requisicao.cpf,
+            requisicao.periodo_inicial,
+            requisicao.periodo_final,
+            requisicao.destino,
+            uf_confirmada=requisicao.uf_confirmada,
+            modo=ModoProcessamento(requisicao.modo),
+            quantidade_diaria_parcial=requisicao.quantidade_diaria_parcial,
+        )
+    except BaseLocalIndisponivel as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+    except ServidorNaoEncontrado as erro:
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
+    except TabelaValoresIndisponivel as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+
+    return RespostaValorDiaria(
+        situacao=resultado.situacao,
+        categoria_funcional=resultado.categoria_funcional,
+        uf_destino=resultado.uf_destino,
+        valor_integral=resultado.valor_integral,
+        valor_parcial=resultado.valor_parcial,
+        valor_total=resultado.valor_total,
+        motivo=resultado.motivo,
+        ufs_disponiveis=list(resultado.ufs_disponiveis) if resultado.ufs_disponiveis else None,
     )

@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 import { FOCO_ANEL, PRESSIONAR, SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 
-type Cor = "roxo" | "ciano" | "azul";
+type Cor = "roxo" | "ciano" | "azul" | "verde";
 
 interface Props {
   titulo: string;
@@ -40,22 +40,31 @@ interface Props {
 // o tom de borda/selo/seta usa `blue-400`/`blue-500`, uma família Tailwind
 // diferente do `blue-800` de `GLOW_PDFS`, para não duplicar exatamente a
 // mesma aparência de outro elemento já existente.
+// Micro-sprint B — Central de Regularização de DH = verde
+// (`shadow-glow-green`, já existente para o estado "sucesso" — RN
+// semântica: esta central resolve/regulariza uma pendência, o mesmo
+// significado que "sucesso" já carrega no resto do app). Mesma extensão
+// aditiva prevista no comentário original: só uma entrada nova em cada
+// mapa, nenhum valor de sombra novo.
 const GLOW_POR_COR: Record<Cor, string> = {
   roxo: "border-violet-400/20 shadow-glow-purple hover:border-violet-400/35",
   ciano: "border-cyan-400/20 shadow-glow-cyan hover:border-cyan-400/35",
   azul: "border-blue-400/20 shadow-glow-blue hover:border-blue-400/35",
+  verde: "border-emerald-400/20 shadow-glow-green hover:border-emerald-400/35",
 };
 
 const SELO_POR_COR: Record<Cor, string> = {
   roxo: "bg-violet-500/10 text-violet-300",
   ciano: "bg-cyan-500/10 text-cyan-300",
   azul: "bg-blue-500/10 text-blue-300",
+  verde: "bg-emerald-500/10 text-emerald-300",
 };
 
 const SETA_POR_COR: Record<Cor, string> = {
   roxo: "text-violet-300",
   ciano: "text-cyan-300",
   azul: "text-blue-300",
+  verde: "text-emerald-300",
 };
 
 const HOVER_ELEVACAO = "transition hover:-translate-y-1 hover:bg-white/[0.06] hover:shadow-floating";

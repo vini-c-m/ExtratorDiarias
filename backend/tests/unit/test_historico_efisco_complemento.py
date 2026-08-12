@@ -72,3 +72,82 @@ def test_nao_existe_mais_montar_historico_complemento() -> None:
     import app.domain.rules.historico_efisco as modulo
 
     assert not hasattr(modulo, "montar_historico_complemento")
+
+
+# --- P1 (Sprint pré-build, 2026-08-11) — parcial isolada -------------------
+
+
+def test_complemento_parcial_isolada_gera_uma_parcial() -> None:
+    """Cenário do usuário: simulação de Complemento representando
+    EXATAMENTE uma parcial isolada (mesmo dia, sem nenhuma integral) — o
+    texto precisa ser "UMA PARCIAL", nunca "UMA DIÁRIA PARCIAL" (esse é o
+    texto do fluxo Padrão, RN-04, um caminho totalmente diferente)."""
+    texto = montar_historico(
+        sei="19.20.0001.0004758/2026-36",
+        nome_servidor="Roberto Alves Ferreira",
+        periodo_inicial=date(2026, 4, 12),
+        periodo_final=date(2026, 4, 12),
+        destino="Recife",
+        quantidade_diaria_parcial=1,
+        contexto_complemento=True,
+    )
+    assert "UMA PARCIAL," in texto
+    assert "UMA DIÁRIA PARCIAL" not in texto
+    assert "INTEGRAL" not in texto
+
+
+def test_complemento_intervalo_com_integrais_e_parcial_nao_isolada_preserva_e_uma_parcial() -> None:
+    """Quando NÃO é isolada (já existem integrais no período), o texto
+    continua "E UMA PARCIAL" — o ajuste de P1 nunca toca esse branch."""
+    texto = montar_historico(
+        sei="19.20.0001.0004758/2026-36",
+        nome_servidor="Roberto Alves Ferreira",
+        periodo_inicial=date(2026, 3, 17),
+        periodo_final=date(2026, 3, 19),
+        destino="Recife",
+        quantidade_diaria_parcial=1,
+        contexto_complemento=True,
+    )
+    assert "02 (DUAS) DIÁRIAS INTEGRAIS E UMA PARCIAL," in texto
+
+
+def test_complemento_intervalo_com_integrais_sem_parcial_continua_so_integrais() -> None:
+    """Comportamento a preservar (pedido explícito do usuário): intervalo
+    com integrais e SEM marcação de parcial nunca ganha "E UMA PARCIAL" —
+    default institucional (0) do modo Complemento, intocado por P1."""
+    texto = montar_historico(
+        sei="19.20.0001.0004758/2026-36",
+        nome_servidor="Roberto Alves Ferreira",
+        periodo_inicial=date(2026, 3, 17),
+        periodo_final=date(2026, 3, 19),
+        destino="Recife",
+        quantidade_diaria_parcial=0,
+        contexto_complemento=True,
+    )
+    assert "02 (DUAS) DIÁRIAS INTEGRAIS," in texto
+    assert "PARCIAL" not in texto
+
+
+def test_gerar_historico_complemento_sempre_passa_contexto_complemento() -> None:
+    """`gerar_historico_complemento` (Central de Conferência) precisa
+    sempre marcar `contexto_complemento=True` ao delegar para
+    `montar_historico` — é o único jeito de `_trecho_diarias` saber que
+    está no fluxo de Complemento, não no Padrão."""
+    import inspect
+
+    from app.services import conferencia_service
+
+    codigo_fonte = inspect.getsource(conferencia_service.gerar_historico_complemento)
+    assert "contexto_complemento=True" in codigo_fonte
+
+
+def test_gerar_historico_padrao_nunca_passa_contexto_complemento() -> None:
+    """RN-04 preservada: o fluxo Padrão nunca marca `contexto_complemento`
+    — continua produzindo "UMA DIÁRIA PARCIAL" para o caso de zero
+    integrais, exatamente como já testado em `test_historico_efisco.py`."""
+    import inspect
+
+    from app.services import conferencia_service
+
+    codigo_fonte = inspect.getsource(conferencia_service.gerar_historico)
+    assert "contexto_complemento" not in codigo_fonte

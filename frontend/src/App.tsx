@@ -9,13 +9,14 @@ import { useConfiguracao } from "./hooks/useConfiguracao";
 import { MENSAGENS } from "./lib/mensagens";
 import BoasVindas from "./pages/BoasVindas";
 import CentralAnalitica from "./pages/CentralAnalitica";
+import CentralRegularizacaoDH from "./pages/CentralRegularizacaoDH";
 import Conferencia from "./pages/Conferencia";
 import ConfiguracaoInicial from "./pages/ConfiguracaoInicial";
 import FinalizarDiarias from "./pages/FinalizarDiarias";
 import Hub from "./pages/Hub";
 import SelecionarProcessar from "./pages/SelecionarProcessar";
 
-type Pagina = "boasvindas" | "hub" | "processamento" | "conferencia" | "analitica";
+type Pagina = "boasvindas" | "hub" | "processamento" | "conferencia" | "analitica" | "regularizacao-dh";
 // "FINALIZAR DIÁRIAS" (2026-08-07) — terceiro fluxo da área de
 // Processamento, ao lado de Processar/Complemento (que continuam vivendo
 // inteiramente dentro de `SelecionarProcessar`, sem nenhuma alteração —
@@ -193,6 +194,7 @@ export default function App() {
                 setAnaliticaAbreEmDocumentosHabeis(true);
                 setPagina("analitica");
               }}
+              aoSelecionarRegularizacaoDH={() => setPagina("regularizacao-dh")}
             />
           )}
           {pagina === "processamento" && (
@@ -242,7 +244,11 @@ export default function App() {
               backendOnline={status === "conectado"}
               abrirEmDocumentosHabeisPendentes={analiticaAbreEmDocumentosHabeis}
               aoMudarTemaExecutivo={setTemaExecutivoAtivo}
+              aoIrParaCentralRegularizacaoDH={() => setPagina("regularizacao-dh")}
             />
+          )}
+          {pagina === "regularizacao-dh" && (
+            <CentralRegularizacaoDH backendOnline={status === "conectado"} />
           )}
         </LimiteDeErro>
       </div>

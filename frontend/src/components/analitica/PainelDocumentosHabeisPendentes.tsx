@@ -24,6 +24,12 @@ interface Props {
    * lista para Revisão manual necessária"), o filtro interno já nasce
    * aplicado; sem isso, nasce em "Todos" (padrão). */
   filtroInicial?: SituacaoDocumentoHabilPendente;
+  /** Micro-sprint B ("Central de Regularização de DH") — navegação pura,
+   * nunca recria a consulta: a Central de Regularização faz sua própria
+   * busca, na mesma fonte homologada. Opcional — omitida, a ação
+   * simplesmente não aparece (comportamento anterior a esta Micro-sprint,
+   * preservado 100% para quem não passa esta prop). */
+  aoIrParaCentralRegularizacaoDH?: () => void;
 }
 
 type FiltroInterno = "todos" | SituacaoDocumentoHabilPendente;
@@ -64,12 +70,21 @@ export default function PainelDocumentosHabeisPendentes({
   aoVoltar,
   aoSelecionarRegistro,
   filtroInicial,
+  aoIrParaCentralRegularizacaoDH,
 }: Props) {
   const [filtro, setFiltro] = useState<FiltroInterno>(filtroInicial ?? "todos");
 
   const botaoVoltar = (
     <Botao variante="secundaria" onClick={aoVoltar}>
       ← Voltar aos resultados
+    </Botao>
+  );
+
+  // Micro-sprint B — só aparece quando a página raiz (`App.tsx`) fornece a
+  // navegação; nunca recria a consulta aqui, só encaminha (item 4 do pedido).
+  const botaoIrParaRegularizacao = aoIrParaCentralRegularizacaoDH && (
+    <Botao variante="primaria" onClick={aoIrParaCentralRegularizacaoDH}>
+      Ir para a Central de Regularização de DH →
     </Botao>
   );
 
@@ -111,6 +126,7 @@ export default function PainelDocumentosHabeisPendentes({
         <p className={TIPOGRAFIA.textoAuxiliar}>
           Documentos Hábeis Pendentes · {total} processo{total === 1 ? "" : "s"}
         </p>
+        {botaoIrParaRegularizacao}
       </div>
 
       {total === 0 ? (

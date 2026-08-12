@@ -24,9 +24,14 @@ VALOR_FINALIZADO = "SIM"
 
 
 class EstadoLinhaFinalizacao(str, Enum):
-    PRONTA = "pronta"  # X e Y vazios — pode gravar
-    JA_FINALIZADA = "ja_finalizada"  # X e Y já "SIM"
-    PARCIAL = "parcial"  # X/Y inconsistentes ou com valor fora do padrão — revisão manual
+    PRONTA = "pronta"  # X e Y vazios — grava os dois
+    # Regra definitiva (Sprint pré-build, 2026-08-11): exatamente uma das
+    # duas colunas já é "SIM" e a outra está vazia — grava SÓ a que falta,
+    # nunca reescreve a que já existe. Diferente de PARCIAL: aqui o valor
+    # que já está lá é exatamente "SIM", nunca um valor fora do padrão.
+    INCOMPLETA = "incompleta"
+    JA_FINALIZADA = "ja_finalizada"  # X e Y já "SIM" — NO-OP, nada é gravado
+    PARCIAL = "parcial"  # valor fora do padrão (ex.: "SM", "NÃO") — revisão manual, nunca gravado
 
 
 def _normalizar_xy(valor: object) -> str:
@@ -49,6 +54,10 @@ def classificar_estado(x_bruto: object, y_bruto: object) -> EstadoLinhaFinalizac
         return EstadoLinhaFinalizacao.PRONTA
     if x == VALOR_FINALIZADO and y == VALOR_FINALIZADO:
         return EstadoLinhaFinalizacao.JA_FINALIZADA
+    if x == VALOR_FINALIZADO and y == "":
+        return EstadoLinhaFinalizacao.INCOMPLETA
+    if x == "" and y == VALOR_FINALIZADO:
+        return EstadoLinhaFinalizacao.INCOMPLETA
     return EstadoLinhaFinalizacao.PARCIAL
 
 
@@ -131,6 +140,16 @@ def gravar_finalizacao(planilha: Worksheet, linha: int) -> None:
     """Escrita mínima (decisão do usuário): só X e Y, sem tocar borda/fonte/
     alinhamento — a linha já existe e já tem sua própria formatação, ao
     contrário de `escritor_planilha._escrever_celula` (que formata uma
-    linha nova em branco)."""
-    planilha[f"{COLUNA_COMPROVANTES}{linha}"].value = VALOR_FINALIZADO
-    planilha[f"{COLUNA_CONFIRMACAO_DIARIAS}{linha}"].value = VALOR_FINALIZADO
+    linha nova em branco).
+
+    Regra definitiva (Sprint pré-build, 2026-08-11) — grava só a célula que
+    ainda não é "SIM": para uma linha PRONTA (as duas vazias) grava as duas;
+    para uma linha INCOMPLETA (uma já "SIM") grava só a que falta, sem
+    reescrever a que já existia. Nunca chamada para uma linha JA_FINALIZADA
+    (as duas já "SIM") — quem chama (`finalizacao_service.confirmar`) já
+    filtra isso antes; mesmo assim, se fosse chamada, o resultado seria o
+    mesmo NO-OP (nenhuma das duas condições abaixo dispara)."""
+    if _normalizar_xy(planilha[f"{COLUNA_COMPROVANTES}{linha}"].value) != VALOR_FINALIZADO:
+        planilha[f"{COLUNA_COMPROVANTES}{linha}"].value = VALOR_FINALIZADO
+    if _normalizar_xy(planilha[f"{COLUNA_CONFIRMACAO_DIARIAS}{linha}"].value) != VALOR_FINALIZADO:
+        planilha[f"{COLUNA_CONFIRMACAO_DIARIAS}{linha}"].value = VALOR_FINALIZADO

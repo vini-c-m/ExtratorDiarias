@@ -37,9 +37,13 @@ def test_classificar_estado_sim_sim_ja_finalizada():
     assert classificar_estado("sim", "SIM") is EstadoLinhaFinalizacao.JA_FINALIZADA
 
 
-def test_classificar_estado_parcial_quando_so_uma_coluna_preenchida():
-    assert classificar_estado("SIM", None) is EstadoLinhaFinalizacao.PARCIAL
-    assert classificar_estado(None, "SIM") is EstadoLinhaFinalizacao.PARCIAL
+def test_classificar_estado_incompleta_quando_so_uma_coluna_tem_sim():
+    """Regra definitiva (Sprint pré-build, 2026-08-11): exatamente uma
+    coluna "SIM" e a outra vazia NÃO é mais PARCIAL — é INCOMPLETA, um
+    estado gravável (só falta completar a coluna vazia)."""
+    assert classificar_estado("SIM", None) is EstadoLinhaFinalizacao.INCOMPLETA
+    assert classificar_estado(None, "SIM") is EstadoLinhaFinalizacao.INCOMPLETA
+    assert classificar_estado("sim", "") is EstadoLinhaFinalizacao.INCOMPLETA
 
 
 def test_classificar_estado_parcial_para_valor_fora_do_padrao():
@@ -107,3 +111,36 @@ def test_gravar_finalizacao_grava_somente_x_e_y(caminho_planilha_teste):
     assert planilha["B4"].value == sei
     assert planilha["D4"].value == 33333333333
     assert planilha["J4"].value == "RECIFE-OLINDA"
+
+
+def test_gravar_finalizacao_linha_incompleta_grava_somente_a_coluna_faltante(caminho_planilha_teste):
+    """Regra definitiva: X já "SIM" — só Y precisa ser gravado; X nunca é
+    reescrito (nem que fosse, o valor seria idêntico — mas a regra pede
+    explicitamente não tocar na célula que já está certa)."""
+    sei = "19.20.0001.0000006/2026-06"
+    caminho = _planilha_com_linha_extra(caminho_planilha_teste, sei, x="SIM", y=None)
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+
+    gravar_finalizacao(planilha, 4)
+    workbook.save(caminho)
+
+    planilha = load_workbook(caminho)["Controle de Diárias"]
+    assert planilha["X4"].value == "SIM"
+    assert planilha["Y4"].value == "SIM"
+
+
+def test_gravar_finalizacao_linha_incompleta_outro_lado_grava_somente_a_coluna_faltante(
+    caminho_planilha_teste,
+):
+    sei = "19.20.0001.0000007/2026-07"
+    caminho = _planilha_com_linha_extra(caminho_planilha_teste, sei, x=None, y="SIM")
+    workbook = load_workbook(caminho)
+    planilha = workbook["Controle de Diárias"]
+
+    gravar_finalizacao(planilha, 4)
+    workbook.save(caminho)
+
+    planilha = load_workbook(caminho)["Controle de Diárias"]
+    assert planilha["X4"].value == "SIM"
+    assert planilha["Y4"].value == "SIM"

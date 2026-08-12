@@ -6,6 +6,13 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/), e e
 
 Para o histórico de desenvolvimento sprint a sprint, veja [`docs/roadmap/`](docs/roadmap/).
 
+## [2.1.0] - 2026-08-12
+
+### Adicionado
+
+- **Central de Regularização de DH**: quarta central do aplicativo, para resolver operacionalmente diárias já cadastradas na Planilha Oficial que estão aguardando Documento Hábil. Reaproveita a mesma detecção já homologada da Central Analítica (nunca uma segunda regra — mesma população, mesmos SEIs, garantido por teste de invariante) para listar os processos pendentes; ao abrir o detalhe de um processo, apresenta o Histórico e-Fisco normal (mesmo gerador homologado da Central de Conferência, nunca um segundo template) e o Valor já registrado na diária (lido diretamente do registro existente, nunca recalculado); permite registrar o número do DH obtido no e-Fisco, com escrita restrita exclusivamente à célula do Documento Hábil (nunca toca fórmula, cache ou qualquer outra célula da planilha), idempotente e com sincronização automática da Base Local. Acessível pelo Hub e a partir da notificação de Documentos Hábeis Pendentes na Central Analítica.
+- **Valor automático na Central de Conferência**: ao gerar o Histórico e-Fisco para uma diária de Servidor ainda não cadastrada, a Central de Conferência agora também calcula e apresenta o valor da diária (fórmula RN-05, lendo a Tabela Valores oficial dinamicamente — nunca um valor fixo no código), com resolução automática da UF de destino e confirmação manual quando o destino for ambíguo. Validado contra 1.486 diárias reais de Servidor (99,60% de reprodução exata). Diárias de Membro continuam fora do escopo deste cálculo (valor extraído do processo, fluxo já existente).
+
 ## [2.0.0] - 2026-08-06
 
 Release da versão definitiva V2, construída sobre a build de homologação interna `1.0.0-RC2`.

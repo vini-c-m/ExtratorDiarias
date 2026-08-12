@@ -2,7 +2,7 @@ import os
 from dataclasses import replace
 from datetime import date
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from app.domain.entities.diaria import Diaria
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
@@ -12,6 +12,7 @@ from app.planilha.escritor_planilha import (
     CategoriaResultado,
     ResultadoPreenchimento,
     _localizar_proxima_linha_livre,
+    _localizar_ultima_linha_real,
     preencher,
 )
 
@@ -40,6 +41,31 @@ def test_localiza_proxima_linha_livre_ignora_coluna_a(caminho_planilha_teste):
 
     # Linha 3 tem A vazio mas B preenchido — não pode ser considerada livre.
     assert _localizar_proxima_linha_livre(planilha) == 4
+
+
+# P0 (2026-08-11) — regra de negócio definitiva: uma linha vazia no MEIO do
+# histórico nunca é candidata a inserção, mesmo havendo diárias reais depois
+# dela. Exemplo literal do pedido do usuário.
+def test_localiza_ultima_linha_real_ignora_buracos_no_meio_do_historico():
+    workbook = Workbook()
+    planilha = workbook.active
+    planilha.title = "Controle de Diárias"
+    planilha["B10"] = "SEI-A"
+    planilha["B12"] = "SEI-B"
+    planilha["B14"] = "SEI-C"
+    # Linhas 11 e 13 ficam genuinamente vazias — buracos intercalados.
+
+    assert _localizar_ultima_linha_real(planilha) == 14
+    assert _localizar_proxima_linha_livre(planilha) == 15
+
+
+def test_localiza_ultima_linha_real_planilha_sem_nenhuma_diaria():
+    workbook = Workbook()
+    planilha = workbook.active
+    planilha.title = "Controle de Diárias"
+
+    assert _localizar_ultima_linha_real(planilha) == 1  # PRIMEIRA_LINHA_DADOS(2) - 1
+    assert _localizar_proxima_linha_livre(planilha) == 2
 
 
 def test_preencher_grava_somente_colunas_esperadas(caminho_planilha_teste):

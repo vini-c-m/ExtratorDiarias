@@ -1,25 +1,35 @@
 // "FINALIZAR DIÁRIAS" (2026-08-07) — espelha `app/schemas/finalizacao.py`.
 // Ajuste de 2026-08-07: a regra é do PROCESSO (SEI), não da linha isolada —
 // não existe mais escolha manual entre linhas do mesmo SEI.
+//
+// Regra de negócio definitiva (Sprint pré-build, 2026-08-11): o único
+// critério que bloqueia a finalização é a localização do SEI na Planilha
+// Oficial. Pendências documentais nunca mais aparecem como `status` — elas
+// viram só `AvaliacaoElegibilidade.alertas`, informativo, nunca bloqueante.
 
 export type StatusFinalizacao =
   | "pronto"
-  | "sem_comprovante"
-  | "sem_confirmacao"
+  | "ja_finalizado"
   | "sei_nao_extraido"
   | "sei_nao_encontrado"
-  | "ja_finalizado"
   | "estado_parcial"
   | "erro_leitura";
 
-export type EstadoLinhaFinalizacao = "pronta" | "ja_finalizada" | "parcial";
+export type EstadoLinhaFinalizacao = "pronta" | "incompleta" | "ja_finalizada" | "parcial";
+
+export type SituacaoComprovante = "encontrado" | "pendente" | "ausente";
 
 export interface AvaliacaoElegibilidade {
   confirmacao_encontrada: boolean;
   confirmacao_valida: boolean;
   comprovante_encontrado: boolean;
+  situacao_comprovante: SituacaoComprovante;
   ordem_bancaria_encontrada: boolean;
   apto: boolean;
+  pendente_analitico: boolean;
+  // Avisos informativos sobre a documentação do processo — nunca impedem a
+  // finalização. Vazio quando não há nada a revisar.
+  alertas: string[];
 }
 
 export interface CandidatoLinha {
@@ -56,7 +66,7 @@ export interface ItemParaConfirmar {
   sei: string;
 }
 
-export type CategoriaConfirmacao = "finalizado" | "ignorado";
+export type CategoriaConfirmacao = "finalizado" | "ja_confirmado" | "ignorado";
 
 export interface ItemResultadoConfirmacao {
   arquivo_origem: string;
@@ -69,6 +79,7 @@ export interface ItemResultadoConfirmacao {
 
 export interface RespostaConfirmacaoFinalizacao {
   total_finalizado: number;
+  total_ja_confirmado: number;
   total_ignorado: number;
   itens: ItemResultadoConfirmacao[];
 }

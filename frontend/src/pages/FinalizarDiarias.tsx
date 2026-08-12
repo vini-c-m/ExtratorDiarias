@@ -4,6 +4,7 @@ import Alerta from "../components/ui/Alerta";
 import Badge from "../components/ui/Badge";
 import Botao from "../components/ui/Botao";
 import BotaoArquivo from "../components/ui/BotaoArquivo";
+import DialogoConfirmacao from "../components/ui/DialogoConfirmacao";
 import FilaArquivos from "../components/upload/FilaArquivos";
 import ZonaArrastar from "../components/upload/ZonaArrastar";
 import { filtrarSomentePdf } from "../lib/arquivos";
@@ -14,7 +15,7 @@ import { SUPERFICIE_BASE } from "../theme/estilos";
 import { TIPOGRAFIA } from "../theme/tipografia";
 import type {
   ItemAnaliseFinalizacao,
-  ItemParaConfirmar,
+  ItemResultadoConfirmacao,
   RespostaConfirmacaoFinalizacao,
   StatusFinalizacao,
 } from "../types/finalizacao";
@@ -25,16 +26,13 @@ interface Props {
   backendOnline: boolean;
 }
 
-// RN-08 (`theme/cores.ts`) — vermelho fica reservado a falha técnica real
-// (aqui só `erro_leitura`, PDF ilegível). Toda condição de negócio que
-// impede a finalização (sem comprovante, sem confirmação, estado parcial
-// etc.) usa "aviso", nunca "erro" — mesma convenção já usada na Central de
-// Conferência para o veredito "não apto".
+// Regra de negócio definitiva (Sprint pré-build, 2026-08-11) — só SEI não
+// localizado/não extraído e estado parcial (valor fora do padrão em X/Y)
+// bloqueiam. RN-08: vermelho fica reservado a isso e à falha técnica real
+// de leitura do PDF; "já confirmado" é informativo (nunca erro).
 const _ROTULO_STATUS: Record<StatusFinalizacao, string> = {
-  pronto: "Pronto para finalizar",
-  ja_finalizado: "Já finalizado anteriormente",
-  sem_comprovante: "Sem comprovante/anexo",
-  sem_confirmacao: "Sem Confirmação de Diárias",
+  pronto: "Pronto para confirmação",
+  ja_finalizado: "Já confirmada na Planilha Oficial",
   sei_nao_extraido: "SEI não identificado no processo",
   sei_nao_encontrado: "SEI não localizado na Planilha Oficial",
   estado_parcial: "Estado parcial — revisão manual",
@@ -44,19 +42,53 @@ const _ROTULO_STATUS: Record<StatusFinalizacao, string> = {
 const _VARIANTE_STATUS: Record<StatusFinalizacao, VarianteStatus> = {
   pronto: "sucesso",
   ja_finalizado: "info",
-  sem_comprovante: "aviso",
-  sem_confirmacao: "aviso",
-  sei_nao_extraido: "aviso",
-  sei_nao_encontrado: "aviso",
-  estado_parcial: "aviso",
+  sei_nao_extraido: "erro",
+  sei_nao_encontrado: "erro",
+  estado_parcial: "erro",
   erro_leitura: "erro",
 };
+
+const _MENSAGEM_ALERTAS_INFORMATIVOS =
+  "Os alertas abaixo são informativos. A decisão de finalizar os processos pertence ao servidor responsável.";
 
 function formatarData(iso: string | null): string {
   if (!iso) return "—";
   const [ano, mes, dia] = iso.split("-");
   return `${dia}/${mes}/${ano}`;
 }
+
+// Sprint pré-build, 2026-08-11 — classificação final de UM item para o
+// relatório de execução: rastreabilidade completa do lote, nenhum processo
+// desaparece. `confirmado` é a entrada correspondente em `resultadoConfirmacao.
+// itens`, quando este arquivo chegou a ser enviado a `/confirmar` —
+// `undefined` quando nunca foi enviado (já estava confirmado, ou bloqueado
+// na análise).
+type ClassificacaoFinal = "confirmado_agora" | "ja_estava" | "nao_finalizado";
+
+function classificarResultadoFinal(
+  item: ItemAnaliseFinalizacao,
+  confirmado: ItemResultadoConfirmacao | undefined,
+): ClassificacaoFinal {
+  if (confirmado) {
+    if (confirmado.categoria === "finalizado") return "confirmado_agora";
+    if (confirmado.categoria === "ja_confirmado") return "ja_estava";
+    return "nao_finalizado";
+  }
+  if (item.status === "ja_finalizado") return "ja_estava";
+  return "nao_finalizado";
+}
+
+const _ROTULO_CLASSIFICACAO: Record<ClassificacaoFinal, string> = {
+  confirmado_agora: "Confirmado nesta operação",
+  ja_estava: "Já estava confirmado",
+  nao_finalizado: "Não finalizado",
+};
+
+const _VARIANTE_CLASSIFICACAO: Record<ClassificacaoFinal, VarianteStatus> = {
+  confirmado_agora: "sucesso",
+  ja_estava: "info",
+  nao_finalizado: "erro",
+};
 
 export default function FinalizarDiarias({ backendOnline }: Props) {
   const [fila, setFila] = useState<ItemFila[]>([]);
@@ -68,6 +100,10 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
   const [resultadoConfirmacao, setResultadoConfirmacao] =
     useState<RespostaConfirmacaoFinalizacao | null>(null);
   const [erroConfirmacao, setErroConfirmacao] = useState<string | null>(null);
+
+  // Item 6 do pedido — toda finalização passa por confirmação explícita
+  // antes da escrita, mesmo sem nenhum alerta.
+  const [dialogoConfirmacaoAberto, setDialogoConfirmacaoAberto] = useState(false);
 
   const algumaOperacaoEmAndamento = analisando || confirmando;
 
@@ -97,6 +133,7 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
     setErroAnalise(null);
     setResultadoConfirmacao(null);
     setErroConfirmacao(null);
+    setDialogoConfirmacaoAberto(false);
   }
 
   async function analisar() {
@@ -115,17 +152,25 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
 
   // A regra é do PROCESSO (SEI), não da linha isolada (ajuste de
   // 2026-08-07): todo processo "pronto" entra no lote a finalizar — o
-  // backend grava SIM/SIM em TODAS as linhas vinculadas àquele SEI de uma
-  // vez, de forma atômica. Nenhuma escolha manual de linha.
-  function itensParaFinalizar(): ItemParaConfirmar[] {
+  // backend grava em TODAS as linhas vinculadas àquele SEI de uma vez, de
+  // forma atômica. Regra definitiva (2026-08-11): alertas documentais nunca
+  // impedem — só a localização do SEI decide se o processo entra aqui.
+  function itensRestantes(): ItemAnaliseFinalizacao[] {
     if (!itens) return [];
-    return itens
-      .filter((item) => item.status === "pronto" && item.sei)
-      .map((item) => ({ arquivo_origem: item.arquivo_origem, sei: item.sei as string }));
+    return itens.filter((item) => item.status === "pronto" && item.sei);
   }
 
-  async function finalizar() {
-    const alvo = itensParaFinalizar();
+  function pedirConfirmacao() {
+    if (itensRestantes().length === 0) return;
+    setDialogoConfirmacaoAberto(true);
+  }
+
+  async function confirmarFinalizacaoDoLote() {
+    setDialogoConfirmacaoAberto(false);
+    const alvo = itensRestantes().map((item) => ({
+      arquivo_origem: item.arquivo_origem,
+      sei: item.sei as string,
+    }));
     if (alvo.length === 0) return;
     setConfirmando(true);
     setErroConfirmacao(null);
@@ -141,14 +186,56 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
 
   // --- Tela final: relatório de execução -------------------------------------
 
-  if (resultadoConfirmacao) {
+  if (resultadoConfirmacao && itens) {
+    const mapaConfirmacao = new Map(resultadoConfirmacao.itens.map((item) => [item.arquivo_origem, item]));
+    const linhas = itens.map((item) => {
+      const confirmado = mapaConfirmacao.get(item.arquivo_origem);
+      const classificacao = classificarResultadoFinal(item, confirmado);
+      return { item, confirmado, classificacao };
+    });
+
+    const contagem = linhas.reduce(
+      (acc, { classificacao }) => {
+        acc[classificacao] += 1;
+        return acc;
+      },
+      { confirmado_agora: 0, ja_estava: 0, nao_finalizado: 0 } as Record<ClassificacaoFinal, number>,
+    );
+
+    const confirmadosComAlerta = linhas.filter(
+      ({ classificacao, item }) => classificacao === "confirmado_agora" && (item.avaliacao?.alertas.length ?? 0) > 0,
+    ).length;
+
+    // Item 8 — aviso verde só quando alguma escrita NOVA aconteceu nesta
+    // operação (nunca quando tudo já estava SIM/SIM).
+    const houveNovaEscrita = resultadoConfirmacao.total_finalizado > 0;
+
     return (
       <div className="mx-auto max-w-4xl animate-entrada-conteudo px-6 py-14 md:px-10">
         <h2 className={TIPOGRAFIA.titulo}>Finalização concluída</h2>
-        <p className={`mt-2 ${TIPOGRAFIA.texto}`}>
-          {resultadoConfirmacao.total_finalizado} finalizado(s), {resultadoConfirmacao.total_ignorado}{" "}
-          ignorado(s).
-        </p>
+        <p className={`mt-2 ${TIPOGRAFIA.texto}`}>{itens.length} processo(s) analisado(s)</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Badge variante="sucesso">✓ {contagem.confirmado_agora} confirmado(s) nesta operação</Badge>
+          <Badge variante="info">✓ {contagem.ja_estava} já estava(m) confirmado(s)</Badge>
+          {contagem.nao_finalizado > 0 && (
+            <Badge variante="erro">✕ {contagem.nao_finalizado} não finalizado(s)</Badge>
+          )}
+        </div>
+        {confirmadosComAlerta > 0 && (
+          <p className={`mt-3 ${TIPOGRAFIA.textoAuxiliar}`}>
+            {confirmadosComAlerta} dos processos confirmados apresentaram alertas durante a análise
+            documental.
+          </p>
+        )}
+
+        {houveNovaEscrita && (
+          <div className="mt-6">
+            <Alerta variante="sucesso">
+              Não esqueça de incluir os processos finalizados neste lote no bloco interno &ldquo;DIÁRIAS
+              CONFIRMADAS 2026&rdquo; no SEI.
+            </Alerta>
+          </div>
+        )}
 
         <div className={`mt-8 overflow-hidden ${SUPERFICIE_BASE}`}>
           <table className="w-full text-left text-sm">
@@ -159,23 +246,31 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
                 <th className="px-4 py-2.5 font-medium">Linhas atualizadas</th>
                 <th className="px-4 py-2.5 font-medium">Linhas mantidas</th>
                 <th className="px-4 py-2.5 font-medium">Resultado</th>
+                <th className="px-4 py-2.5 font-medium">Motivo</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {resultadoConfirmacao.itens.map((item) => (
-                <tr key={`${item.arquivo_origem}-${item.sei}`}>
+              {linhas.map(({ item, confirmado, classificacao }) => (
+                <tr key={item.arquivo_origem}>
                   <td className="px-4 py-2.5 text-slate-300">{item.arquivo_origem}</td>
-                  <td className="px-4 py-2.5 text-slate-300">{item.sei}</td>
+                  <td className="px-4 py-2.5 text-slate-300">{item.sei ?? confirmado?.sei ?? "—"}</td>
                   <td className="px-4 py-2.5 text-slate-300">
-                    {item.linhas_atualizadas.length > 0 ? item.linhas_atualizadas.join(", ") : "—"}
+                    {confirmado && confirmado.linhas_atualizadas.length > 0
+                      ? confirmado.linhas_atualizadas.join(", ")
+                      : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-slate-500">
-                    {item.linhas_mantidas.length > 0 ? item.linhas_mantidas.join(", ") : "—"}
+                    {confirmado && confirmado.linhas_mantidas.length > 0
+                      ? confirmado.linhas_mantidas.join(", ")
+                      : "—"}
                   </td>
                   <td className="px-4 py-2.5">
-                    <Badge variante={item.categoria === "finalizado" ? "sucesso" : "aviso"}>
-                      {item.categoria === "finalizado" ? "Finalizado" : item.motivo}
+                    <Badge variante={_VARIANTE_CLASSIFICACAO[classificacao]}>
+                      {_ROTULO_CLASSIFICACAO[classificacao]}
                     </Badge>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-400">
+                    {confirmado?.motivo ?? item.motivo ?? "—"}
                   </td>
                 </tr>
               ))}
@@ -193,7 +288,16 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
     );
   }
 
-  const alvoFinalizacao = itensParaFinalizar();
+  // --- Tela de análise ---------------------------------------------------
+
+  const todosOsItens = itens ?? [];
+  const jaConfirmados = todosOsItens.filter((item) => item.status === "ja_finalizado");
+  const restantes = itensRestantes();
+  const restantesSemAlerta = restantes.filter((item) => (item.avaliacao?.alertas.length ?? 0) === 0);
+  const restantesComAlerta = restantes.filter((item) => (item.avaliacao?.alertas.length ?? 0) > 0);
+  const naoLocalizados = todosOsItens.filter(
+    (item) => item.status !== "pronto" && item.status !== "ja_finalizado",
+  );
 
   return (
     <div className="mx-auto max-w-4xl animate-entrada-conteudo px-6 py-14 md:px-10">
@@ -252,9 +356,30 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
 
       {itens && (
         <div className="mt-10 animate-entrada-conteudo">
-          <h3 className={TIPOGRAFIA.subtitulo}>
-            {itens.length} processo(s) analisado(s) — {alvoFinalizacao.length} pronto(s) para finalizar
-          </h3>
+          <h3 className={TIPOGRAFIA.subtitulo}>{itens.length} processo(s) analisado(s)</h3>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge variante="info">✓ {jaConfirmados.length} já confirmado(s) na Planilha Oficial</Badge>
+            <Badge variante="sucesso">✓ {restantesSemAlerta.length} pronto(s) para confirmação</Badge>
+            {restantesComAlerta.length > 0 && (
+              <Badge variante="aviso">⚠ {restantesComAlerta.length} localizado(s) com alertas</Badge>
+            )}
+            <Badge variante="erro">✕ {naoLocalizados.length} não localizado(s)</Badge>
+          </div>
+
+          {jaConfirmados.length > 0 && (
+            <div className="mt-4">
+              <Alerta variante="info">
+                {jaConfirmados.length} processo(s) deste lote já estão confirmados na Planilha Oficial.
+                Você pode prosseguir com a finalização dos processos restantes.
+              </Alerta>
+            </div>
+          )}
+
+          {restantesComAlerta.length > 0 && (
+            <div className="mt-4">
+              <Alerta variante="aviso">{_MENSAGEM_ALERTAS_INFORMATIVOS}</Alerta>
+            </div>
+          )}
 
           <div className={`mt-4 overflow-hidden ${SUPERFICIE_BASE}`}>
             <table className="w-full text-left text-sm">
@@ -262,10 +387,8 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Arquivo</th>
                   <th className="px-4 py-2.5 font-medium">SEI</th>
-                  <th className="px-4 py-2.5 font-medium">Confirmação</th>
-                  <th className="px-4 py-2.5 font-medium">Comprovante</th>
-                  <th className="px-4 py-2.5 font-medium">OB</th>
                   <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Alertas</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
@@ -274,23 +397,24 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
                     <tr>
                       <td className="px-4 py-2.5 text-slate-300">{item.arquivo_origem}</td>
                       <td className="px-4 py-2.5 text-slate-300">{item.sei ?? "—"}</td>
-                      <td className="px-4 py-2.5 text-slate-300">
-                        {item.avaliacao ? (item.avaliacao.confirmacao_valida ? "Sim" : "Não") : "—"}
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-300">
-                        {item.avaliacao ? (item.avaliacao.comprovante_encontrado ? "Sim" : "Não") : "—"}
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-500">
-                        {item.avaliacao ? (item.avaliacao.ordem_bancaria_encontrada ? "Sim" : "Não") : "—"}
-                        <span className="ml-1 text-[10px] uppercase tracking-wide">(informativo)</span>
-                      </td>
                       <td className="px-4 py-2.5">
                         <Badge variante={_VARIANTE_STATUS[item.status]}>{_ROTULO_STATUS[item.status]}</Badge>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400">
+                        {item.avaliacao && item.avaliacao.alertas.length > 0 ? (
+                          <ul className="flex flex-col gap-0.5">
+                            {item.avaliacao.alertas.map((alerta) => (
+                              <li key={alerta}>⚠ {alerta}</li>
+                            ))}
+                          </ul>
+                        ) : (
+                          item.motivo ?? "—"
+                        )}
                       </td>
                     </tr>
                     {item.candidatos.length > 1 && (
                       <tr>
-                        <td colSpan={6} className="bg-white/[0.02] px-4 py-3">
+                        <td colSpan={4} className="bg-white/[0.02] px-4 py-3">
                           <p className={TIPOGRAFIA.textoAuxiliar}>
                             {item.candidatos.length} registros vinculados a este SEI serão finalizados
                             juntos (ex.: diária original + Complemento de Diárias):
@@ -327,15 +451,26 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
             <Botao
               variante="primaria"
               tamanho="grande"
-              onClick={finalizar}
-              disabled={alvoFinalizacao.length === 0 || algumaOperacaoEmAndamento}
+              onClick={pedirConfirmacao}
+              disabled={restantes.length === 0 || algumaOperacaoEmAndamento}
               carregando={confirmando}
             >
               {!confirmando && <CheckCircle2 aria-hidden="true" className="h-5 w-5" />}
-              {confirmando ? "Finalizando..." : `Finalizar ${alvoFinalizacao.length} processo(s)`}
+              {confirmando ? "Finalizando..." : `Finalizar ${restantes.length} processo(s) restante(s)`}
             </Botao>
           </div>
         </div>
+      )}
+
+      {dialogoConfirmacaoAberto && (
+        <DialogoConfirmacao
+          titulo="Confirmar finalização"
+          mensagem={`Você está prestes a finalizar ${restantes.length} processo(s) localizado(s) na Planilha Oficial.\n\nOs alertas apresentados são informativos e não impedem a finalização.\n\nDeseja continuar?`}
+          rotuloConfirmar="Confirmar finalização"
+          rotuloCancelar="Cancelar"
+          onConfirmar={confirmarFinalizacaoDoLote}
+          onCancelar={() => setDialogoConfirmacaoAberto(false)}
+        />
       )}
     </div>
   );

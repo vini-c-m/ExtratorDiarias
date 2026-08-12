@@ -48,8 +48,11 @@ def analisar(requisicao: RequisicaoAnaliseFinalizacao) -> RespostaAnaliseFinaliz
                         confirmacao_encontrada=item.avaliacao.confirmacao_encontrada,
                         confirmacao_valida=item.avaliacao.confirmacao_valida,
                         comprovante_encontrado=item.avaliacao.comprovante_encontrado,
+                        situacao_comprovante=item.avaliacao.situacao_comprovante.value,
                         ordem_bancaria_encontrada=item.avaliacao.ordem_bancaria_encontrada,
                         apto=item.avaliacao.apto,
+                        pendente_analitico=item.avaliacao.pendente_analitico,
+                        alertas=list(item.avaliacao.alertas),
                     )
                     if item.avaliacao
                     else None
@@ -91,6 +94,7 @@ def confirmar_rota(requisicao: RequisicaoConfirmacaoFinalizacao) -> RespostaConf
 
     return RespostaConfirmacaoFinalizacao(
         total_finalizado=resultado.total_finalizado,
+        total_ja_confirmado=resultado.total_ja_confirmado,
         total_ignorado=resultado.total_ignorado,
         sincronizacao_analitica_falhou=resultado.sincronizacao_analitica_falhou,
         itens=[

@@ -24,8 +24,9 @@ import type {
   ModoConferencia,
   OpcoesCadastroServidorResposta,
   RequisicaoCadastroServidor,
-  RespostaCadastroServidor,
   ResultadoConferencia,
+  ResultadoValorDiaria,
+  RespostaCadastroServidor,
 } from "../types/conferencia";
 import type {
   ItemParaConfirmar,
@@ -38,6 +39,11 @@ import type {
   Processo,
   ResultadoPreenchimento,
 } from "../types/processamento";
+import type {
+  DetalheProcessoAguardandoDH,
+  ListaProcessosAguardandoDH,
+  ResultadoRegistroDH,
+} from "../types/regularizacaoDh";
 
 export const BACKEND_URL = "http://127.0.0.1:8756";
 
@@ -303,13 +309,20 @@ export async function gerarHistorico(
 /** GERAR HISTÓRICO DE COMPLEMENTO (RN-14/RN-16) — mesmo modelo institucional
  * do histórico normal (RN-13); só a quantidade de diária parcial varia (0
  * por padrão institucional, já que a Central não lê o texto do processo).
- * Central de Conferência continua só consultiva: nunca grava nada. */
+ * Central de Conferência continua só consultiva: nunca grava nada.
+ *
+ * `quantidadeDiariaParcial` (P1, Sprint pré-build 2026-08-11) — opcional;
+ * omitido (equivalente a não enviar o campo) preserva 100% o comportamento
+ * atual (padrão institucional 0 aplicado no backend). Só é enviado quando o
+ * usuário marca explicitamente que a simulação representa uma parcial
+ * isolada (ver `pages/Conferencia.tsx`). */
 export async function gerarHistoricoComplemento(
   cpf: string,
   periodoInicial: string,
   periodoFinal: string,
   sei: string,
   destino: string,
+  quantidadeDiariaParcial?: number,
 ): Promise<string> {
   const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/historico-complemento`, {
     method: "POST",
@@ -320,6 +333,9 @@ export async function gerarHistoricoComplemento(
       periodo_final: periodoFinal,
       sei,
       destino,
+      ...(quantidadeDiariaParcial !== undefined
+        ? { quantidade_diaria_parcial: quantidadeDiariaParcial }
+        : {}),
     }),
   });
 
@@ -333,6 +349,54 @@ export async function gerarHistoricoComplemento(
 
   const dados: { texto: string } = await resposta.json();
   return dados.texto;
+}
+
+/** Micro-sprint A ("Valor Automático da Diária na Central de Conferência")
+ * — RN-05, homologada por auditoria financeira real (2026-08-12). Endpoint
+ * independente de `gerarHistorico`/`gerarHistoricoComplemento` de propósito:
+ * uma falha de leitura da Tabela Valores (503) nunca deve impedir o
+ * Histórico e-Fisco de ser exibido normalmente — os dois nunca são
+ * combinados numa única chamada.
+ *
+ * `ufConfirmada` (RN de segurança) — só enviado depois que o servidor
+ * confirma manualmente a UF, num retorno anterior `"uf_nao_resolvida"`/
+ * `"uf_fora_da_tabela"`; nunca uma escolha automática do sistema. */
+export async function calcularValorDiaria(
+  cpf: string,
+  periodoInicial: string,
+  periodoFinal: string,
+  destino: string,
+  opcoes?: {
+    ufConfirmada?: string;
+    modo?: ModoConferencia;
+    quantidadeDiariaParcial?: number;
+  },
+): Promise<ResultadoValorDiaria> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/valor`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      cpf,
+      periodo_inicial: periodoInicial,
+      periodo_final: periodoFinal,
+      destino,
+      uf_confirmada: opcoes?.ufConfirmada ?? null,
+      modo: opcoes?.modo ?? "PADRAO",
+      ...(opcoes?.quantidadeDiariaParcial !== undefined
+        ? { quantidade_diaria_parcial: opcoes.quantidadeDiariaParcial }
+        : {}),
+    }),
+  });
+
+  if (resposta.status === 503) {
+    throw new ErroConferenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
 }
 
 /** Continuidade Processual (RN-15) — só encontra e explica candidatos a
@@ -747,6 +811,71 @@ export async function obterDocumentosHabeisPendentes(
     `${BACKEND_URL}/api/v1/analitica/documentos-habeis-pendentes${construirQueryString(parametros)}`,
   );
 
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint B ("Central de Regularização de DH", SOMENTE LEITURA) —
+ * `GET /regularizacao-dh`, sempre sobre o recorte inteiro (nenhum filtro:
+ * mesma base de comparação usada pelo teste de invariante desta Central
+ * contra `obterDocumentosHabeisPendentes` acima — mesma fonte homologada,
+ * nunca uma segunda regra). Reaproveita `ErroAnaliticaIndisponivel`: é a
+ * mesma condição técnica (Base Local em SQLite indisponível). */
+export async function listarProcessosAguardandoDH(): Promise<ListaProcessosAguardandoDH> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/regularizacao-dh`);
+
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** `GET /regularizacao-dh/{sei}` — mesmo tratamento de 404 já usado por
+ * `detalharDiaria` (reaproveita `DiariaNaoEncontradaError`, mesma
+ * semântica: SEI sem registro correspondente). */
+export async function detalharProcessoAguardandoDH(sei: string): Promise<DetalheProcessoAguardandoDH> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/regularizacao-dh/${sei}`);
+
+  if (resposta.status === 404) {
+    throw new DiariaNaoEncontradaError(sei);
+  }
+  if (resposta.status === 503) {
+    throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint D ("Escrita Exclusiva do DH") — única chamada de escrita
+ * desta Central. `situacao` diferente de `"concluido"` NUNCA lança (é
+ * sempre um resultado de negócio, tratado pela UI); só falhas técnicas
+ * genuínas (404/503/422) viram exceção, mesmo padrão de toda a API. */
+export async function registrarDH(sei: string, dh: string): Promise<ResultadoRegistroDH> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/regularizacao-dh/${sei}/dh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dh }),
+  });
+
+  if (resposta.status === 404) {
+    throw new DiariaNaoEncontradaError(sei);
+  }
   if (resposta.status === 503) {
     throw new ErroAnaliticaIndisponivel();
   }

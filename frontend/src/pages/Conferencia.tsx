@@ -10,12 +10,13 @@ import { SUPERFICIE_BASE } from "../theme/estilos";
 import { mensagemAmigavel } from "../lib/mensagens";
 import {
   buscarCandidatosComplemento,
+  calcularValorDiaria,
   conferir,
   gerarHistorico,
   gerarHistoricoComplemento,
 } from "../services/api";
 import { TIPOGRAFIA } from "../theme/tipografia";
-import type { CandidatoDiariaOriginal, ResultadoConferencia } from "../types/conferencia";
+import type { CandidatoDiariaOriginal, ResultadoConferencia, ResultadoValorDiaria } from "../types/conferencia";
 import type { EstadoConfiguracao } from "../types/configuracao";
 
 interface Props {
@@ -81,6 +82,21 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
   const [carregandoHistorico, setCarregandoHistorico] = useState(false);
   const [historico, setHistorico] = useState<string | null>(null);
   const [erroHistorico, setErroHistorico] = useState<string | null>(null);
+  // P1 (Sprint pré-build, 2026-08-11) — só usado no modo Complemento; nunca
+  // lido pelo fluxo Padrão (RN-04 continua sempre 1, intocado).
+  const [parcialIsolada, setParcialIsolada] = useState(false);
+
+  // Micro-sprint A ("Valor Automático da Diária na Central de Conferência")
+  // — sempre acionado junto com `gerarHistoricoClique` (mesmo botão), mas
+  // como uma chamada independente: uma falha aqui nunca apaga/impede o
+  // Histórico já gerado (endpoints separados no backend, de propósito).
+  const [valorResultado, setValorResultado] = useState<ResultadoValorDiaria | null>(null);
+  const [carregandoValor, setCarregandoValor] = useState(false);
+  const [erroValor, setErroValor] = useState<string | null>(null);
+  // UF que o servidor confirma manualmente quando a resolução automática
+  // não tem confiança suficiente (`"uf_nao_resolvida"`/`"uf_fora_da_tabela"`)
+  // — decisão humana explícita, nunca uma escolha automática do sistema.
+  const [ufSelecionada, setUfSelecionada] = useState("");
 
   const [candidatos, setCandidatos] = useState<CandidatoDiariaOriginal[]>([]);
   const [carregandoCandidatos, setCarregandoCandidatos] = useState(false);
@@ -92,6 +108,11 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
     setErroHistorico(null);
     setProsseguirMesmoAssim(false);
     setCandidatos([]);
+    setParcialIsolada(false);
+    setValorResultado(null);
+    setCarregandoValor(false);
+    setErroValor(null);
+    setUfSelecionada("");
   }
 
   function alternarModoComplemento() {
@@ -169,10 +190,21 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
 
     setCarregandoHistorico(true);
     setErroHistorico(null);
+    // Micro-sprint A — disparada em paralelo, aqui no início (não aguardada,
+    // não encadeada): endpoint independente do Histórico, uma falha
+    // financeira nunca afeta o que é gerado/exibido dele.
+    calcularValorClique();
 
     try {
       const texto = modoComplemento
-        ? await gerarHistoricoComplemento(cpf, periodoInicial, periodoFinal, sei, destino)
+        ? await gerarHistoricoComplemento(
+            cpf,
+            periodoInicial,
+            periodoFinal,
+            sei,
+            destino,
+            parcialIsolada ? 1 : undefined,
+          )
         : await gerarHistorico(cpf, periodoInicial, periodoFinal, sei, destino);
       setHistorico(texto);
     } catch (erro) {
@@ -180,6 +212,31 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
     } finally {
       setCarregandoHistorico(false);
     }
+  }
+
+  async function calcularValorClique(ufConfirmada?: string) {
+    setCarregandoValor(true);
+    setErroValor(null);
+    if (!ufConfirmada) setValorResultado(null);
+
+    try {
+      const resultadoValor = await calcularValorDiaria(cpf, periodoInicial, periodoFinal, destino, {
+        ufConfirmada,
+        modo: modoComplemento ? "COMPLEMENTO" : "PADRAO",
+        quantidadeDiariaParcial: modoComplemento && parcialIsolada ? 1 : undefined,
+      });
+      setValorResultado(resultadoValor);
+      if (resultadoValor.situacao === "calculado") setUfSelecionada("");
+    } catch (erro) {
+      setErroValor(mensagemAmigavel(erro, "Não foi possível calcular o valor da diária."));
+    } finally {
+      setCarregandoValor(false);
+    }
+  }
+
+  function confirmarUfClique() {
+    if (!ufSelecionada) return;
+    calcularValorClique(ufSelecionada);
   }
 
   const banner = resultado ? VEREDITO_BANNER[resultado.veredito] : null;
@@ -324,6 +381,14 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
               onGerar={gerarHistoricoClique}
               titulo={modoComplemento ? "Gerar Histórico de Complemento" : undefined}
               tituloResultado={modoComplemento ? "Histórico de Complemento para o e-Fisco" : undefined}
+              parcialIsolada={modoComplemento ? parcialIsolada : undefined}
+              onMudarParcialIsolada={modoComplemento ? setParcialIsolada : undefined}
+              valor={valorResultado}
+              carregandoValor={carregandoValor}
+              erroValor={erroValor}
+              ufSelecionada={ufSelecionada}
+              onMudarUfSelecionada={setUfSelecionada}
+              onConfirmarUf={confirmarUfClique}
             />
           )}
         </div>

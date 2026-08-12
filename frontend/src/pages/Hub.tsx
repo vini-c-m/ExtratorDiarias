@@ -1,4 +1,4 @@
-import { BarChart3, FileSpreadsheet, ListChecks } from "lucide-react";
+import { BarChart3, ClipboardCheck, FileSpreadsheet, ListChecks } from "lucide-react";
 import AlertaGlobalDocumentosHabeis from "../components/hub/AlertaGlobalDocumentosHabeis";
 import CardFuncionalidade from "../components/hub/CardFuncionalidade";
 import Alerta from "../components/ui/Alerta";
@@ -13,6 +13,8 @@ interface Props {
   // Alerta global de Documentos Hábeis Pendentes — mesmo destino de
   // `aoSelecionarAnalitica`, mas já abrindo direto na lista de pendências.
   aoAbrirDocumentosHabeisPendentes: () => void;
+  // Micro-sprint B — quarta central, entrada própria como as demais.
+  aoSelecionarRegularizacaoDH: () => void;
 }
 
 // Sprint 14 — Hub de funcionalidades: segunda tela do fluxo (Boas-vindas →
@@ -36,6 +38,7 @@ export default function Hub({
   aoSelecionarConferencia,
   aoSelecionarAnalitica,
   aoAbrirDocumentosHabeisPendentes,
+  aoSelecionarRegularizacaoDH,
 }: Props) {
   const funcionalidades = [
     {
@@ -66,6 +69,16 @@ export default function Hub({
       icone: BarChart3,
       cor: "azul" as const,
       aoClicar: aoSelecionarAnalitica,
+    },
+    {
+      // Micro-sprint B — quarta central: localiza, lista e apresenta o
+      // detalhe de diárias já cadastradas aguardando Documento Hábil
+      // (somente leitura nesta Sprint).
+      titulo: "Central de Regularização de DH",
+      descricao: "Consulte os processos já cadastrados que estão aguardando Documento Hábil.",
+      icone: ClipboardCheck,
+      cor: "verde" as const,
+      aoClicar: aoSelecionarRegularizacaoDH,
     },
   ];
 

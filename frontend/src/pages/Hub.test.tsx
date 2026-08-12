@@ -18,6 +18,7 @@ describe("Hub", () => {
         aoSelecionarConferencia={vi.fn()}
         aoSelecionarAnalitica={vi.fn()}
         aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
       />,
     );
 
@@ -29,6 +30,30 @@ describe("Hub", () => {
 
     expect(screen.getByText("Central Analítica")).toBeInTheDocument();
     expect(screen.getByText(/Pesquise, filtre e analise diárias/)).toBeInTheDocument();
+
+    expect(screen.getByText("Central de Regularização de DH")).toBeInTheDocument();
+    expect(screen.getByText(/Consulte os processos já cadastrados/)).toBeInTheDocument();
+  });
+
+  it("clicar no card da Central de Regularização de DH aciona só aoSelecionarRegularizacaoDH", async () => {
+    const usuario = userEvent.setup();
+    const aoSelecionarRegularizacaoDH = vi.fn();
+    const aoSelecionarAnalitica = vi.fn();
+    render(
+      <Hub
+        backendOnline
+        aoSelecionarProcessamento={vi.fn()}
+        aoSelecionarConferencia={vi.fn()}
+        aoSelecionarAnalitica={aoSelecionarAnalitica}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={aoSelecionarRegularizacaoDH}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: /Central de Regularização de DH/ }));
+
+    expect(aoSelecionarRegularizacaoDH).toHaveBeenCalledTimes(1);
+    expect(aoSelecionarAnalitica).not.toHaveBeenCalled();
   });
 
   it("clicar no card de Processamento aciona só aoSelecionarProcessamento", async () => {
@@ -43,6 +68,7 @@ describe("Hub", () => {
         aoSelecionarConferencia={aoSelecionarConferencia}
         aoSelecionarAnalitica={aoSelecionarAnalitica}
         aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
       />,
     );
 
@@ -65,6 +91,7 @@ describe("Hub", () => {
         aoSelecionarConferencia={aoSelecionarConferencia}
         aoSelecionarAnalitica={aoSelecionarAnalitica}
         aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
       />,
     );
 
@@ -87,6 +114,7 @@ describe("Hub", () => {
         aoSelecionarConferencia={aoSelecionarConferencia}
         aoSelecionarAnalitica={aoSelecionarAnalitica}
         aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
       />,
     );
 
@@ -107,6 +135,7 @@ describe("Hub", () => {
         aoSelecionarConferencia={vi.fn()}
         aoSelecionarAnalitica={vi.fn()}
         aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
       />,
     );
 
@@ -124,6 +153,7 @@ describe("Hub", () => {
         aoSelecionarConferencia={vi.fn()}
         aoSelecionarAnalitica={vi.fn()}
         aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
       />,
     );
 

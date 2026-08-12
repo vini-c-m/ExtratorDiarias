@@ -361,6 +361,38 @@ describe("CentralAnalitica", () => {
         screen.queryByRole("row", { name: `Ver detalhes do processo ${RESULTADO_COM_ITENS.itens[0].sei}` }),
       ).not.toBeInTheDocument();
     });
+
+    // Micro-sprint B ("Central de Regularização de DH") — item 4 do
+    // pedido: o clique apenas navega, nunca recria a consulta (nenhuma
+    // chamada nova a `obterDocumentosHabeisPendentes` é esperada aqui).
+    it("Micro-sprint B — sem a prop de navegação, nenhum link para a Central de Regularização de DH aparece", async () => {
+      const usuario = userEvent.setup();
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      render(<CentralAnalitica backendOnline />);
+      await usuario.click(await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ }));
+
+      expect(
+        screen.queryByRole("button", { name: /Ir para a Central de Regularização de DH/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("Micro-sprint B — com a prop de navegação, o botão aparece e só navega (não recria a consulta)", async () => {
+      const usuario = userEvent.setup();
+      obterDocumentosHabeisPendentesMock.mockResolvedValue(DOCUMENTOS_HABEIS_PENDENTES_COM_REGISTRO);
+      const aoIrParaCentralRegularizacaoDH = vi.fn();
+      render(
+        <CentralAnalitica backendOnline aoIrParaCentralRegularizacaoDH={aoIrParaCentralRegularizacaoDH} />,
+      );
+      await usuario.click(await screen.findByRole("button", { name: /1 Documento Hábil Pendente/ }));
+      const chamadasAntes = obterDocumentosHabeisPendentesMock.mock.calls.length;
+
+      await usuario.click(
+        screen.getByRole("button", { name: /Ir para a Central de Regularização de DH/ }),
+      );
+
+      expect(aoIrParaCentralRegularizacaoDH).toHaveBeenCalledTimes(1);
+      expect(obterDocumentosHabeisPendentesMock.mock.calls.length).toBe(chamadasAntes);
+    });
   });
 
   // Correção de foco — "Ver detalhes" de Documentos Hábeis Pendentes abre o

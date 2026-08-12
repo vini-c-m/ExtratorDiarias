@@ -58,20 +58,39 @@ vi.mock("../services/api", async (importarOriginal) => {
     gerarHistorico: vi.fn(),
     gerarHistoricoComplemento: vi.fn(),
     buscarCandidatosComplemento: vi.fn(),
+    calcularValorDiaria: vi.fn(),
   };
 });
 
 import {
   buscarCandidatosComplemento,
+  calcularValorDiaria,
   conferir,
   gerarHistorico,
   gerarHistoricoComplemento,
 } from "../services/api";
+import type { ResultadoValorDiaria } from "../types/conferencia";
 
 const conferirMock = vi.mocked(conferir);
 const gerarHistoricoMock = vi.mocked(gerarHistorico);
 const gerarHistoricoComplementoMock = vi.mocked(gerarHistoricoComplemento);
 const buscarCandidatosComplementoMock = vi.mocked(buscarCandidatosComplemento);
+const calcularValorDiariaMock = vi.mocked(calcularValorDiaria);
+
+// Micro-sprint A ("Valor Automático da Diária") — resultado padrão usado
+// pelos testes já existentes (que não testam o Valor em si): sempre
+// "calculado", nunca dispara loading/erro/confirmação de UF nos testes que
+// não esperam por isso.
+const VALOR_CALCULADO_PADRAO: ResultadoValorDiaria = {
+  situacao: "calculado",
+  categoria_funcional: "SERVIDOR",
+  uf_destino: "PERNAMBUCO",
+  valor_integral: "308.19",
+  valor_parcial: "154.09",
+  valor_total: "462.28",
+  motivo: null,
+  ufs_disponiveis: null,
+};
 
 const RESULTADO_APTO: ResultadoConferencia = {
   veredito: "APTO_PARA_PROCESSAMENTO",
@@ -160,8 +179,10 @@ beforeEach(() => {
     salvarRelatorio: vi.fn(),
     copiarHistorico: vi.fn(),
     selecionarPlanilhaOficial: vi.fn(),
+    copiarTexto: vi.fn(),
   };
   buscarCandidatosComplementoMock.mockResolvedValue([]);
+  calcularValorDiariaMock.mockResolvedValue(VALOR_CALCULADO_PADRAO);
 });
 
 async function preencherEConferir(usuario: ReturnType<typeof userEvent.setup>) {
@@ -443,8 +464,53 @@ describe("Conferencia — Modo Complemento de Diárias (RN-14)", () => {
       "2026-07-23",
       "19.20.0001.0004758/2026-36",
       "Recife",
+      // P1 (Sprint pré-build, 2026-08-11) — checkbox "parcial isolada"
+      // desmarcado por padrão: undefined preserva o padrão institucional
+      // (0) aplicado no backend.
+      undefined,
     );
     expect(gerarHistoricoMock).not.toHaveBeenCalled();
+  });
+
+  it("P1 — marcar 'parcial isolada' envia quantidade_diaria_parcial=1 ao gerar o histórico de Complemento", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO_COMPLEMENTO);
+    gerarHistoricoComplementoMock.mockResolvedValue("...UMA PARCIAL, DEST. RECIFE...");
+
+    render(<Conferencia backendOnline />);
+    await usuario.click(screen.getByRole("button", { name: "Modo Complemento de Diárias" }));
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico de Complemento");
+
+    await usuario.type(screen.getByLabelText("Número do SEI"), "19.20.0001.0004758/2026-36");
+    await usuario.type(screen.getByLabelText("Destino"), "Recife");
+    await usuario.click(
+      screen.getByLabelText("Esta simulação representa uma parcial isolada (sem diária integral)"),
+    );
+    await usuario.click(screen.getByRole("button", { name: "Gerar Histórico" }));
+
+    await screen.findByText("...UMA PARCIAL, DEST. RECIFE...");
+    expect(gerarHistoricoComplementoMock).toHaveBeenCalledWith(
+      "12345678901",
+      "2026-07-21",
+      "2026-07-23",
+      "19.20.0001.0004758/2026-36",
+      "Recife",
+      1,
+    );
+  });
+
+  it("P1 — o checkbox de parcial isolada nunca aparece no fluxo Padrão", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO);
+
+    render(<Conferencia backendOnline />);
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico para o e-Fisco");
+
+    expect(
+      screen.queryByLabelText("Esta simulação representa uma parcial isolada (sem diária integral)"),
+    ).not.toBeInTheDocument();
   });
 
   it("desativar o modo Complemento volta ao fluxo Padrão normalmente", async () => {
@@ -580,5 +646,167 @@ describe("Conferencia — Cadastro de Servidor/Membro (wiring com ChecklistConfe
 
     expect(screen.queryByText(/Modal de cadastro/)).not.toBeInTheDocument();
     expect(conferirMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+async function gerarHistoricoAte(usuario: ReturnType<typeof userEvent.setup>, textoEsperado: string) {
+  conferirMock.mockResolvedValue(RESULTADO_APTO);
+  gerarHistoricoMock.mockResolvedValue(textoEsperado);
+
+  render(<Conferencia backendOnline />);
+  await preencherEConferir(usuario);
+  await screen.findByText("Gerar Histórico para o e-Fisco");
+
+  await usuario.type(screen.getByLabelText("Número do SEI"), "19.20.0000.0000000/2026-00");
+  await usuario.type(screen.getByLabelText("Destino"), "Garanhuns");
+  await usuario.click(screen.getByRole("button", { name: "Gerar Histórico" }));
+
+  await screen.findByText(textoEsperado);
+}
+
+describe("Conferencia — Valor Automático da Diária (Micro-sprint A)", () => {
+  it("exibe o valor calculado formatado (vírgula, sem 'R$') junto do Histórico", async () => {
+    const usuario = userEvent.setup();
+    await gerarHistoricoAte(usuario, "TEXTO DO HISTORICO");
+
+    expect(await screen.findByText("462,28")).toBeInTheDocument();
+    expect(calcularValorDiariaMock).toHaveBeenCalledWith(
+      "12345678901",
+      "2026-07-21",
+      "2026-07-23",
+      "Garanhuns",
+      { ufConfirmada: undefined, modo: "PADRAO", quantidadeDiariaParcial: undefined },
+    );
+  });
+
+  it("botão 'Copiar Valor' copia só o número via window.api.copiarTexto, nunca 'R$' nem rótulo", async () => {
+    const usuario = userEvent.setup();
+    await gerarHistoricoAte(usuario, "TEXTO DO HISTORICO");
+    await screen.findByText("462,28");
+
+    await usuario.click(screen.getByRole("button", { name: /Copiar Valor/ }));
+
+    expect(window.api.copiarTexto).toHaveBeenCalledWith("462,28");
+  });
+
+  it("falha ao calcular o valor NUNCA apaga/impede o Histórico já gerado", async () => {
+    const usuario = userEvent.setup();
+    // `mensagemAmigavel` usa `erro.message` quando não bate com nenhum
+    // padrão técnico conhecido (ver `lib/mensagens.ts`) — texto arbitrário
+    // aqui só para provar que ele chega até a tela, nunca some.
+    calcularValorDiariaMock.mockRejectedValue(new Error("falha de rede"));
+
+    await gerarHistoricoAte(usuario, "TEXTO DO HISTORICO PRESERVADO");
+
+    expect(screen.getByText("TEXTO DO HISTORICO PRESERVADO")).toBeInTheDocument();
+    expect(await screen.findByText("falha de rede")).toBeInTheDocument();
+  });
+
+  it("Membro: mostra que o valor automático não está disponível, sem caixa de valor", async () => {
+    const usuario = userEvent.setup();
+    calcularValorDiariaMock.mockResolvedValue({
+      situacao: "indisponivel_para_categoria",
+      categoria_funcional: "MEMBRO",
+      uf_destino: null,
+      valor_integral: null,
+      valor_parcial: null,
+      valor_total: null,
+      motivo: "Valor automático disponível apenas para diárias de Servidor nesta consulta.",
+      ufs_disponiveis: null,
+    });
+
+    await gerarHistoricoAte(usuario, "TEXTO DO HISTORICO");
+
+    expect(
+      await screen.findByText(/Valor automático disponível apenas para diárias de Servidor/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Copiar Valor/ })).not.toBeInTheDocument();
+  });
+
+  it("UF ambígua/não resolvida oferece decisão humana — nunca escolhe silenciosamente", async () => {
+    const usuario = userEvent.setup();
+    calcularValorDiariaMock.mockResolvedValue({
+      situacao: "uf_nao_resolvida",
+      categoria_funcional: "SERVIDOR",
+      uf_destino: null,
+      valor_integral: null,
+      valor_parcial: null,
+      valor_total: null,
+      motivo: "Cidade de destino existe em mais de um estado.",
+      ufs_disponiveis: ["ACRE", "MATO GROSSO"],
+    });
+
+    await gerarHistoricoAte(usuario, "TEXTO DO HISTORICO");
+
+    expect(
+      await screen.findByText(/Não foi possível determinar com segurança a UF de destino/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Confirme a UF de destino" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Copiar Valor/ })).not.toBeInTheDocument();
+  });
+
+  it("após confirmar a UF manualmente, recalcula e mostra o valor", async () => {
+    const usuario = userEvent.setup();
+    calcularValorDiariaMock.mockResolvedValueOnce({
+      situacao: "uf_nao_resolvida",
+      categoria_funcional: "SERVIDOR",
+      uf_destino: null,
+      valor_integral: null,
+      valor_parcial: null,
+      valor_total: null,
+      motivo: "Cidade de destino existe em mais de um estado.",
+      ufs_disponiveis: ["ACRE", "MATO GROSSO"],
+    });
+
+    await gerarHistoricoAte(usuario, "TEXTO DO HISTORICO");
+    await screen.findByRole("combobox", { name: "Confirme a UF de destino" });
+
+    calcularValorDiariaMock.mockResolvedValueOnce({
+      situacao: "calculado",
+      categoria_funcional: "SERVIDOR",
+      uf_destino: "ACRE",
+      valor_integral: "539.33",
+      valor_parcial: "308.19",
+      valor_total: "847.52",
+      motivo: null,
+      ufs_disponiveis: null,
+    });
+
+    await usuario.click(screen.getByRole("combobox", { name: "Confirme a UF de destino" }));
+    await usuario.click(screen.getByRole("option", { name: "ACRE" }));
+    await usuario.click(screen.getByRole("button", { name: "Confirmar" }));
+
+    expect(await screen.findByText("847,52")).toBeInTheDocument();
+    expect(calcularValorDiariaMock).toHaveBeenLastCalledWith(
+      "12345678901",
+      "2026-07-21",
+      "2026-07-23",
+      "Garanhuns",
+      { ufConfirmada: "ACRE", modo: "PADRAO", quantidadeDiariaParcial: undefined },
+    );
+  });
+
+  it("modo Complemento envia modo=COMPLEMENTO ao calcular o valor", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO_COMPLEMENTO);
+    gerarHistoricoComplementoMock.mockResolvedValue("TEXTO (COMPLEMENTO DE DIÁRIAS).");
+
+    render(<Conferencia backendOnline />);
+    await usuario.click(screen.getByRole("button", { name: "Modo Complemento de Diárias" }));
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico de Complemento");
+
+    await usuario.type(screen.getByLabelText("Número do SEI"), "19.20.0001.0004758/2026-36");
+    await usuario.type(screen.getByLabelText("Destino"), "Recife");
+    await usuario.click(screen.getByRole("button", { name: "Gerar Histórico" }));
+
+    await screen.findByText("TEXTO (COMPLEMENTO DE DIÁRIAS).");
+    expect(calcularValorDiariaMock).toHaveBeenCalledWith(
+      "12345678901",
+      "2026-07-21",
+      "2026-07-23",
+      "Recife",
+      { ufConfirmada: undefined, modo: "COMPLEMENTO", quantidadeDiariaParcial: undefined },
+    );
   });
 });

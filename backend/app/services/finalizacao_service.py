@@ -28,20 +28,31 @@ class ErroFinalizacaoDiarias(Exception):
     pass
 
 
+# Regra de negócio definitiva (Sprint pré-build, 2026-08-11) — a decisão de
+# finalizar é do servidor do DIMCAC, não do sistema. A avaliação documental
+# (`avaliar`, em `finalizacao_diarias.py`) nunca mais decide o `status`
+# abaixo — ela só popula `ItemAnaliseFinalizacao.avaliacao.alertas`,
+# sempre informativos, nunca bloqueantes. O ÚNICO critério que decide se um
+# processo pode ser finalizado é a localização do SEI na Planilha Oficial:
+#   - SEI não extraído do PDF com segurança → SEI_NAO_EXTRAIDO (bloqueia)
+#   - SEI não encontrado na planilha → SEI_NAO_ENCONTRADO (bloqueia)
+#   - falha técnica de leitura do PDF → ERRO_LEITURA (bloqueia)
+#   - linha com valor fora do padrão em X/Y (ex. "SM") → ESTADO_PARCIAL
+#     (bloqueia — nunca sobrescreve um valor que não reconhece)
+#   - SEI localizado, alguma linha ainda precisa de X/Y → PRONTO (pode gravar)
+#   - SEI localizado, todas as linhas já X=SIM/Y=SIM → JA_FINALIZADO (NO-OP)
 class StatusFinalizacao(str, Enum):
     PRONTO = "pronto"
-    SEM_COMPROVANTE = "sem_comprovante"
-    SEM_CONFIRMACAO = "sem_confirmacao"
+    JA_FINALIZADO = "ja_finalizado"
     SEI_NAO_EXTRAIDO = "sei_nao_extraido"
     SEI_NAO_ENCONTRADO = "sei_nao_encontrado"
-    JA_FINALIZADO = "ja_finalizado"
     ESTADO_PARCIAL = "estado_parcial"
     ERRO_LEITURA = "erro_leitura"
 
 
 _MENSAGENS_LINHA = {
     StatusFinalizacao.SEI_NAO_ENCONTRADO: "SEI não localizado na Planilha Oficial.",
-    StatusFinalizacao.JA_FINALIZADO: "Já finalizado anteriormente.",
+    StatusFinalizacao.JA_FINALIZADO: "Já confirmado na Planilha Oficial.",
     StatusFinalizacao.ESTADO_PARCIAL: "Estado parcial — revisão manual necessária.",
 }
 
@@ -56,14 +67,6 @@ class ItemAnaliseFinalizacao:
     candidatos: list[CandidatoLinhaFinalizacao]
 
 
-def _status_documental(avaliacao: AvaliacaoElegibilidade) -> StatusFinalizacao:
-    if avaliacao.apto:
-        return StatusFinalizacao.PRONTO
-    if avaliacao.confirmacao_valida:
-        return StatusFinalizacao.SEM_COMPROVANTE
-    return StatusFinalizacao.SEM_CONFIRMACAO
-
-
 def _status_linha(
     candidatos: list[CandidatoLinhaFinalizacao],
 ) -> StatusFinalizacao:
@@ -72,11 +75,12 @@ def _status_linha(
     diária original + Complemento de Diárias), todas são tratadas como um
     conjunto atômico — nunca uma escolha manual de qual linha vale.
 
-    Qualquer linha em estado PARCIAL bloqueia o SEI inteiro (revisão
-    manual). Sem nenhuma PARCIAL: se TODAS já estiverem finalizadas, o SEI
-    conta como já finalizado; caso contrário (todas prontas, ou uma mistura
-    de prontas e já finalizadas) o SEI está pronto — `confirmar` grava só
-    as linhas ainda vazias, mantendo as que já eram SIM/SIM como estão."""
+    Qualquer linha em estado PARCIAL (valor fora do padrão, ex. "SM")
+    bloqueia o SEI inteiro (revisão manual — nunca sobrescrito). Sem
+    nenhuma PARCIAL: se TODAS já estiverem SIM/SIM, o SEI conta como já
+    confirmado (NO-OP); caso contrário (alguma PRONTA ou INCOMPLETA) o SEI
+    está pronto — `confirmar` grava só o que falta em cada linha, nunca
+    reescreve o que já está certo."""
     if not candidatos:
         return StatusFinalizacao.SEI_NAO_ENCONTRADO
     estados = {candidato.estado for candidato in candidatos}
@@ -88,10 +92,12 @@ def _status_linha(
 
 
 def analisar_lote(caminhos: list[str], caminho_planilha: str) -> list[ItemAnaliseFinalizacao]:
-    """Para cada PDF: extrai o SEI (mesmo parser já homologado), avalia a
-    elegibilidade documental (confirmação + comprovante) e, só quando apto,
-    localiza a(s) linha(s) candidata(s) na Planilha Oficial pelo SEI. Nunca
-    grava nada — só leitura."""
+    """Para cada PDF: extrai o SEI (mesmo parser já homologado), localiza a
+    linha na Planilha Oficial e SEMPRE roda a avaliação documental — mas
+    esta última nunca decide `status` (regra definitiva, ver comentário da
+    classe `StatusFinalizacao` acima): populam só `avaliacao.alertas`,
+    exibidos ao servidor sem nunca bloquear. Nunca grava nada — só
+    leitura."""
     if not os.path.isfile(caminho_planilha):
         raise ErroFinalizacaoDiarias(f"Planilha não encontrada: {caminho_planilha}")
 
@@ -139,19 +145,8 @@ def analisar_lote(caminhos: list[str], caminho_planilha: str) -> list[ItemAnalis
             )
             continue
 
+        # Sempre roda — nunca decide `status`, só popula alertas informativos.
         avaliacao = avaliar(texto)
-        if not avaliacao.apto:
-            itens.append(
-                ItemAnaliseFinalizacao(
-                    arquivo_origem=nome_arquivo,
-                    sei=sei,
-                    status=_status_documental(avaliacao),
-                    motivo=avaliacao.motivo,
-                    avaliacao=avaliacao,
-                    candidatos=[],
-                )
-            )
-            continue
 
         candidatos = localizar_candidatos(planilha, sei)
         status = _status_linha(candidatos)
@@ -182,6 +177,10 @@ class ItemConfirmacao:
 
 class CategoriaConfirmacao(str, Enum):
     FINALIZADO = "finalizado"
+    # Regra definitiva (Sprint pré-build, 2026-08-11) — distinto de
+    # IGNORADO: aqui o SEI foi localizado e já estava inteiramente SIM/SIM
+    # (NO-OP, nenhuma célula tocada) — nunca um bloqueio, nunca um erro.
+    JA_CONFIRMADO = "ja_confirmado"
     IGNORADO = "ignorado"
 
 
@@ -190,11 +189,11 @@ class ItemResultadoConfirmacao:
     arquivo_origem: str
     sei: str
     categoria: CategoriaConfirmacao
-    # Linhas que passaram de vazio para SIM/SIM nesta chamada.
+    # Linhas que receberam alguma escrita nesta chamada — o SIM/SIM
+    # completo (linha PRONTA) ou só a célula que faltava (linha INCOMPLETA).
     linhas_atualizadas: list[int]
     # Linhas que já estavam SIM/SIM antes desta chamada (mantidas como
-    # estão, nunca regravadas) — só populado quando o SEI foi finalizado
-    # (ou já estava inteiramente finalizado).
+    # estão, nunca regravadas).
     linhas_mantidas: list[int]
     motivo: str | None = None
 
@@ -202,6 +201,10 @@ class ItemResultadoConfirmacao:
 @dataclass(frozen=True)
 class ResultadoConfirmacao:
     total_finalizado: int
+    # Sprint pré-build, 2026-08-11 — contagem separada de "já estava
+    # SIM/SIM" (NO-OP) — nunca somado a `total_ignorado` (que continua só
+    # os bloqueios reais: SEI não localizado/estado parcial).
+    total_ja_confirmado: int
     total_ignorado: int
     itens: list[ItemResultadoConfirmacao]
     # ETAPA 3 (Auditoria P0, 2026-08-09) — mesmo princípio da ETAPA 2
@@ -213,15 +216,20 @@ class ResultadoConfirmacao:
 
 
 def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoConfirmacao:
-    """Grava X=SIM/Y=SIM em TODAS as linhas de cada SEI confirmado pelo
-    usuário — nunca uma linha isolada. Resolve as linhas do SEI de novo, no
-    momento da gravação (nunca confia só na análise anterior, que pode
-    estar desatualizada).
+    """Grava X/Y em TODAS as linhas de cada SEI confirmado pelo usuário —
+    nunca uma linha isolada. Resolve as linhas do SEI de novo, no momento
+    da gravação (nunca confia só na análise anterior, que pode estar
+    desatualizada).
 
-    Atômico por SEI (ajuste de 2026-08-07): se qualquer linha do SEI
-    estiver em estado PARCIAL, nenhuma linha daquele SEI é gravada — nunca
-    metade atualizada e metade pendente. Linhas já SIM/SIM são mantidas
-    como estão, sem erro. Um SEI bloqueado nunca impede os demais itens do
+    Regra definitiva (Sprint pré-build, 2026-08-11): alertas documentais
+    NUNCA impedem a gravação — quem chega até aqui já foi decidido pelo
+    servidor do DIMCAC (a análise só bloqueia por SEI não localizado/não
+    extraído/estado parcial, nunca por pendência documental). Por linha:
+    PRONTA grava X=SIM/Y=SIM; INCOMPLETA grava só a célula vazia, sem
+    reescrever a que já é "SIM" (`gravar_finalizacao`); JA_FINALIZADA nunca
+    é tocada. Atômico por SEI (ajuste de 2026-08-07): se qualquer linha do
+    SEI estiver em estado PARCIAL (valor fora do padrão), nenhuma linha
+    daquele SEI é gravada. Um SEI bloqueado nunca impede os demais itens do
     lote de serem gravados."""
     if not os.path.isfile(caminho_planilha):
         raise ErroFinalizacaoDiarias(f"Planilha não encontrada: {caminho_planilha}")
@@ -269,27 +277,32 @@ def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoC
             )
             continue
 
-        linhas_prontas = [
-            c.linha for c in candidatos if c.estado is EstadoLinhaFinalizacao.PRONTA
+        # PRONTA (as duas vazias) e INCOMPLETA (uma já "SIM") precisam de
+        # alguma escrita — `gravar_finalizacao` decide, célula a célula,
+        # o que já está certo e nunca reescreve.
+        linhas_a_gravar = [
+            c.linha
+            for c in candidatos
+            if c.estado in (EstadoLinhaFinalizacao.PRONTA, EstadoLinhaFinalizacao.INCOMPLETA)
         ]
         linhas_ja_finalizadas = [
             c.linha for c in candidatos if c.estado is EstadoLinhaFinalizacao.JA_FINALIZADA
         ]
 
-        if not linhas_prontas:
+        if not linhas_a_gravar:
             resultados.append(
                 ItemResultadoConfirmacao(
                     arquivo_origem=item.arquivo_origem,
                     sei=item.sei,
-                    categoria=CategoriaConfirmacao.IGNORADO,
+                    categoria=CategoriaConfirmacao.JA_CONFIRMADO,
                     linhas_atualizadas=[],
                     linhas_mantidas=linhas_ja_finalizadas,
-                    motivo="Já finalizado anteriormente.",
+                    motivo="Já confirmado na Planilha Oficial.",
                 )
             )
             continue
 
-        for linha in linhas_prontas:
+        for linha in linhas_a_gravar:
             gravar_finalizacao(planilha, linha)
         algum_gravado = True
         resultados.append(
@@ -297,7 +310,7 @@ def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoC
                 arquivo_origem=item.arquivo_origem,
                 sei=item.sei,
                 categoria=CategoriaConfirmacao.FINALIZADO,
-                linhas_atualizadas=linhas_prontas,
+                linhas_atualizadas=linhas_a_gravar,
                 linhas_mantidas=linhas_ja_finalizadas,
             )
         )
@@ -345,9 +358,11 @@ def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoC
         workbook.close()
 
     total_finalizado = sum(1 for r in resultados if r.categoria is CategoriaConfirmacao.FINALIZADO)
+    total_ja_confirmado = sum(1 for r in resultados if r.categoria is CategoriaConfirmacao.JA_CONFIRMADO)
     return ResultadoConfirmacao(
         total_finalizado=total_finalizado,
-        total_ignorado=len(resultados) - total_finalizado,
+        total_ja_confirmado=total_ja_confirmado,
+        total_ignorado=len(resultados) - total_finalizado - total_ja_confirmado,
         itens=resultados,
         sincronizacao_analitica_falhou=sincronizacao_analitica_falhou,
     )

@@ -45,9 +45,12 @@ beforeEach(() => {
   };
 });
 
-function itemPronto(sei = "19.20.0000.0000001/2026-01"): ItemAnaliseFinalizacao {
+function itemPronto(
+  sei = "19.20.0000.0000001/2026-01",
+  arquivo = "processo.pdf",
+): ItemAnaliseFinalizacao {
   return {
-    arquivo_origem: "processo.pdf",
+    arquivo_origem: arquivo,
     sei,
     status: "pronto",
     motivo: null,
@@ -55,8 +58,11 @@ function itemPronto(sei = "19.20.0000.0000001/2026-01"): ItemAnaliseFinalizacao 
       confirmacao_encontrada: true,
       confirmacao_valida: true,
       comprovante_encontrado: true,
+      situacao_comprovante: "encontrado",
       ordem_bancaria_encontrada: false,
       apto: true,
+      pendente_analitico: false,
+      alertas: [],
     },
     candidatos: [
       {
@@ -75,18 +81,83 @@ function itemPronto(sei = "19.20.0000.0000001/2026-01"): ItemAnaliseFinalizacao 
   };
 }
 
-function itemSemComprovante(): ItemAnaliseFinalizacao {
+function itemProntoComAlerta(
+  sei = "19.20.0000.0000008/2026-08",
+  arquivo = "com-alerta.pdf",
+): ItemAnaliseFinalizacao {
   return {
-    arquivo_origem: "sem-comprovante.pdf",
-    sei: "19.20.0000.0000002/2026-02",
-    status: "sem_comprovante",
-    motivo: "Confirmação encontrada, mas nenhum comprovante/anexo foi identificado.",
+    arquivo_origem: arquivo,
+    sei,
+    status: "pronto",
+    motivo: null,
     avaliacao: {
       confirmacao_encontrada: true,
       confirmacao_valida: true,
       comprovante_encontrado: false,
+      situacao_comprovante: "pendente",
       ordem_bancaria_encontrada: false,
       apto: false,
+      pendente_analitico: true,
+      alertas: ["Comprovante anexado, mas o título não permite confirmação automática — revisar manualmente."],
+    },
+    candidatos: [
+      {
+        linha: 9,
+        cpf: "99999999999",
+        periodo_inicial: "2026-01-07",
+        periodo_final: "2026-01-07",
+        trecho: "RECIFE - OLINDA",
+        dh: null,
+        aviso: null,
+        x_atual: null,
+        y_atual: null,
+        estado: "pronta",
+      },
+    ],
+  };
+}
+
+function itemJaConfirmado(
+  sei = "19.20.0000.0000004/2026-04",
+  arquivo = "ja-confirmado.pdf",
+): ItemAnaliseFinalizacao {
+  return {
+    arquivo_origem: arquivo,
+    sei,
+    status: "ja_finalizado",
+    motivo: "Já confirmado na Planilha Oficial.",
+    avaliacao: {
+      confirmacao_encontrada: true,
+      confirmacao_valida: true,
+      comprovante_encontrado: true,
+      situacao_comprovante: "encontrado",
+      ordem_bancaria_encontrada: true,
+      apto: true,
+      pendente_analitico: false,
+      alertas: [],
+    },
+    candidatos: [],
+  };
+}
+
+function itemSeiNaoEncontrado(
+  sei = "19.20.0000.0000005/2026-05",
+  arquivo = "nao-localizado.pdf",
+): ItemAnaliseFinalizacao {
+  return {
+    arquivo_origem: arquivo,
+    sei,
+    status: "sei_nao_encontrado",
+    motivo: "SEI não localizado na Planilha Oficial.",
+    avaliacao: {
+      confirmacao_encontrada: true,
+      confirmacao_valida: true,
+      comprovante_encontrado: true,
+      situacao_comprovante: "encontrado",
+      ordem_bancaria_encontrada: false,
+      apto: true,
+      pendente_analitico: false,
+      alertas: [],
     },
     candidatos: [],
   };
@@ -104,8 +175,11 @@ function itemProntoComDuasLinhas(): ItemAnaliseFinalizacao {
       confirmacao_encontrada: true,
       confirmacao_valida: true,
       comprovante_encontrado: true,
+      situacao_comprovante: "encontrado",
       ordem_bancaria_encontrada: false,
       apto: true,
+      pendente_analitico: false,
+      alertas: [],
     },
     candidatos: [
       {
@@ -150,18 +224,20 @@ describe("FinalizarDiarias", () => {
     expect(screen.getByRole("button", { name: "Analisar" })).toBeDisabled();
   });
 
-  it("analisa o lote e mostra o resumo de aptos/não aptos", async () => {
+  it("analisa o lote e mostra o resumo em 4 baldes", async () => {
     const usuario = userEvent.setup();
-    analisarMock.mockResolvedValue({ itens: [itemPronto(), itemSemComprovante()] });
+    analisarMock.mockResolvedValue({
+      itens: [itemPronto(), itemJaConfirmado(), itemSeiNaoEncontrado()],
+    });
 
     render(<FinalizarDiarias backendOnline />);
     await selecionarPdf(usuario, "processo.pdf");
     await usuario.click(screen.getByRole("button", { name: "Analisar" }));
 
-    expect(await screen.findByText(/2 processo\(s\) analisado\(s\)/)).toBeInTheDocument();
-    expect(screen.getByText(/1 pronto\(s\) para finalizar/)).toBeInTheDocument();
-    expect(screen.getByText("Pronto para finalizar")).toBeInTheDocument();
-    expect(screen.getByText("Sem comprovante/anexo")).toBeInTheDocument();
+    expect(await screen.findByText(/3 processo\(s\) analisado\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/1 já confirmado\(s\) na Planilha Oficial/)).toBeInTheDocument();
+    expect(screen.getByText(/1 pronto\(s\) para confirmação/)).toBeInTheDocument();
+    expect(screen.getByText(/1 não localizado\(s\)/)).toBeInTheDocument();
     expect(analisarMock).toHaveBeenCalledWith(["C:/pdfs/processo.pdf"]);
   });
 
@@ -190,9 +266,37 @@ describe("FinalizarDiarias", () => {
     expect(screen.getByText(/Linha 10/)).toBeInTheDocument();
     expect(screen.getByText(/Linha 25/)).toBeInTheDocument();
     expect(screen.getByText(/COMPLEMENTO DE DIÁRIAS/)).toBeInTheDocument();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
 
-    expect(screen.getByRole("button", { name: "Finalizar 1 processo(s)" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Finalizar 1 processo(s) restante(s)" })).toBeEnabled();
+  });
+
+  it("clicar em 'Finalizar' abre a confirmação antes de gravar (item 6)", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({ itens: [itemPronto()] });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "processo.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "Você está prestes a finalizar 1 processo(s) localizado(s) na Planilha Oficial.",
+    );
+    expect(confirmarMock).not.toHaveBeenCalled();
+  });
+
+  it("cancelar a confirmação não grava nada", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({ itens: [itemPronto()] });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "processo.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Cancelar" }));
+
+    expect(confirmarMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("confirma a finalização e mostra o relatório de execução", async () => {
@@ -200,6 +304,7 @@ describe("FinalizarDiarias", () => {
     analisarMock.mockResolvedValue({ itens: [itemPronto()] });
     const resultado: RespostaConfirmacaoFinalizacao = {
       total_finalizado: 1,
+      total_ja_confirmado: 0,
       total_ignorado: 0,
       itens: [
         {
@@ -217,99 +322,172 @@ describe("FinalizarDiarias", () => {
     render(<FinalizarDiarias backendOnline />);
     await selecionarPdf(usuario, "processo.pdf");
     await usuario.click(screen.getByRole("button", { name: "Analisar" }));
-    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Confirmar finalização" }));
 
     expect(await screen.findByRole("heading", { name: "Finalização concluída" })).toBeInTheDocument();
-    expect(screen.getByText("1 finalizado(s), 0 ignorado(s).")).toBeInTheDocument();
+    expect(screen.getByText("1 processo(s) analisado(s)")).toBeInTheDocument();
+    expect(screen.getByText(/1 confirmado\(s\) nesta operação/)).toBeInTheDocument();
     expect(confirmarMock).toHaveBeenCalledWith([
       { arquivo_origem: "processo.pdf", sei: "19.20.0000.0000001/2026-01" },
     ]);
   });
 
-  it("relatório final mostra linhas atualizadas e linhas mantidas separadamente", async () => {
+  it("exibe estado 'já confirmada' sem permitir regravação, nunca como erro", async () => {
     const usuario = userEvent.setup();
-    analisarMock.mockResolvedValue({ itens: [itemProntoComDuasLinhas()] });
+    analisarMock.mockResolvedValue({ itens: [itemJaConfirmado()] });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "ja-confirmado.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+
+    await screen.findByText("Já confirmada na Planilha Oficial");
+    expect(screen.getByRole("button", { name: /Finalizar 0 processo/ })).toBeDisabled();
+  });
+
+  // --- Regra definitiva (Sprint pré-build, 2026-08-11) ----------------------
+
+  it("(E) alerta documental + SEI localizado entra no lote a finalizar normalmente", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({ itens: [itemPronto(), itemProntoComAlerta()] });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "qualquer.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+
+    expect(await screen.findByText(/1 pronto\(s\) para confirmação/)).toBeInTheDocument();
+    expect(screen.getByText(/1 localizado\(s\) com alertas/)).toBeInTheDocument();
+    expect(screen.getByText(/revisar manualmente/)).toBeInTheDocument();
+    // O botão inclui os DOIS — sem alerta e com alerta — nunca separa.
+    expect(screen.getByRole("button", { name: "Finalizar 2 processo(s) restante(s)" })).toBeInTheDocument();
+  });
+
+  it("(F/G) já confirmados e não localizados ficam de fora da contagem do botão", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({
+      itens: [itemPronto(), itemJaConfirmado(), itemSeiNaoEncontrado()],
+    });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "qualquer.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+
+    // Só o "pronto" entra na contagem do botão — nem o já confirmado, nem o não localizado.
+    expect(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" })).toBeEnabled();
+  });
+
+  it("(H) 'já confirmado' aparece com o selo informativo, nunca 'erro'", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({ itens: [itemJaConfirmado()] });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "ja-confirmado.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+
+    const badge = await screen.findByText("Já confirmada na Planilha Oficial");
+    // Badge "info" (azul/ciano) — não usa a classe de variante "erro".
+    expect(badge.className).not.toMatch(/red/);
+  });
+
+  it("(I) mensagem verde aparece quando pelo menos 1 processo é confirmado nesta operação", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({ itens: [itemPronto()] });
     confirmarMock.mockResolvedValue({
       total_finalizado: 1,
+      total_ja_confirmado: 0,
       total_ignorado: 0,
       itens: [
         {
-          arquivo_origem: "duas-linhas.pdf",
-          sei: "19.20.0000.0000003/2026-03",
+          arquivo_origem: "processo.pdf",
+          sei: "19.20.0000.0000001/2026-01",
           categoria: "finalizado",
-          linhas_atualizadas: [10],
-          linhas_mantidas: [25],
+          linhas_atualizadas: [4],
+          linhas_mantidas: [],
           motivo: null,
         },
       ],
     });
 
     render(<FinalizarDiarias backendOnline />);
-    await selecionarPdf(usuario, "duas-linhas.pdf");
+    await selecionarPdf(usuario, "processo.pdf");
     await usuario.click(screen.getByRole("button", { name: "Analisar" }));
-    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Confirmar finalização" }));
 
     await screen.findByRole("heading", { name: "Finalização concluída" });
-    const linha = screen.getByText("duas-linhas.pdf").closest("tr");
-    expect(linha).toHaveTextContent("10");
-    expect(linha).toHaveTextContent("25");
+    expect(
+      screen.getByText(/DIÁRIAS CONFIRMADAS 2026/),
+    ).toBeInTheDocument();
   });
 
-  it("exibe estado 'já finalizado anteriormente' sem permitir regravação", async () => {
+  it("(J) mensagem verde NÃO aparece quando nada foi confirmado nesta operação (só já confirmados)", async () => {
     const usuario = userEvent.setup();
-    analisarMock.mockResolvedValue({
+    // Só itens já confirmados na análise -- nada "pronto" para enviar, mas
+    // simulamos o usuário confirmando um lote vazio de "restantes" via um
+    // item pronto que, na hora de gravar, já tinha sido confirmado por
+    // outra operação (revalidação no momento da gravação).
+    analisarMock.mockResolvedValue({ itens: [itemPronto()] });
+    confirmarMock.mockResolvedValue({
+      total_finalizado: 0,
+      total_ja_confirmado: 1,
+      total_ignorado: 0,
       itens: [
         {
-          arquivo_origem: "ja-feito.pdf",
-          sei: "19.20.0000.0000004/2026-04",
-          status: "ja_finalizado",
-          motivo: "Já finalizado anteriormente.",
-          avaliacao: {
-            confirmacao_encontrada: true,
-            confirmacao_valida: true,
-            comprovante_encontrado: true,
-            ordem_bancaria_encontrada: true,
-            apto: true,
-          },
-          candidatos: [],
+          arquivo_origem: "processo.pdf",
+          sei: "19.20.0000.0000001/2026-01",
+          categoria: "ja_confirmado",
+          linhas_atualizadas: [],
+          linhas_mantidas: [4],
+          motivo: "Já confirmado na Planilha Oficial.",
         },
       ],
     });
 
     render(<FinalizarDiarias backendOnline />);
-    await selecionarPdf(usuario, "ja-feito.pdf");
+    await selecionarPdf(usuario, "processo.pdf");
     await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Confirmar finalização" }));
 
-    await screen.findByText("Já finalizado anteriormente");
-    expect(screen.getByRole("button", { name: /Finalizar 0 processo/ })).toBeDisabled();
+    await screen.findByRole("heading", { name: "Finalização concluída" });
+    expect(screen.queryByText(/DIÁRIAS CONFIRMADAS 2026/)).not.toBeInTheDocument();
+    expect(screen.getByText(/1 já estava\(m\) confirmado\(s\)/)).toBeInTheDocument();
   });
 
-  it("SEI em estado parcial fica bloqueado, sem entrar no lote a finalizar", async () => {
+  it("(K) rastreabilidade: todo processo analisado aparece classificado no relatório final, nenhum some", async () => {
     const usuario = userEvent.setup();
     analisarMock.mockResolvedValue({
+      itens: [itemPronto(), itemJaConfirmado(), itemSeiNaoEncontrado()],
+    });
+    confirmarMock.mockResolvedValue({
+      total_finalizado: 1,
+      total_ja_confirmado: 0,
+      total_ignorado: 0,
       itens: [
         {
-          arquivo_origem: "parcial.pdf",
-          sei: "19.20.0000.0000005/2026-05",
-          status: "estado_parcial",
-          motivo: "Estado parcial — revisão manual necessária.",
-          avaliacao: {
-            confirmacao_encontrada: true,
-            confirmacao_valida: true,
-            comprovante_encontrado: true,
-            ordem_bancaria_encontrada: false,
-            apto: true,
-          },
-          candidatos: [],
+          arquivo_origem: "processo.pdf",
+          sei: "19.20.0000.0000001/2026-01",
+          categoria: "finalizado",
+          linhas_atualizadas: [4],
+          linhas_mantidas: [],
+          motivo: null,
         },
       ],
     });
 
     render(<FinalizarDiarias backendOnline />);
-    await selecionarPdf(usuario, "parcial.pdf");
+    await selecionarPdf(usuario, "qualquer.pdf");
     await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Confirmar finalização" }));
 
-    await screen.findByText("Estado parcial — revisão manual");
-    expect(screen.getByRole("button", { name: /Finalizar 0 processo/ })).toBeDisabled();
+    await screen.findByRole("heading", { name: "Finalização concluída" });
+    expect(screen.getByText("3 processo(s) analisado(s)")).toBeInTheDocument();
+    expect(screen.getByText("processo.pdf")).toBeInTheDocument();
+    expect(screen.getByText("ja-confirmado.pdf")).toBeInTheDocument();
+    expect(screen.getByText("nao-localizado.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/1 confirmado\(s\) nesta operação/)).toBeInTheDocument();
+    expect(screen.getByText(/1 já estava\(m\) confirmado\(s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/1 não finalizado\(s\)/)).toBeInTheDocument();
   });
 });
