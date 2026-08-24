@@ -257,6 +257,32 @@ def test_duas_obs_distintas_com_mesmo_cpf_periodo_valor_trecho_viram_revisao_agr
     assert {oc.ordem_bancaria.ob for oc in revisao.ocorrencias} == {"2026OB000001", "2026OB000002"}
 
 
+# --- Confronto 3C.1: proveniência do Controle acompanha a ocorrência mesmo
+# quando ela vai para REVISAO_NECESSARIA, não só para candidato normal -----
+
+
+def test_ocorrencias_de_uma_revisao_carregam_registros_do_controle():
+    ordens = [
+        _ordem(dh="2026DH000001", ob="2026OB000001", data_pagamento=datetime(2026, 5, 15, 9, 0, 0)),
+        _ordem(dh="2026DH000002", ob="2026OB000002", data_pagamento=datetime(2026, 5, 20, 9, 0, 0)),
+    ]
+    resultado = _resultado(
+        _documento(
+            "2026DH000001", ordens=[ordens[0]], controle=[_registro_controle(dh="2026DH000001", linha=2)]
+        ),
+        _documento(
+            "2026DH000002", ordens=[ordens[1]], controle=[_registro_controle(dh="2026DH000002", linha=3)]
+        ),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    revisao = saida.revisoes_necessarias[0]
+    por_dh = {oc.dh: oc for oc in revisao.ocorrencias}
+    assert por_dh["2026DH000001"].registros_controle[0].dh == "2026DH000001"
+    assert por_dh["2026DH000002"].registros_controle[0].dh == "2026DH000002"
+
+
 # --- 12-14. Alteração de só um campo não satisfaz RN07 --------------------
 
 

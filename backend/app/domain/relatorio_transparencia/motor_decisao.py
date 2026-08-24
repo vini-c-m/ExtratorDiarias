@@ -32,20 +32,31 @@ __all__ = [
 
 @dataclass(frozen=True)
 class OcorrenciaFinanceira:
-    """Unidade mínima de rastreabilidade usada em candidatos normais e em
-    revisões: uma OB junto do DH ao qual está associada na reconciliação."""
+    """Unidade mínima de rastreabilidade usada em candidatos normais,
+    diagnósticos e revisões: uma OB junto do DH ao qual está associada na
+    reconciliação, e a proveniência do Controle DIMCAC daquele DH
+    (`registros_controle`, pode ser vazia — DH só presente na Base OB,
+    achado real a investigar por regra futura, não por este motor).
+
+    Micro-sprint 3C.1: `registros_controle` é preenchido uma única vez, em
+    `classificar()`, e acompanha a ocorrência por qualquer caminho que ela
+    tome depois (candidato normal, diagnóstico de repetição física, ou
+    revisão) — decisão humana muda PUBLICAÇÃO, nunca PROVENIÊNCIA (achado
+    da revisão do confronto: antes desta correção, uma ocorrência que
+    passava por REVISAO_NECESSARIA perdia a referência ao Controle ao
+    virar candidata publicável)."""
 
     dh: str
     ordem_bancaria: OrdemBancaria
+    registros_controle: list[RegistroControle] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class CandidatoNormal:
     """Uma ocorrência financeira sem nenhum gatilho de revisão nesta
     competência (RN01) — publicável automaticamente. `registros_controle`
-    é a rastreabilidade até o Controle DIMCAC (pode ser vazia: DH só
-    presente na Base OB, achado real a investigar por regra futura, não
-    por este motor)."""
+    espelha `ocorrencia.registros_controle` (nunca recalculado à parte —
+    fonte única de verdade é a própria `OcorrenciaFinanceira`)."""
 
     ocorrencia: OcorrenciaFinanceira
     registros_controle: list[RegistroControle] = field(default_factory=list)
@@ -180,8 +191,11 @@ def classificar(
     `motor_reconciliacao.reconciliar`, nunca este módulo."""
     ocorrencias_por_ob: dict[str, list[OcorrenciaFinanceira]] = defaultdict(list)
     for dh, documento in resultado.documentos.items():
+        registros_controle_do_dh = list(documento.controle)
         for ordem in documento.ordens_bancarias:
-            ocorrencias_por_ob[ordem.ob].append(OcorrenciaFinanceira(dh=dh, ordem_bancaria=ordem))
+            ocorrencias_por_ob[ordem.ob].append(
+                OcorrenciaFinanceira(dh=dh, ordem_bancaria=ordem, registros_controle=registros_controle_do_dh)
+            )
 
     # I11 — repetição física do mesmo número de OB, resolvida antes de tudo.
     representantes, revisoes, diagnosticos = _resolver_repeticao_fisica(ocorrencias_por_ob)
@@ -273,10 +287,7 @@ def classificar(
         obs_em_revisao_rn07.update(numeros_ob_distintos)
 
     candidatos = [
-        CandidatoNormal(
-            ocorrencia=oc,
-            registros_controle=list(resultado.documentos[oc.dh].controle) if oc.dh in resultado.documentos else [],
-        )
+        CandidatoNormal(ocorrencia=oc, registros_controle=oc.registros_controle)
         for oc in prontas
         if oc.ordem_bancaria.ob not in obs_em_revisao_rn07
     ]
