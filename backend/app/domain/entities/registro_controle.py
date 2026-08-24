@@ -72,3 +72,8 @@ class RegistroControle:
     # adivinhado (mesma filosofia de `valor_total_diarias`/`_valor_como_numero`).
     quantidade_diaria_integral: int | None = None
     quantidade_diaria_parcial: int | None = None
+    # Micro-sprint 3G.1 — coluna G ("CARGO") do Controle DIMCAC. Fonte
+    # primária de Cargo para o Relatório de Diárias — Portal da
+    # Transparência (matriz de origem definida pelo negócio); a Base OB
+    # (`OrdemBancaria.cargo`) é só fallback quando esta estiver ausente.
+    cargo: str | None = None

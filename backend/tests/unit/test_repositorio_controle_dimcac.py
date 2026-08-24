@@ -34,6 +34,7 @@ def _escrever_linha_controle(
     valor_diarias=None,
     quantidade_integral=None,
     quantidade_parcial=None,
+    cargo=None,
 ):
     if dh is not None:
         planilha[f"A{linha}"] = dh
@@ -43,6 +44,8 @@ def _escrever_linha_controle(
         planilha[f"C{linha}"] = doc_origem
     if cpf is not None:
         planilha[f"D{linha}"] = cpf
+    if cargo is not None:
+        planilha[f"G{linha}"] = cargo
     if periodo_inicial is not None:
         planilha[f"H{linha}"] = periodo_inicial
     if periodo_final is not None:
@@ -408,6 +411,32 @@ def test_quantidade_diaria_como_texto_numerico_e_convertida():
     registro = resultado.por_dh[_DH_PADRAO][0]
     assert registro.quantidade_diaria_integral == 2
     assert registro.quantidade_diaria_parcial == 1
+
+
+# --- 14. Micro-sprint 3G.1 — Cargo (G) -------------------------------------
+# Fonte real confirmada (investigação read-only): Controle DIMCAC coluna G
+# = "CARGO", cobertura 100% nos dados reais — mesma filosofia de leitura de
+# transporte/motivo: nunca inventa, só lê e normaliza vazio para None.
+
+
+def test_cargo_lido_da_coluna_g():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2, cargo="Promotor de Justiça de 1a. Entrância")
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.cargo == "Promotor de Justiça de 1a. Entrância"
+
+
+def test_cargo_ausente_vira_none():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2)  # cargo não preenchido
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.cargo is None
 
 
 def _ob_generica(*, ob, valor):

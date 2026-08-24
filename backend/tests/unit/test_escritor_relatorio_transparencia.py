@@ -81,7 +81,7 @@ def _ordem(
     )
 
 
-def _registro(*, dh="2026DH000001", linha=2, integral=0, parcial=1) -> RegistroControle:
+def _registro(*, dh="2026DH000001", linha=2, integral=0, parcial=1, cargo=None, transporte="CARRO") -> RegistroControle:
     return RegistroControle(
         linha=linha,
         dh=dh,
@@ -95,10 +95,11 @@ def _registro(*, dh="2026DH000001", linha=2, integral=0, parcial=1) -> RegistroC
         cidade_destino="GARANHUNS",
         trecho="RECIFE-GARANHUNS",
         motivo="Motivo de teste",
-        transporte="CARRO",
+        transporte=transporte,
         valor_total_diarias=154.09,
         quantidade_diaria_integral=integral,
         quantidade_diaria_parcial=parcial,
+        cargo=cargo,
     )
 
 
@@ -591,3 +592,114 @@ def test_formula_de_total_e_recalculada_para_a_faixa_real_nunca_herda_faixa_velh
     ws_g = wb_gerado[_NOME_ABA_DADOS]
     formula = ws_g[f"M{resultado_gerado.linha_total}"].value
     assert formula == f"=SUM(M{_PRIMEIRA_LINHA_DADOS}:M{_PRIMEIRA_LINHA_DADOS + 1})"
+
+
+# --- Micro-sprint 3G.1 — precedência Cargo/Transporte: Controle DIMCAC primeiro, Base OB como fallback
+
+
+def test_cargo_do_controle_prevalece_sobre_base_ob(tmp_path, template):
+    registros = [_registro(cargo="Promotor de Justiça de 1a. Entrância")]
+    candidato = _candidato(registros_controle=registros, cargo="Cargo da Base OB")
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"D{_PRIMEIRA_LINHA_DADOS}"].value == "Promotor de Justiça de 1a. Entrância"
+
+
+def test_cargo_vazio_no_controle_usa_base_ob(tmp_path, template):
+    registros = [_registro(cargo=None)]
+    candidato = _candidato(registros_controle=registros, cargo="Cargo da Base OB")
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"D{_PRIMEIRA_LINHA_DADOS}"].value == "Cargo da Base OB"
+
+
+def test_cargo_ausente_em_ambas_as_fontes_fica_vazio(tmp_path, template):
+    registros = [_registro(cargo=None)]
+    candidato = _candidato(registros_controle=registros, cargo=None)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"D{_PRIMEIRA_LINHA_DADOS}"].value is None
+
+
+def test_transporte_do_controle_prevalece_sobre_base_ob(tmp_path, template):
+    registros = [_registro(transporte="AVIÃO")]
+    candidato = _candidato(registros_controle=registros, transporte="CARRO")
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"H{_PRIMEIRA_LINHA_DADOS}"].value == "AVIÃO"
+
+
+def test_transporte_vazio_no_controle_usa_base_ob(tmp_path, template):
+    registros = [_registro(transporte=None)]
+    candidato = _candidato(registros_controle=registros, transporte="CARRO")
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"H{_PRIMEIRA_LINHA_DADOS}"].value == "CARRO"
+
+
+def test_transporte_ausente_em_ambas_as_fontes_fica_vazio(tmp_path, template):
+    registros = [_registro(transporte=None)]
+    candidato = _candidato(registros_controle=registros, transporte=None)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"H{_PRIMEIRA_LINHA_DADOS}"].value is None
+
+
+def test_cargo_conflitante_entre_registros_de_controle_cai_no_fallback(tmp_path, template):
+    registros = [
+        _registro(linha=2, cargo="Cargo A do Controle"),
+        _registro(linha=3, cargo="Cargo B do Controle"),
+    ]
+    candidato = _candidato(registros_controle=registros, cargo="Cargo da Base OB")
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"D{_PRIMEIRA_LINHA_DADOS}"].value == "Cargo da Base OB"
+
+
+def test_demais_campos_continuam_com_as_fontes_ja_homologadas(tmp_path, template):
+    """Cargo/Transporte mudaram de fonte (3G.1) — período, trecho, motivo e
+    valor continuam vindo da Base OB mesmo quando o Controle DIMCAC tem um
+    valor DIFERENTE nesses mesmos campos (Controle também carrega
+    trecho/motivo próprios, usados só para a reconciliação, nunca para a
+    escrita do relatório)."""
+    registros = [_registro()]
+    candidato = _candidato(
+        registros_controle=registros,
+        periodo_inicial=date(2026, 3, 1),
+        periodo_final=date(2026, 3, 2),
+        trecho="TRECHO DA BASE OB",
+        motivo="Motivo da Base OB",
+        valor=999.99,
+    )
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"E{_PRIMEIRA_LINHA_DADOS}"].value == datetime(2026, 3, 1)
+    assert ws[f"F{_PRIMEIRA_LINHA_DADOS}"].value == datetime(2026, 3, 2)
+    assert ws[f"G{_PRIMEIRA_LINHA_DADOS}"].value == "TRECHO DA BASE OB"
+    assert ws[f"I{_PRIMEIRA_LINHA_DADOS}"].value == "Motivo da Base OB"
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value == "-"
+    assert ws[f"M{_PRIMEIRA_LINHA_DADOS}"].value == 999.99

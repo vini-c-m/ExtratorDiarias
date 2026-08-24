@@ -19,13 +19,22 @@ confirmado célula a célula — ver relatório da Micro-sprint 3F):
                                   esta coluna como texto em 100% das linhas,
                                   nunca como data/serial Excel)
     C Nome                    <- OrdemBancaria.nome
-    D Cargo                   <- OrdemBancaria.cargo
+    D Cargo                   <- RegistroControle.cargo (Controle DIMCAC
+                                  coluna G, matriz de origem confirmada pelo
+                                  negócio, Micro-sprint 3G.1), com fallback
+                                  para OrdemBancaria.cargo (Base OB) quando
+                                  ausente/conflitante no Controle — nunca
+                                  ambos vazios inventam um valor
     E Período (inicial)       <- OrdemBancaria.periodo_inicial
     F Período (final)         <- OrdemBancaria.periodo_final
     G Trecho                  <- OrdemBancaria.trecho (ORIGINAL — nunca o
                                   trecho_normalizado, que é só um artefato
                                   interno do detector RN07)
-    H Transporte              <- OrdemBancaria.transporte
+    H Transporte              <- RegistroControle.transporte (Controle
+                                  DIMCAC coluna K, Micro-sprint 3G.1), com
+                                  fallback para OrdemBancaria.transporte
+                                  (Base OB) quando ausente/conflitante no
+                                  Controle — mesma precedência de Cargo
     I Motivo                  <- OrdemBancaria.motivo
     J Valor da Passagem       <- SEMPRE "-" (decisão institucional
                                   confirmada, Micro-sprint 3F: valor da
@@ -237,6 +246,26 @@ def _data_pagamento_como_texto(valor: datetime | None) -> str | None:
     return valor.strftime("%d/%m/%Y %H:%M:%S")
 
 
+def _valor_do_controle_com_fallback(
+    registros_controle,
+    atributo: str,
+    valor_base_ob: str | None,
+) -> str | None:
+    """Micro-sprint 3G.1 — precedência confirmada pelo negócio (matriz de
+    origem): Cargo e Transporte vêm PRIMEIRO do Controle DIMCAC
+    (`registros_controle`); a Base OB (`OrdemBancaria`) é só fallback
+    quando o Controle não tiver o dado. Mesma filosofia de conflito de
+    `resolver_quantidade_diarias`: quando há mais de um `RegistroControle`
+    (repetição física do DH) e eles DIVERGEM entre si nesse atributo, não
+    há um valor único e confiável do Controle — trata como "ausente no
+    Controle" e cai no fallback, nunca escolhe um dos dois à toa. Nunca
+    inventa um valor quando as duas fontes estão vazias."""
+    valores_controle = {getattr(r, atributo) for r in registros_controle if getattr(r, atributo)}
+    if len(valores_controle) == 1:
+        return valores_controle.pop()
+    return valor_base_ob
+
+
 def _escrever_linha_ocorrencia(
     ws: Worksheet,
     linha: int,
@@ -244,15 +273,17 @@ def _escrever_linha_ocorrencia(
     registros_controle,
 ) -> float:
     quantidade = resolver_quantidade_diarias(registros_controle)
+    cargo = _valor_do_controle_com_fallback(registros_controle, "cargo", ordem.cargo)
+    transporte = _valor_do_controle_com_fallback(registros_controle, "transporte", ordem.transporte)
 
     ws[f"A{linha}"] = ordem.ob
     ws[f"B{linha}"] = _data_pagamento_como_texto(ordem.data_pagamento)
     ws[f"C{linha}"] = ordem.nome
-    ws[f"D{linha}"] = ordem.cargo
+    ws[f"D{linha}"] = cargo
     ws[f"E{linha}"] = _valor_data(ordem.periodo_inicial)
     ws[f"F{linha}"] = _valor_data(ordem.periodo_final)
     ws[f"G{linha}"] = ordem.trecho
-    ws[f"H{linha}"] = ordem.transporte
+    ws[f"H{linha}"] = transporte
     ws[f"I{linha}"] = ordem.motivo
     # Item institucional confirmado (Micro-sprint 3F): valor da passagem não
     # é responsabilidade do DIMCAC — nunca calculado/inferido, sempre o

@@ -84,6 +84,14 @@ _PADRAO_SEI_NUP = re.compile(r"^\d{2}\.\d{2}\.\d{4,}\.\d{7}/\d{4}-\d{2}$")
 _COLUNA_QUANTIDADE_INTEGRAL = "N"
 _COLUNA_QUANTIDADE_PARCIAL = "O"
 
+# Micro-sprint 3G.1 — coluna G ("CARGO") do Controle DIMCAC, fonte primária
+# de Cargo para o Relatório de Diárias — Portal da Transparência (matriz de
+# origem definida pelo negócio). Mesma constante local/isolada (nunca
+# importada de `escritor_planilha.py`, que não tem equivalente para esta
+# aba) — cabeçalho real confirmado (`tests/conftest.py`,
+# `_CABECALHO_PLANILHA_COMPLETO`): G = "CARGO".
+_COLUNA_CARGO = "G"
+
 
 def _quantidade_como_inteiro(valor: object) -> int | None:
     """Simétrica a `_valor_como_numero`/`_como_data`: nunca inventa um
@@ -275,6 +283,7 @@ def controle_dimcac_por_dh(planilha: Worksheet) -> ResultadoLeituraControleDimca
         doc_origem = str(planilha[f"{COLUNA_DOC_ORIGEM}{linha}"].value or "").strip() or None
         motivo = str(planilha[f"{COLUNA_MOTIVO}{linha}"].value or "").strip() or None
         transporte = str(planilha[f"{COLUNA_TRANSPORTE}{linha}"].value or "").strip() or None
+        cargo = str(planilha[f"{_COLUNA_CARGO}{linha}"].value or "").strip() or None
 
         valor_bruto = planilha[f"{COLUNA_VALOR_DIARIAS}{linha}"].value
         valor_total_diarias = _valor_como_numero(valor_bruto)
@@ -312,6 +321,7 @@ def controle_dimcac_por_dh(planilha: Worksheet) -> ResultadoLeituraControleDimca
                 valor_total_diarias=valor_total_diarias,
                 quantidade_diaria_integral=quantidade_diaria_integral,
                 quantidade_diaria_parcial=quantidade_diaria_parcial,
+                cargo=cargo,
             )
         )
 
