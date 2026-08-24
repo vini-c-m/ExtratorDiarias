@@ -86,4 +86,18 @@ class RequisicaoRegistrarDecisao(ParametrosRelatorioBase):
             raise ValueError("Autor da decisão é obrigatório.")
         if self.acao == "adiar" and self.obs_selecionadas:
             raise ValueError("ADIAR não aceita OBs selecionadas.")
+        # Micro-sprint 3E.2 — PUBLICAR com zero OBs selecionadas exclui TODAS
+        # as ocorrências do grupo da publicação: uma decisão administrativa
+        # válida (G04 continua permitindo "nenhuma"), mas excepcional o
+        # bastante para exigir justificativa. Mesmo padrão do check de ADIAR
+        # acima: validação aqui é só feedback HTTP 422 rápido (não lê Base
+        # OB/Controle DIMCAC) — a garantia REAL, que vale mesmo chamando
+        # `registrar_decisao_revisao` diretamente sem passar por este schema,
+        # está duplicada em `relatorio_transparencia_service.py`.
+        if self.acao == "publicar" and not self.obs_selecionadas:
+            if self.observacao is None or not self.observacao.strip():
+                raise ValueError(
+                    "Publicar sem nenhuma OB selecionada exclui todas as ocorrências deste grupo — "
+                    "informe uma justificativa (observacao) para confirmar esta decisão."
+                )
         return self

@@ -72,6 +72,11 @@ vi.mock("./pages/Conferencia", () => ({
 vi.mock("./pages/CentralAnalitica", () => ({
   default: () => <div>Tela da Central Analítica</div>,
 }));
+// Micro-sprint 3E.1 — mesmo isolamento das demais funcionalidades; já tem
+// sua própria suíte (`RelatorioPortalTransparencia.test.tsx`).
+vi.mock("./pages/RelatorioPortalTransparencia", () => ({
+  default: () => <div>Tela do Relatório do Portal da Transparência</div>,
+}));
 
 // Sprint 15 — Configuração Inicial da Planilha Oficial: `useConfiguracao`
 // mockado para que os testes de navegação (Sprint 14, acima) continuem
@@ -170,6 +175,17 @@ describe("App — navegação Boas-vindas → Hub → funcionalidade (Sprint 14)
     await usuario.click(screen.getByRole("button", { name: /Central Analítica/ }));
 
     expect(screen.getByText("Tela da Central Analítica")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Voltar/ })).toBeInTheDocument();
+  });
+
+  it("selecionar o card do Relatório do Portal da Transparência abre o módulo e mostra o link de volta ao Hub", async () => {
+    const usuario = userEvent.setup();
+    render(<App />);
+    await usuario.click(screen.getByRole("button", { name: "Começar" }));
+
+    await usuario.click(screen.getByRole("button", { name: /Relatório do Portal da Transparência/ }));
+
+    expect(screen.getByText("Tela do Relatório do Portal da Transparência")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Voltar/ })).toBeInTheDocument();
   });
 

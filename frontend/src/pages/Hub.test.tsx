@@ -33,6 +33,49 @@ describe("Hub", () => {
 
     expect(screen.getByText("Central de Regularização de DH")).toBeInTheDocument();
     expect(screen.getByText(/Consulte os processos já cadastrados/)).toBeInTheDocument();
+
+    expect(screen.getByText("Relatório do Portal da Transparência")).toBeInTheDocument();
+    expect(screen.getByText(/Concilia a Base de Ordens Bancárias/)).toBeInTheDocument();
+  });
+
+  it("clicar no card do Relatório do Portal da Transparência aciona só aoSelecionarRelatorioTransparencia", async () => {
+    const usuario = userEvent.setup();
+    const aoSelecionarRelatorioTransparencia = vi.fn();
+    const aoSelecionarAnalitica = vi.fn();
+    render(
+      <Hub
+        backendOnline
+        aoSelecionarProcessamento={vi.fn()}
+        aoSelecionarConferencia={vi.fn()}
+        aoSelecionarAnalitica={aoSelecionarAnalitica}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
+        aoSelecionarRelatorioTransparencia={aoSelecionarRelatorioTransparencia}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: /Relatório do Portal da Transparência/ }));
+
+    expect(aoSelecionarRelatorioTransparencia).toHaveBeenCalledTimes(1);
+    expect(aoSelecionarAnalitica).not.toHaveBeenCalled();
+  });
+
+  it("card do Relatório do Portal da Transparência sem a prop (testes antigos que montam o Hub sem ela): clique não quebra", async () => {
+    const usuario = userEvent.setup();
+    render(
+      <Hub
+        backendOnline
+        aoSelecionarProcessamento={vi.fn()}
+        aoSelecionarConferencia={vi.fn()}
+        aoSelecionarAnalitica={vi.fn()}
+        aoAbrirDocumentosHabeisPendentes={vi.fn()}
+        aoSelecionarRegularizacaoDH={vi.fn()}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: /Relatório do Portal da Transparência/ }));
+
+    expect(screen.getByText("Relatório do Portal da Transparência")).toBeInTheDocument();
   });
 
   it("clicar no card da Central de Regularização de DH aciona só aoSelecionarRegularizacaoDH", async () => {

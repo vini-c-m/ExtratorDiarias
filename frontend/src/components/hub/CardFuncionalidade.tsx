@@ -3,7 +3,7 @@ import type { ComponentType } from "react";
 import { FOCO_ANEL, PRESSIONAR, SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 
-type Cor = "roxo" | "ciano" | "azul" | "verde";
+type Cor = "roxo" | "ciano" | "azul" | "verde" | "indigo";
 
 interface Props {
   titulo: string;
@@ -46,11 +46,19 @@ interface Props {
 // significado que "sucesso" já carrega no resto do app). Mesma extensão
 // aditiva prevista no comentário original: só uma entrada nova em cada
 // mapa, nenhum valor de sombra novo.
+// Micro-sprint 3E.1 — 5ª entrada (Relatório do Portal da Transparência):
+// índigo, token novo (`shadow-glow-indigo`, `theme.css`), nunca âmbar —
+// âmbar já é a cor semântica de "aviso/revisão" (`CORES_STATUS.aviso`) em
+// todo o app; usá-la aqui confundiria identidade de módulo com estado de
+// alerta (correção aprovada na investigação UX 3E). Extensão aditiva pura:
+// só uma entrada nova em cada mapa, exatamente como os comentários originais
+// abaixo já previam.
 const GLOW_POR_COR: Record<Cor, string> = {
   roxo: "border-violet-400/20 shadow-glow-purple hover:border-violet-400/35",
   ciano: "border-cyan-400/20 shadow-glow-cyan hover:border-cyan-400/35",
   azul: "border-blue-400/20 shadow-glow-blue hover:border-blue-400/35",
   verde: "border-emerald-400/20 shadow-glow-green hover:border-emerald-400/35",
+  indigo: "border-indigo-400/20 shadow-glow-indigo hover:border-indigo-400/35",
 };
 
 const SELO_POR_COR: Record<Cor, string> = {
@@ -58,6 +66,7 @@ const SELO_POR_COR: Record<Cor, string> = {
   ciano: "bg-cyan-500/10 text-cyan-300",
   azul: "bg-blue-500/10 text-blue-300",
   verde: "bg-emerald-500/10 text-emerald-300",
+  indigo: "bg-indigo-500/10 text-indigo-300",
 };
 
 const SETA_POR_COR: Record<Cor, string> = {
@@ -65,6 +74,7 @@ const SETA_POR_COR: Record<Cor, string> = {
   ciano: "text-cyan-300",
   azul: "text-blue-300",
   verde: "text-emerald-300",
+  indigo: "text-indigo-300",
 };
 
 const HOVER_ELEVACAO = "transition hover:-translate-y-1 hover:bg-white/[0.06] hover:shadow-floating";

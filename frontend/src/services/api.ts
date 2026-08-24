@@ -44,6 +44,12 @@ import type {
   ListaProcessosAguardandoDH,
   ResultadoRegistroDH,
 } from "../types/regularizacaoDh";
+import type {
+  ListaRevisoesRelatorioTransparencia,
+  ParametrosFontesRelatorioTransparencia,
+  RequisicaoDecisaoRelatorioTransparencia,
+  ResumoRelatorioTransparencia,
+} from "../types/relatorioTransparencia";
 
 export const BACKEND_URL = "http://127.0.0.1:8756";
 
@@ -878,6 +884,132 @@ export async function registrarDH(sei: string, dh: string): Promise<ResultadoReg
   }
   if (resposta.status === 503) {
     throw new ErroAnaliticaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+// Micro-sprint 3E.1 — Relatório do Portal da Transparência (integração com
+// a API própria da Micro-sprint 3D, `app/api/relatorio_transparencia.py`).
+// Nenhuma regra de negócio aqui: os 3 endpoints já devolvem tudo resolvido
+// (classificação RN01-RN07, campos_iguais/campos_diferentes, estado da
+// revisão) — este arquivo só traduz HTTP <-> tipos TS, exatamente como o
+// resto de `api.ts`.
+
+/** Falha técnica da persistência de decisões (JSON com versão de esquema
+ * incompatível ou corrompido) — sempre HTTP 503, nunca um resultado de
+ * negócio (mesmo critério de `ErroConferenciaIndisponivel`/
+ * `ErroAnaliticaIndisponivel`). */
+export class ErroRelatorioTransparenciaIndisponivel extends Error {
+  constructor() {
+    super(
+      "Não foi possível acessar os dados de decisões salvos para este relatório agora. Tente novamente em instantes.",
+    );
+    this.name = "ErroRelatorioTransparenciaIndisponivel";
+  }
+}
+
+/** Os 404 de `preparar_relatorio`/`listar_revisoes`/`registrar_decisao_revisao`
+ * (`BaseOBNaoEncontrada`, `ControleDimcacNaoEncontrado`,
+ * `RevisaoNaoEncontrada`) vêm do backend com o CAMINHO ABSOLUTO do arquivo
+ * embutido na mensagem (`app/services/relatorio_transparencia_service.py`)
+ * — apropriado para um log técnico, não para a tela (item 3/19 da
+ * investigação UX 3E: nunca mostrar caminho interno desnecessário). Reescrita
+ * puramente de apresentação por prefixo de texto, mesmo espírito de
+ * `PADROES_TECNICOS` em `lib/mensagens.ts` — não interpreta nem classifica
+ * o erro, só troca como ele é exibido. */
+function mensagemFonteOuRevisaoNaoEncontrada(detail: string): string {
+  if (detail.startsWith("Base de Ordens Bancárias não encontrada")) {
+    return "Não encontramos o arquivo da Base de Ordens Bancárias selecionado. Verifique se ele ainda existe no local indicado e selecione novamente.";
+  }
+  if (detail.startsWith("Controle DIMCAC não encontrado")) {
+    return "Não encontramos o arquivo do Controle DIMCAC selecionado. Verifique se ele ainda existe no local indicado e selecione novamente.";
+  }
+  return "Este caso não foi encontrado — ele pode já ter sido resolvido em outra revisão. Atualize a tela e tente novamente.";
+}
+
+const CAMINHO_BASE_RELATORIO_TRANSPARENCIA = `${BACKEND_URL}/api/v1/relatorio-transparencia`;
+
+/** `POST /preparar` — sem sessão no backend: os 5 parâmetros de fonte
+ * (`ParametrosFontesRelatorioTransparencia`) precisam ser reenviados em toda
+ * chamada subsequente (revisões, decisão), nunca só na primeira. */
+export async function prepararRelatorioTransparencia(
+  parametros: ParametrosFontesRelatorioTransparencia,
+): Promise<ResumoRelatorioTransparencia> {
+  const resposta = await fetch(`${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/preparar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parametros),
+  });
+
+  if (resposta.status === 404) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemFonteOuRevisaoNaoEncontrada((corpo as { detail?: string })?.detail ?? ""));
+  }
+  if (resposta.status === 503) {
+    throw new ErroRelatorioTransparenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** `GET /revisoes` — não é usado pelo fluxo principal (`preparar`/`decidir`
+ * já devolvem a lista de revisões atualizada dentro do próprio resumo, sem
+ * round-trip extra), mas faz parte do contrato dos 3 endpoints da API 3D e
+ * fica disponível para um eventual "atualizar" independente. */
+export async function listarRevisoesRelatorioTransparencia(
+  parametros: ParametrosFontesRelatorioTransparencia,
+): Promise<ListaRevisoesRelatorioTransparencia> {
+  const resposta = await fetch(
+    `${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/revisoes${construirQueryString(parametros)}`,
+  );
+
+  if (resposta.status === 404) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemFonteOuRevisaoNaoEncontrada((corpo as { detail?: string })?.detail ?? ""));
+  }
+  if (resposta.status === 503) {
+    throw new ErroRelatorioTransparenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** `POST /revisoes/{id}/decisao` — resposta já é o resumo recalculado
+ * (equivalente a um novo `preparar`), então quem chama nunca precisa
+ * refazer `preparar`/`listarRevisoes` depois de decidir. */
+export async function registrarDecisaoRevisaoRelatorioTransparencia(
+  identidadeGrupo: string,
+  parametrosFontes: ParametrosFontesRelatorioTransparencia,
+  decisao: RequisicaoDecisaoRelatorioTransparencia,
+): Promise<ResumoRelatorioTransparencia> {
+  const resposta = await fetch(
+    `${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/revisoes/${encodeURIComponent(identidadeGrupo)}/decisao`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...parametrosFontes, ...decisao }),
+    },
+  );
+
+  if (resposta.status === 404) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemFonteOuRevisaoNaoEncontrada((corpo as { detail?: string })?.detail ?? ""));
+  }
+  if (resposta.status === 503) {
+    throw new ErroRelatorioTransparenciaIndisponivel();
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);

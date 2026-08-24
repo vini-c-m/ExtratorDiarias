@@ -510,6 +510,177 @@ def test_adiar_com_obs_selecionadas_e_payload_ambiguo(tmp_path):
         )
 
 
+# --- 17b. Micro-sprint 3E.2 — PUBLICAR com zero OBs exige justificativa ----
+# Garantia REAL: chamada direta a `registrar_decisao_revisao` (sem passar
+# pelo schema Pydantic da API) não consegue contornar a regra — é o único
+# ponto de entrada desta operação.
+
+
+def _preparar_com_uma_revisao(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    return resumo.revisoes[0].identidade_grupo, caminho_ob, caminho_controle, caminho_decisoes
+
+
+def test_publicar_zero_obs_sem_observacao_levanta_erro(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    with pytest.raises(service.DecisaoInvalida):
+        service.registrar_decisao_revisao(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            identidade_grupo=identidade,
+            acao=AcaoDecisao.PUBLICAR,
+            obs_selecionadas=[],
+            autor="servidor.teste",
+            observacao=None,
+        )
+
+
+def test_publicar_zero_obs_com_observacao_vazia_levanta_erro(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    with pytest.raises(service.DecisaoInvalida):
+        service.registrar_decisao_revisao(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            identidade_grupo=identidade,
+            acao=AcaoDecisao.PUBLICAR,
+            obs_selecionadas=[],
+            autor="servidor.teste",
+            observacao="",
+        )
+
+
+def test_publicar_zero_obs_com_observacao_so_espacos_levanta_erro(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    with pytest.raises(service.DecisaoInvalida):
+        service.registrar_decisao_revisao(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            identidade_grupo=identidade,
+            acao=AcaoDecisao.PUBLICAR,
+            obs_selecionadas=[],
+            autor="servidor.teste",
+            observacao="   \n\t  ",
+        )
+
+
+def test_publicar_zero_obs_com_justificativa_valida_e_aceito(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],
+        autor="servidor.teste",
+        observacao="Ambas as OBs são suspeitas de duplicidade; excluídas até apuração interna.",
+    )
+
+    assert atualizado.revisoes[0].estado == "decidida"
+    assert atualizado.total_ocorrencias_nao_publicaveis == 2
+    assert atualizado.pode_gerar_relatorio is True
+
+
+def test_publicar_uma_ob_sem_observacao_e_aceito(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000002"],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.revisoes[0].estado == "decidida"
+
+
+def test_publicar_subconjunto_sem_observacao_e_aceito(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000004", ob="2026OB000004", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000002", "2026OB000003"],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.revisoes[0].estado == "decidida"
+    assert atualizado.total_ocorrencias_nao_publicaveis == 1
+
+
+def test_publicar_todas_sem_observacao_e_aceito(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000002", "2026OB000003"],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.revisoes[0].estado == "decidida"
+    assert atualizado.total_ocorrencias_nao_publicaveis == 0
+
+
+def test_adiar_sem_observacao_continua_aceito_nao_vira_obrigatorio(tmp_path):
+    identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.ADIAR,
+        obs_selecionadas=[],
+        autor="servidor.teste",
+        observacao=None,
+    )
+
+    assert atualizado.revisoes[0].estado == "adiada"
+
+
 # --- 18. Persistência inexistente (primeira preparação) --------------------
 
 

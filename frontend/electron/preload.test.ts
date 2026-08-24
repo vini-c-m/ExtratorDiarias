@@ -63,4 +63,13 @@ describe("preload", () => {
       "https://arquimedes.mppe.mp.br/arquimedes/",
     );
   });
+
+  // Micro-sprint 3E.1 — Relatório do Portal da Transparência.
+  it("obterCaminhoDecisoesRelatorioTransparencia invoca ipcRenderer.invoke no canal 'relatorio-transparencia:obter-caminho-decisoes'", async () => {
+    const api = await importarApiExposta();
+
+    api.obterCaminhoDecisoesRelatorioTransparencia();
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith("relatorio-transparencia:obter-caminho-decisoes");
+  });
 });

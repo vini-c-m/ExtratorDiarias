@@ -8,6 +8,7 @@ import { type EstadoFechamento, registrarFechamentoSeguro, registrarIpcFechament
 import { registrarIpcLink } from "./ipc/link";
 import { registrarIpcPlanilha } from "./ipc/planilha";
 import { registrarIpcRelatorio } from "./ipc/relatorio";
+import { registrarIpcRelatorioTransparencia } from "./ipc/relatorioTransparencia";
 
 const BACKEND_PORT = 8756;
 const BACKEND_DIR = path.join(__dirname, "..", "..", "backend");
@@ -133,6 +134,7 @@ app.whenReady().then(() => {
 
   registrarIpcPlanilha();
   registrarIpcRelatorio();
+  registrarIpcRelatorioTransparencia();
   registrarIpcConferencia();
   registrarIpcConfiguracao();
   registrarIpcClipboard();

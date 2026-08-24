@@ -46,4 +46,10 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("app:solicitar-fechamento", ouvinte);
   },
   confirmarFechamento: (): Promise<void> => ipcRenderer.invoke("app:confirmar-fechamento"),
+  // Micro-sprint 3E.1 — Relatório do Portal da Transparência: `caminho_decisoes`
+  // é infraestrutura interna da API (nunca um campo escolhido pelo
+  // servidor). Este único caminho resolve para dentro da mesma pasta de
+  // dados do usuário já usada pelo resto do app (ver `ipc/relatorioTransparencia.ts`).
+  obterCaminhoDecisoesRelatorioTransparencia: (): Promise<string> =>
+    ipcRenderer.invoke("relatorio-transparencia:obter-caminho-decisoes"),
 });

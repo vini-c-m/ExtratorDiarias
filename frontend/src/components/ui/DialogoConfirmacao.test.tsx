@@ -71,4 +71,42 @@ describe("DialogoConfirmacao", () => {
     expect(onConfirmar).toHaveBeenCalledTimes(1);
     expect(onCancelar).not.toHaveBeenCalled();
   });
+
+  // Micro-sprint 3E.2 — prop opcional nova, usada pelo Relatório do Portal
+  // da Transparência para exigir justificativa antes de confirmar.
+  it("sem confirmarDesabilitado (uso já existente): botão de confirmar continua habilitado", () => {
+    render(
+      <DialogoConfirmacao
+        titulo="t"
+        mensagem="m"
+        rotuloConfirmar="Interromper"
+        rotuloCancelar="Continuar Processando"
+        onConfirmar={vi.fn()}
+        onCancelar={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Interromper" })).toBeEnabled();
+  });
+
+  it("confirmarDesabilitado=true: botão de confirmar fica desabilitado e não aciona onConfirmar", async () => {
+    const onConfirmar = vi.fn();
+    const usuario = userEvent.setup();
+    render(
+      <DialogoConfirmacao
+        titulo="t"
+        mensagem="m"
+        rotuloConfirmar="Confirmar decisão"
+        rotuloCancelar="Revisar seleção"
+        onConfirmar={onConfirmar}
+        onCancelar={vi.fn()}
+        confirmarDesabilitado
+      />,
+    );
+
+    const botaoConfirmar = screen.getByRole("button", { name: "Confirmar decisão" });
+    expect(botaoConfirmar).toBeDisabled();
+    await usuario.click(botaoConfirmar);
+    expect(onConfirmar).not.toHaveBeenCalled();
+  });
 });

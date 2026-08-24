@@ -12,6 +12,7 @@ const {
   registrarIpcLinkMock,
   registrarFechamentoSeguroMock,
   registrarIpcFechamentoMock,
+  registrarIpcRelatorioTransparenciaMock,
 } = vi.hoisted(() => {
   // `class` (não `vi.fn(() => ...)`) porque `main.ts` usa `new
   // BrowserWindow(...)` — uma arrow function não é um construtor válido.
@@ -51,6 +52,8 @@ const {
     // — isso já está coberto por `ipc/fechamento.test.ts`.
     registrarFechamentoSeguroMock: vi.fn(),
     registrarIpcFechamentoMock: vi.fn(),
+    // Micro-sprint 3E.1 — Relatório do Portal da Transparência.
+    registrarIpcRelatorioTransparenciaMock: vi.fn(),
   };
 });
 
@@ -62,6 +65,9 @@ vi.mock("./ipc/conferencia", () => ({ registrarIpcConferencia: registrarIpcConfe
 vi.mock("./ipc/configuracao", () => ({ registrarIpcConfiguracao: registrarIpcConfiguracaoMock }));
 vi.mock("./ipc/clipboard", () => ({ registrarIpcClipboard: registrarIpcClipboardMock }));
 vi.mock("./ipc/link", () => ({ registrarIpcLink: registrarIpcLinkMock }));
+vi.mock("./ipc/relatorioTransparencia", () => ({
+  registrarIpcRelatorioTransparencia: registrarIpcRelatorioTransparenciaMock,
+}));
 vi.mock("./ipc/fechamento", () => ({
   registrarFechamentoSeguro: registrarFechamentoSeguroMock,
   registrarIpcFechamento: registrarIpcFechamentoMock,
@@ -79,7 +85,7 @@ describe("main — registro dos canais IPC ao ficar pronto", () => {
     appMock.whenReady.mockResolvedValue(undefined);
   });
 
-  it("registra os 7 módulos IPC (incluindo fechamento seguro, Sprint Loading/Bloqueio de Ações, e o link Arquimedes) sem omitir nenhum", async () => {
+  it("registra os 8 módulos IPC (incluindo fechamento seguro, Sprint Loading/Bloqueio de Ações, o link Arquimedes e o Relatório do Portal da Transparência) sem omitir nenhum", async () => {
     await import("./main");
     // Deixa o `.then()` de `app.whenReady()` (já resolvida) rodar antes de
     // verificar as chamadas.
@@ -92,6 +98,7 @@ describe("main — registro dos canais IPC ao ficar pronto", () => {
     expect(registrarIpcClipboardMock).toHaveBeenCalledTimes(1);
     expect(registrarIpcLinkMock).toHaveBeenCalledTimes(1);
     expect(registrarIpcFechamentoMock).toHaveBeenCalledTimes(1);
+    expect(registrarIpcRelatorioTransparenciaMock).toHaveBeenCalledTimes(1);
     // `registrarFechamentoSeguro` é por JANELA (dentro de `criarJanela()`,
     // não de `app.whenReady()`) — uma janela criada nesta importação.
     expect(registrarFechamentoSeguroMock).toHaveBeenCalledTimes(1);

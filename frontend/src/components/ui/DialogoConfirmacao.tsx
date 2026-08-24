@@ -11,6 +11,11 @@ interface Props {
   rotuloCancelar: string;
   onConfirmar: () => void;
   onCancelar: () => void;
+  /** Micro-sprint 3E.2 — opcional, default `false`: desabilita o botão de
+   * confirmar (ex.: justificativa obrigatória ainda vazia, Relatório do
+   * Portal da Transparência). Nenhum outro uso deste componente precisa
+   * passar esta prop — comportamento existente inalterado. */
+  confirmarDesabilitado?: boolean;
 }
 
 // Sprint 05.3 — primeiro diálogo de confirmação do app; sem componente de
@@ -27,6 +32,7 @@ export default function DialogoConfirmacao({
   rotuloCancelar,
   onConfirmar,
   onCancelar,
+  confirmarDesabilitado = false,
 }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
@@ -50,7 +56,7 @@ export default function DialogoConfirmacao({
           <Botao variante="secundaria" onClick={onCancelar} autoFocus>
             {rotuloCancelar}
           </Botao>
-          <Botao variante="perigo" onClick={onConfirmar}>
+          <Botao variante="perigo" onClick={onConfirmar} disabled={confirmarDesabilitado}>
             {rotuloConfirmar}
           </Botao>
         </div>

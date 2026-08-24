@@ -80,6 +80,14 @@
   --shadow-glow-green: 0 0 16px rgb(52 211 153 / 0.22), 0 0 38px rgb(52 211 153 / 0.16); /* Estatísticas — sucesso */
   --shadow-glow-amber: 0 0 16px rgb(251 191 36 / 0.24), 0 0 38px rgb(251 191 36 / 0.16); /* Estatísticas — revisão/duplicidade */
   --shadow-glow-orange: 0 0 16px rgb(249 115 22 / 0.24), 0 0 38px rgb(249 115 22 / 0.16); /* Estatísticas — erro */
+  /* Micro-sprint 3E.1 — 7º token, identidade do módulo "Relatório do Portal
+   * da Transparência" no Hub (5º card). Índigo, não âmbar: âmbar já é
+   * `CORES_STATUS.aviso` (revisão/duplicidade) em todo o app — usar a mesma
+   * cor para "isto é o módulo X" e "isto precisa de atenção" confundiria
+   * identidade de módulo com estado de alerta (correção aprovada na
+   * investigação UX 3E). Mesma fórmula de duas camadas dos outros 6 tokens,
+   * só o matiz muda — `indigo-400` do Tailwind. */
+  --shadow-glow-indigo: 0 0 16px rgb(129 140 248 / 0.24), 0 0 38px rgb(129 140 248 / 0.16); /* Relatório do Portal da Transparência */
 
   /* ---- Tipografia ---------------------------------------------------------
    * Inter continua a família única do app (título, corpo, tudo),

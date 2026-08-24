@@ -315,6 +315,21 @@ def registrar_decisao_revisao(
     obs_selecionadas_set = frozenset(obs_selecionadas)
     if acao is AcaoDecisao.ADIAR and obs_selecionadas_set:
         raise DecisaoInvalida("ADIAR não aceita OBs selecionadas.")
+    # Micro-sprint 3E.2 — garantia REAL (nunca depende só do schema
+    # Pydantic da API): PUBLICAR com zero OBs selecionadas exclui TODAS as
+    # ocorrências do grupo da publicação — decisão administrativa válida
+    # (G04), mas excepcional o bastante para exigir justificativa não-vazia.
+    # Vale mesmo chamando este service diretamente (teste, script, futura
+    # integração sem HTTP) — é o único ponto de entrada real desta
+    # operação, nenhum outro caminho registra uma decisão. Não altera
+    # RN01-RN07/motor de decisão/reconciliação/fingerprint: só valida a
+    # decisão humana antes de construí-la.
+    if acao is AcaoDecisao.PUBLICAR and not obs_selecionadas_set:
+        if observacao is None or not observacao.strip():
+            raise DecisaoInvalida(
+                "Publicar sem nenhuma OB selecionada exclui todas as ocorrências deste grupo — "
+                "informe uma justificativa (observacao) para confirmar esta decisão."
+            )
 
     revisado = _montar_resultado_revisado(
         caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,

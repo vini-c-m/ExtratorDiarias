@@ -14,9 +14,17 @@ import Conferencia from "./pages/Conferencia";
 import ConfiguracaoInicial from "./pages/ConfiguracaoInicial";
 import FinalizarDiarias from "./pages/FinalizarDiarias";
 import Hub from "./pages/Hub";
+import RelatorioPortalTransparencia from "./pages/RelatorioPortalTransparencia";
 import SelecionarProcessar from "./pages/SelecionarProcessar";
 
-type Pagina = "boasvindas" | "hub" | "processamento" | "conferencia" | "analitica" | "regularizacao-dh";
+type Pagina =
+  | "boasvindas"
+  | "hub"
+  | "processamento"
+  | "conferencia"
+  | "analitica"
+  | "regularizacao-dh"
+  | "relatorio-transparencia";
 // "FINALIZAR DIÁRIAS" (2026-08-07) — terceiro fluxo da área de
 // Processamento, ao lado de Processar/Complemento (que continuam vivendo
 // inteiramente dentro de `SelecionarProcessar`, sem nenhuma alteração —
@@ -195,6 +203,7 @@ export default function App() {
                 setPagina("analitica");
               }}
               aoSelecionarRegularizacaoDH={() => setPagina("regularizacao-dh")}
+              aoSelecionarRelatorioTransparencia={() => setPagina("relatorio-transparencia")}
             />
           )}
           {pagina === "processamento" && (
@@ -249,6 +258,9 @@ export default function App() {
           )}
           {pagina === "regularizacao-dh" && (
             <CentralRegularizacaoDH backendOnline={status === "conectado"} />
+          )}
+          {pagina === "relatorio-transparencia" && (
+            <RelatorioPortalTransparencia backendOnline={status === "conectado"} />
           )}
         </LimiteDeErro>
       </div>

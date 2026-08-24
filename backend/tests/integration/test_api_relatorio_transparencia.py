@@ -234,6 +234,116 @@ def test_autor_vazio_devolve_422(tmp_path):
     assert resposta.status_code == 422
 
 
+# --- Micro-sprint 3E.2 — PUBLICAR com zero OBs exige justificativa --------
+# Prova que a garantia vale também batendo direto na API (sem passar pelo
+# frontend/React) — nenhuma UI pode contornar.
+
+
+def test_publicar_zero_obs_sem_observacao_devolve_422(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    corpo_preparar = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    ).json()
+    identidade = corpo_preparar["revisoes"][0]["identidade_grupo"]
+
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    payload.update({"acao": "publicar", "autor": "servidor.teste", "obs_selecionadas": []})
+
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload)
+    assert resposta.status_code == 422
+
+
+def test_publicar_zero_obs_com_observacao_vazia_devolve_422(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    corpo_preparar = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    ).json()
+    identidade = corpo_preparar["revisoes"][0]["identidade_grupo"]
+
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    payload.update(
+        {"acao": "publicar", "autor": "servidor.teste", "obs_selecionadas": [], "observacao": "   "}
+    )
+
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload)
+    assert resposta.status_code == 422
+
+
+def test_publicar_zero_obs_com_justificativa_valida_devolve_200(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    corpo_preparar = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    ).json()
+    identidade = corpo_preparar["revisoes"][0]["identidade_grupo"]
+
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    payload.update(
+        {
+            "acao": "publicar",
+            "autor": "servidor.teste",
+            "obs_selecionadas": [],
+            "observacao": "Ambas as OBs excluídas até apuração interna.",
+        }
+    )
+
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload)
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["revisoes"][0]["estado"] == "decidida"
+    assert corpo["pode_gerar_relatorio"] is True
+
+
+def test_publicar_com_obs_selecionadas_continua_sem_exigir_observacao(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    corpo_preparar = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    ).json()
+    identidade = corpo_preparar["revisoes"][0]["identidade_grupo"]
+
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    payload.update(
+        {"acao": "publicar", "autor": "servidor.teste", "obs_selecionadas": ["2026OB000002"]}
+    )
+
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload)
+    assert resposta.status_code == 200
+
+
+def test_adiar_continua_sem_exigir_observacao(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    corpo_preparar = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    ).json()
+    identidade = corpo_preparar["revisoes"][0]["identidade_grupo"]
+
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    payload.update({"acao": "adiar", "autor": "servidor.teste", "obs_selecionadas": []})
+
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload)
+    assert resposta.status_code == 200
+    assert resposta.json()["revisoes"][0]["estado"] == "adiada"
+
+
 def test_persistencia_corrompida_devolve_503(tmp_path):
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(
         tmp_path, [_linha_ob(dh="2026DH000001", ob="2026OB000001")]

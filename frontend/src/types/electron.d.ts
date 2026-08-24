@@ -30,6 +30,10 @@ declare global {
       // acima. Abre um link no navegador padrão do sistema
       // (`shell.openExternal`, processo main), nunca dentro do app.
       abrirLinkExterno?: (url: string) => Promise<void>;
+      // Micro-sprint 3E.1 — Relatório do Portal da Transparência. Mesmo
+      // critério de opcionalidade acima (não quebra testes/mocks parciais
+      // de `window.api` já homologados).
+      obterCaminhoDecisoesRelatorioTransparencia?: () => Promise<string>;
     };
   }
 }

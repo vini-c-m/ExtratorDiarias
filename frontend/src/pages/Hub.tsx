@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardCheck, FileSpreadsheet, ListChecks } from "lucide-react";
+import { BarChart3, ClipboardCheck, FileSpreadsheet, Landmark, ListChecks } from "lucide-react";
 import AlertaGlobalDocumentosHabeis from "../components/hub/AlertaGlobalDocumentosHabeis";
 import CardFuncionalidade from "../components/hub/CardFuncionalidade";
 import Alerta from "../components/ui/Alerta";
@@ -15,6 +15,10 @@ interface Props {
   aoAbrirDocumentosHabeisPendentes: () => void;
   // Micro-sprint B — quarta central, entrada própria como as demais.
   aoSelecionarRegularizacaoDH: () => void;
+  // Micro-sprint 3E.1 — quinto card, mesmo padrão das demais. Opcional só
+  // para não quebrar testes existentes que montam este componente sem esta
+  // prop.
+  aoSelecionarRelatorioTransparencia?: () => void;
 }
 
 // Sprint 14 — Hub de funcionalidades: segunda tela do fluxo (Boas-vindas →
@@ -39,6 +43,7 @@ export default function Hub({
   aoSelecionarAnalitica,
   aoAbrirDocumentosHabeisPendentes,
   aoSelecionarRegularizacaoDH,
+  aoSelecionarRelatorioTransparencia,
 }: Props) {
   const funcionalidades = [
     {
@@ -79,6 +84,20 @@ export default function Hub({
       icone: ClipboardCheck,
       cor: "verde" as const,
       aoClicar: aoSelecionarRegularizacaoDH,
+    },
+    {
+      // Micro-sprint 3E.1 — quinto card do Hub: prepara e revisa o
+      // Relatório do Portal da Transparência antes da futura geração do
+      // XLSX final (ainda não implementada). Módulo próprio, nunca dentro
+      // de outra Central (investigação UX 3E, item 1/5). Cor índigo
+      // (`shadow-glow-indigo`, token novo em `theme.css`) — nunca âmbar,
+      // que já é a cor semântica de aviso/revisão em todo o app.
+      titulo: "Relatório do Portal da Transparência",
+      descricao:
+        "Concilia a Base de Ordens Bancárias com o Controle DIMCAC e resolve pendências antes da geração do relatório.",
+      icone: Landmark,
+      cor: "indigo" as const,
+      aoClicar: () => aoSelecionarRelatorioTransparencia?.(),
     },
   ];
 
