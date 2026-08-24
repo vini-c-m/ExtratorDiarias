@@ -23,7 +23,16 @@ class OrdemBancaria:
     decide se um valor ausente/malformado invalida o registro; ela só
     representa o dado tal como está. `cidade_origem`/`cidade_destino` seguem
     a mesma separação de `RegistroDiariaIndexada` (trecho não separável vira
-    `(None, None)`, nunca uma adivinhação)."""
+    `(None, None)`, nunca uma adivinhação).
+
+    `trecho` (Micro-sprint 3B) preserva o texto bruto da coluna TRECHO,
+    além da separação já feita em `cidade_origem`/`cidade_destino` —
+    necessário para o detector de suspeita de duplicidade financeira (RN07,
+    `domain/relatorio_transparencia/motor_decisao.py`), que compara o
+    trecho inteiro normalizado, não só a cidade de destino (achado real:
+    trechos com 3+ localidades, ex. `'IPOJUCA-RIO FORMOSO E BARREIROS'`,
+    não são separáveis em `cidade_origem`/`cidade_destino` sem perda de
+    informação)."""
 
     linha: int
     dh: str
@@ -46,3 +55,4 @@ class OrdemBancaria:
     restituicao: float | None
     duplicidade: str | None
     item_de_gasto: str | None
+    trecho: str | None = None

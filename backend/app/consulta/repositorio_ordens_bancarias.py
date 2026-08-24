@@ -363,6 +363,7 @@ def ordens_bancarias_por_dh(planilha: Worksheet) -> ResultadoLeituraOrdensBancar
                 restituicao=restituicao,
                 duplicidade=_texto_ou_none(_campo(valores, indice, "DUPLICIDADE")),
                 item_de_gasto=_texto_ou_none(_campo(valores, indice, "ITEM DE GASTO")),
+                trecho=trecho_bruto,
             )
         )
 

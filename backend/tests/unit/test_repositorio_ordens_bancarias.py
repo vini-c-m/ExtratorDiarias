@@ -118,6 +118,7 @@ def test_linha_bem_formada_e_lida_corretamente():
     assert registro.periodo_final == date(2026, 5, 16)
     assert registro.cidade_origem == "RECIFE"
     assert registro.cidade_destino == "GARANHUNS"
+    assert registro.trecho == "RECIFE - GARANHUNS"
     assert registro.transporte == "CARRO"
     assert registro.motivo == "Motivo de teste"
     assert registro.valor == 154.09
