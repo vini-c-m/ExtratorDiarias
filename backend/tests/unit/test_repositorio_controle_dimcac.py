@@ -32,6 +32,8 @@ def _escrever_linha_controle(
     motivo="Motivo de teste",
     transporte="CARRO",
     valor_diarias=None,
+    quantidade_integral=None,
+    quantidade_parcial=None,
 ):
     if dh is not None:
         planilha[f"A{linha}"] = dh
@@ -53,6 +55,10 @@ def _escrever_linha_controle(
         planilha[f"L{linha}"] = motivo
     if valor_diarias is not None:
         planilha[f"P{linha}"] = valor_diarias
+    if quantidade_integral is not None:
+        planilha[f"N{linha}"] = quantidade_integral
+    if quantidade_parcial is not None:
+        planilha[f"O{linha}"] = quantidade_parcial
 
 
 # --- 1. 1 DH -> 1 linha de Controle --------------------------------------
@@ -336,6 +342,72 @@ def test_um_dh_para_n_obs_continua_preservado_apos_integracao():
     documento = resultado.documentos[_DH_PADRAO]
     assert len(documento.controle) == 1
     assert {ob.ob for ob in documento.ordens_bancarias} == {"2026OB900001", "2026OB900002"}
+
+
+# --- 13. Micro-sprint 3F — Nº Diárias Integral/Parcial (N/O) ---------------
+# Fonte real confirmada empiricamente contra o relatório histórico real:
+# Controle DIMCAC colunas N ("QUANT. DIÁRIA INTEGRAL") e O ("QUANT. DIÁRIA
+# PARCIAL") — nunca recalculadas, só lidas (mesma filosofia de
+# `valor_total_diarias`).
+
+
+def test_quantidade_diaria_integral_e_parcial_lidas_da_planilha():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2, quantidade_integral=3, quantidade_parcial=1)
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.quantidade_diaria_integral == 3
+    assert registro.quantidade_diaria_parcial == 1
+
+
+def test_quantidade_diaria_zero_e_legitima_nunca_vira_none():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2, quantidade_integral=0, quantidade_parcial=1)
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.quantidade_diaria_integral == 0
+    assert registro.quantidade_diaria_parcial == 1
+
+
+def test_quantidade_diaria_ausente_vira_none_nunca_zero_adivinhado():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2)  # N/O não preenchidos
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.quantidade_diaria_integral is None
+    assert registro.quantidade_diaria_parcial is None
+
+
+def test_quantidade_diaria_com_texto_nao_numerico_vira_none():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2)
+    planilha["N2"] = "-"
+    planilha["O2"] = "N/A"
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.quantidade_diaria_integral is None
+    assert registro.quantidade_diaria_parcial is None
+
+
+def test_quantidade_diaria_como_texto_numerico_e_convertida():
+    _, planilha = _nova_planilha()
+    _escrever_linha_controle(planilha, 2)
+    planilha["N2"] = "2"
+    planilha["O2"] = "1"
+
+    resultado = controle_dimcac_por_dh(planilha)
+
+    registro = resultado.por_dh[_DH_PADRAO][0]
+    assert registro.quantidade_diaria_integral == 2
+    assert registro.quantidade_diaria_parcial == 1
 
 
 def _ob_generica(*, ob, valor):

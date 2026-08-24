@@ -928,3 +928,101 @@ def test_registrar_decisao_nao_loga_autor(tmp_path, caplog):
     # o autor CONTINUA persistido na decisão em si, só não no log técnico.
     decisoes_persistidas = (tmp_path / "decisoes.json").read_text(encoding="utf-8")
     assert autor_sentinela in decisoes_persistidas
+
+
+# --- Micro-sprint 3F: gerar_relatorio_xlsx — orquestração fontes+decisões+geração
+
+
+def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_template = str(tmp_path / "template.xlsx")
+    construir_template_sintetico(caminho_template)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_template=caminho_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.total_ocorrencias == 1
+    import os
+
+    assert os.path.exists(caminho_destino)
+
+
+def test_gerar_relatorio_xlsx_bloqueia_com_revisao_pendente(tmp_path):
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_template = str(tmp_path / "template.xlsx")
+    construir_template_sintetico(caminho_template)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    with pytest.raises(service.RelatorioBloqueadoPorPendencias):
+        service.gerar_relatorio_xlsx(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            caminho_template=caminho_template,
+            caminho_destino=caminho_destino,
+        )
+
+
+def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path):
+    """`gerar_relatorio_xlsx` não aceita nenhum parâmetro de conteúdo (lista
+    de OBs, valores) — o único jeito de mudar o que é publicado é registrar
+    uma decisão humana real e deixá-la ser reconstruída a partir das
+    fontes."""
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000002"],
+        autor="servidor.teste",
+    )
+    caminho_template = str(tmp_path / "template.xlsx")
+    construir_template_sintetico(caminho_template)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_template=caminho_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.total_ocorrencias == 1
+    import openpyxl
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["A7"].value == "2026OB000002"

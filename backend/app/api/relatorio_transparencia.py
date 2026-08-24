@@ -8,6 +8,8 @@ from app.schemas.relatorio_transparencia import (
     ListaRevisoesResposta,
     OcorrenciaResposta,
     ParametrosRelatorioQuery,
+    RelatorioGeradoResposta,
+    RequisicaoGerarRelatorio,
     RequisicaoPrepararRelatorio,
     RequisicaoRegistrarDecisao,
     ResumoRelatorioResposta,
@@ -17,12 +19,16 @@ from app.services.relatorio_transparencia_service import (
     BaseOBNaoEncontrada,
     ControleDimcacNaoEncontrado,
     DecisaoInvalida,
+    DestinoJaExiste,
     EstruturaBaseOBInvalida,
     EstruturaControleInvalida,
     OcorrenciaResumo,
+    RelatorioBloqueadoPorPendencias,
     ResumoRelatorio,
     RevisaoNaoEncontrada,
     RevisaoResumo,
+    TemplateEstruturalmenteInvalido,
+    gerar_relatorio_xlsx,
     listar_revisoes,
     preparar_relatorio,
     registrar_decisao_revisao,
@@ -115,6 +121,48 @@ def preparar(requisicao: RequisicaoPrepararRelatorio) -> ResumoRelatorioResposta
         _levantar_erro_de_fontes(erro)
 
     return _resumo_resposta(resumo)
+
+
+@router.post("/gerar", response_model=RelatorioGeradoResposta)
+def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
+    """Micro-sprint 3F — endpoint aditivo, NÃO conectado ao frontend nesta
+    sprint (contrato para a futura 3G). Só aceita "gerar esta competência";
+    todo o conteúdo é reconstruído no backend (`gerar_relatorio_xlsx`),
+    nunca confiado ao corpo da requisição."""
+    try:
+        resultado = gerar_relatorio_xlsx(
+            caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
+            caminho_controle_dimcac=requisicao.caminho_controle_dimcac,
+            ano_exercicio=requisicao.ano_exercicio,
+            mes_referencia=requisicao.mes_referencia,
+            caminho_decisoes=requisicao.caminho_decisoes,
+            caminho_template=requisicao.caminho_template,
+            caminho_destino=requisicao.caminho_destino,
+        )
+    except RelatorioBloqueadoPorPendencias as erro:
+        raise HTTPException(status_code=409, detail=str(erro)) from erro
+    except DestinoJaExiste as erro:
+        raise HTTPException(status_code=409, detail=str(erro)) from erro
+    except TemplateEstruturalmenteInvalido as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+    except (
+        BaseOBNaoEncontrada,
+        ControleDimcacNaoEncontrado,
+        EstruturaBaseOBInvalida,
+        EstruturaControleInvalida,
+        VersaoEsquemaIncompativel,
+        PersistenciaDecisoesCorrompida,
+    ) as erro:
+        _levantar_erro_de_fontes(erro)
+
+    return RelatorioGeradoResposta(
+        caminho_arquivo=resultado.caminho_arquivo,
+        total_ocorrencias=resultado.total_ocorrencias,
+        total_valor_diarias=resultado.total_valor_diarias,
+        primeira_linha_dados=resultado.primeira_linha_dados,
+        ultima_linha_dados=resultado.ultima_linha_dados,
+        linha_total=resultado.linha_total,
+    )
 
 
 @router.get("/revisoes", response_model=ListaRevisoesResposta)

@@ -70,6 +70,42 @@ _logger = logging.getLogger(__name__)
 # (`_classificar_sei`), nunca para corrigir ou rejeitar uma linha.
 _PADRAO_SEI_NUP = re.compile(r"^\d{2}\.\d{2}\.\d{4,}\.\d{7}/\d{4}-\d{2}$")
 
+# Micro-sprint 3F — colunas do Controle DIMCAC com a quantidade de diárias
+# já resolvida (integral/parcial) por um processo anterior (extração/
+# complemento — ver `app/domain/rules/historico_efisco.py` e `app/
+# extraction/enriquecimento/quantidade_complementar.py`, que já usam
+# exatamente este vocabulário). Constantes locais e isoladas deste módulo —
+# não importadas de `escritor_planilha.py` (que só define `COLUNA_
+# QUANTIDADE_PARCIAL`, "O", para seu próprio uso interno no modo
+# Complemento) para manter o isolamento arquitetural já documentado no
+# topo deste arquivo. Cabeçalho real confirmado (`tests/conftest.py`,
+# `_CABECALHO_PLANILHA_COMPLETO`): N = "QUANT. DIÁRIA INTEGRAL", O =
+# "QUANT. DIÁRIA PARCIAL".
+_COLUNA_QUANTIDADE_INTEGRAL = "N"
+_COLUNA_QUANTIDADE_PARCIAL = "O"
+
+
+def _quantidade_como_inteiro(valor: object) -> int | None:
+    """Simétrica a `_valor_como_numero`/`_como_data`: nunca inventa um
+    número. `int`/`float` inteiro já lido pelo openpyxl vira `int`; texto
+    numérico (`"1"`) também; qualquer outra coisa (célula vazia, `"-"`,
+    texto não numérico) vira `None` — nunca `0` adivinhado."""
+    if isinstance(valor, bool):  # bool é subclasse de int — nunca tratado como quantidade
+        return None
+    if isinstance(valor, int):
+        return valor
+    if isinstance(valor, float):
+        return int(valor) if valor.is_integer() else None
+    if valor in (None, ""):
+        return None
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    try:
+        return int(texto)
+    except ValueError:
+        return None
+
 
 class ControleDimcacEstruturalmenteInvalido(Exception):
     """Mesma filosofia de `OrdensBancariasEstruturalmenteInvalida`
@@ -251,6 +287,13 @@ def controle_dimcac_por_dh(planilha: Worksheet) -> ResultadoLeituraControleDimca
                 )
             )
 
+        quantidade_diaria_integral = _quantidade_como_inteiro(
+            planilha[f"{_COLUNA_QUANTIDADE_INTEGRAL}{linha}"].value
+        )
+        quantidade_diaria_parcial = _quantidade_como_inteiro(
+            planilha[f"{_COLUNA_QUANTIDADE_PARCIAL}{linha}"].value
+        )
+
         por_dh.setdefault(dh, []).append(
             RegistroControle(
                 linha=linha,
@@ -267,6 +310,8 @@ def controle_dimcac_por_dh(planilha: Worksheet) -> ResultadoLeituraControleDimca
                 motivo=motivo,
                 transporte=transporte,
                 valor_total_diarias=valor_total_diarias,
+                quantidade_diaria_integral=quantidade_diaria_integral,
+                quantidade_diaria_parcial=quantidade_diaria_parcial,
             )
         )
 

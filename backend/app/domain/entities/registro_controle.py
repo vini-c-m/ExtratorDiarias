@@ -64,3 +64,11 @@ class RegistroControle:
     motivo: str | None
     transporte: str | None
     valor_total_diarias: float | None
+    # Micro-sprint 3F — colunas N ("QUANT. DIÁRIA INTEGRAL") e O ("QUANT.
+    # DIÁRIA PARCIAL") do Controle DIMCAC, já calculadas por um processo
+    # anterior (extração/complemento) e persistidas manualmente/automaticamente
+    # nesta planilha — nunca recalculadas aqui nem em nenhum lugar do
+    # Relatório de Diárias. `None` quando ausente/não numérico, nunca `0`
+    # adivinhado (mesma filosofia de `valor_total_diarias`/`_valor_como_numero`).
+    quantidade_diaria_integral: int | None = None
+    quantidade_diaria_parcial: int | None = None

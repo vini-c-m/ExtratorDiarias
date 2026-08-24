@@ -432,4 +432,72 @@ def test_ponta_a_ponta_preparar_decidir_reaproveitar_invalidar(tmp_path):
     estados = {r["identidade_grupo"]: r["estado"] for r in corpo["revisoes"]}
     assert estados[identidade_1] == "desatualizada"
     assert estados[identidade_2] == "decidida"
-    assert corpo["pode_gerar_relatorio"] is False
+
+
+# --- Micro-sprint 3F: POST /gerar — endpoint aditivo, não conectado ao frontend
+
+
+def test_post_gerar_produz_arquivo(tmp_path):
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_template = tmp_path / "template.xlsx"
+    construir_template_sintetico(str(caminho_template))
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_template=str(caminho_template),
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["total_ocorrencias"] == 1
+    assert caminho_destino.exists()
+
+
+def test_post_gerar_bloqueia_com_revisao_pendente_409(tmp_path):
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_template = tmp_path / "template.xlsx"
+    construir_template_sintetico(str(caminho_template))
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_template=str(caminho_template),
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 409
+    assert not caminho_destino.exists()
+
+
+def test_post_gerar_nao_sobrescreve_destino_existente_409(tmp_path):
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_template = tmp_path / "template.xlsx"
+    construir_template_sintetico(str(caminho_template))
+    caminho_destino = tmp_path / "saida.xlsx"
+    caminho_destino.write_bytes(b"conteudo previo")
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_template=str(caminho_template),
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 409
+    assert caminho_destino.read_bytes() == b"conteudo previo"

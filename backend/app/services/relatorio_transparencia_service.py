@@ -55,6 +55,13 @@ from app.domain.relatorio_transparencia.decisao import (
 )
 from app.domain.relatorio_transparencia.motor_decisao import OcorrenciaFinanceira, classificar
 from app.domain.relatorio_transparencia.motor_reconciliacao import reconciliar
+from app.planilha.escritor_relatorio_transparencia import (
+    DestinoJaExiste,
+    RelatorioBloqueadoPorPendencias,
+    RelatorioGeradoResultado,
+    TemplateEstruturalmenteInvalido,
+    gerar_xlsx_relatorio_transparencia,
+)
 
 __all__ = [
     "BaseOBNaoEncontrada",
@@ -65,12 +72,16 @@ __all__ = [
     "DecisaoInvalida",
     "PersistenciaDecisoesCorrompida",
     "VersaoEsquemaIncompativel",
+    "RelatorioBloqueadoPorPendencias",
+    "DestinoJaExiste",
+    "TemplateEstruturalmenteInvalido",
     "OcorrenciaResumo",
     "RevisaoResumo",
     "ResumoRelatorio",
     "preparar_relatorio",
     "listar_revisoes",
     "registrar_decisao_revisao",
+    "gerar_relatorio_xlsx",
 ]
 
 _logger = logging.getLogger(__name__)
@@ -384,3 +395,48 @@ def registrar_decisao_revisao(
         caminho_decisoes=caminho_decisoes,
     )
     return _resumo(revisado_atualizado)
+
+
+def gerar_relatorio_xlsx(
+    *,
+    caminho_base_ordens_bancarias: str,
+    caminho_controle_dimcac: str,
+    ano_exercicio: int,
+    mes_referencia: int,
+    caminho_decisoes: str,
+    caminho_template: str,
+    caminho_destino: str,
+    hoje: date | None = None,
+) -> RelatorioGeradoResultado:
+    """Micro-sprint 3F — único ponto de entrada real para gerar o XLSX
+    final. Nunca recebe do chamador uma lista de OBs a publicar ou
+    qualquer outro dado de conteúdo: o frontend (ou qualquer outro
+    chamador) só pode pedir "gerar o relatório desta competência" — todo
+    o conteúdo vem, sempre, da reconstrução por `_montar_resultado_
+    revisado` (mesmo núcleo único de `preparar_relatorio`/
+    `registrar_decisao_revisao`, fontes brutas + RN01-RN07 + decisões já
+    persistidas). `pode_gerar_relatorio` (G05) é verificado dentro de
+    `gerar_xlsx_relatorio_transparencia` mesmo que este service seja
+    contornado — a garantia real não depende desta camada."""
+    revisado = _montar_resultado_revisado(
+        caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
+        caminho_controle_dimcac=caminho_controle_dimcac,
+        ano_exercicio=ano_exercicio,
+        mes_referencia=mes_referencia,
+        caminho_decisoes=caminho_decisoes,
+    )
+    resultado = gerar_xlsx_relatorio_transparencia(
+        revisado,
+        caminho_template=caminho_template,
+        caminho_destino=caminho_destino,
+        ano_exercicio=ano_exercicio,
+        mes_referencia=mes_referencia,
+        hoje=hoje,
+    )
+    _logger.info(
+        "Relatório XLSX gerado: %s (%s ocorrências, valor total diárias %.2f)",
+        resultado.caminho_arquivo,
+        resultado.total_ocorrencias,
+        resultado.total_valor_diarias,
+    )
+    return resultado

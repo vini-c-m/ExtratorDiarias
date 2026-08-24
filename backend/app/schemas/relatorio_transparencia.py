@@ -101,3 +101,22 @@ class RequisicaoRegistrarDecisao(ParametrosRelatorioBase):
                     "informe uma justificativa (observacao) para confirmar esta decisão."
                 )
         return self
+
+
+class RequisicaoGerarRelatorio(ParametrosRelatorioBase):
+    """`POST /gerar` — Micro-sprint 3F. Só pede "gerar o relatório desta
+    competência" — nunca envia conteúdo (lista de OBs, valores etc.): o
+    conteúdo é sempre reconstruído no backend a partir das fontes e das
+    decisões já persistidas, igual às demais operações deste módulo."""
+
+    caminho_template: str
+    caminho_destino: str
+
+
+class RelatorioGeradoResposta(BaseModel):
+    caminho_arquivo: str
+    total_ocorrencias: int
+    total_valor_diarias: float
+    primeira_linha_dados: int
+    ultima_linha_dados: int
+    linha_total: int

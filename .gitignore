@@ -56,3 +56,9 @@ tests/e2e/fixtures/resultado_*/
 # desta execução local) — só os PDFs/planilha de entrada em scripts/demo/
 # são versionados, nunca o resultado de rodar o app sobre eles.
 scripts/demo/resultado_*/
+
+# Micro-Sprint 3F — template/relatório oficial real do Portal da
+# Transparência, usado READ-ONLY como referência de estrutura/formatação
+# para o gerador XLSX. Mesma política permanente acima: nunca versionar.
+/RELATÓRIO DIÁRIAS PORTAL DA TRANSPARENCIA*.xlsx
+/scratch-3f/
