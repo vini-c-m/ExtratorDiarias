@@ -13,6 +13,7 @@ from app.api import (
     planilha,
     processamento,
     regularizacao_dh,
+    relatorio_transparencia,
     saude,
 )
 
@@ -78,3 +79,4 @@ app.include_router(configuracao.router)
 app.include_router(analitica.router)
 app.include_router(finalizacao.router)
 app.include_router(regularizacao_dh.router)
+app.include_router(relatorio_transparencia.router)
