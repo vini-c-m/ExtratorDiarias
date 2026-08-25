@@ -144,6 +144,70 @@ def test_campo_obrigatorio_ausente_levanta_erro_explicito(tmp_path):
         carregar_decisoes(caminho)
 
 
+# --- Confronto QA Codex — falhas de leitura/decodificação também precisam
+# virar `PersistenciaDecisoesCorrompida`, nunca escapar cru até `/preparar`,
+# `/revisoes`, o registro de decisão ou `/gerar` como um 500 técnico.
+# Achado real: `UnicodeDecodeError`/`PermissionError`/`OSError` não eram
+# capturados antes desta correção.
+
+
+def test_bytes_utf8_invalidos_levanta_erro_explicito(tmp_path):
+    caminho = tmp_path / "decisoes.json"
+    caminho.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+
+    with pytest.raises(PersistenciaDecisoesCorrompida):
+        carregar_decisoes(caminho)
+
+
+def test_permission_error_levanta_erro_explicito(tmp_path, monkeypatch):
+    caminho = tmp_path / "decisoes.json"
+    caminho.write_text('{"versao_esquema": 1, "decisoes": {}}', encoding="utf-8")
+
+    def _read_text_nega_permissao(self, *args, **kwargs):
+        raise PermissionError("Acesso negado (simulado)")
+
+    monkeypatch.setattr("pathlib.Path.read_text", _read_text_nega_permissao)
+
+    with pytest.raises(PersistenciaDecisoesCorrompida):
+        carregar_decisoes(caminho)
+
+
+def test_oserror_generico_levanta_erro_explicito(tmp_path, monkeypatch):
+    caminho = tmp_path / "decisoes.json"
+    caminho.write_text('{"versao_esquema": 1, "decisoes": {}}', encoding="utf-8")
+
+    def _read_text_falha_io(self, *args, **kwargs):
+        raise OSError("Falha de E/S simulada")
+
+    monkeypatch.setattr("pathlib.Path.read_text", _read_text_falha_io)
+
+    with pytest.raises(PersistenciaDecisoesCorrompida):
+        carregar_decisoes(caminho)
+
+
+def test_erros_de_leitura_nunca_expoem_o_erro_python_cru(tmp_path):
+    caminho = tmp_path / "decisoes.json"
+    caminho.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+
+    with pytest.raises(PersistenciaDecisoesCorrompida) as excinfo:
+        carregar_decisoes(caminho)
+
+    assert "UnicodeDecodeError" not in str(excinfo.value)
+    assert "Traceback" not in str(excinfo.value)
+
+
+def test_persistencia_valida_continua_funcionando_apos_a_correcao(tmp_path):
+    """Controle — a correção não pode quebrar o caminho feliz já
+    homologado (roundtrip salvar/carregar)."""
+    caminho = tmp_path / "decisoes.json"
+    decisao = registrar_decisao(_revisao(), acao=AcaoDecisao.PUBLICAR, autor="teste@teste.com", obs_publicaveis={"2026OB000001"})
+    salvar_decisao(caminho, decisao)
+
+    carregado = carregar_decisoes(caminho)
+
+    assert carregado[decisao.identidade_grupo].autor == "teste@teste.com"
+
+
 # --- 21. Versão de esquema incompatível -------------------------------------
 
 

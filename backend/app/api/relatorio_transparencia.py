@@ -32,6 +32,7 @@ from app.services.relatorio_transparencia_service import (
     DestinoJaExiste,
     EstruturaBaseOBInvalida,
     EstruturaControleInvalida,
+    GeracaoConcorrenteEmAndamento,
     OcorrenciaResumo,
     RelatorioBloqueadoPorPendencias,
     ResumoRelatorio,
@@ -156,6 +157,8 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
     except RelatorioBloqueadoPorPendencias as erro:
         raise HTTPException(status_code=409, detail=str(erro)) from erro
     except DestinoJaExiste as erro:
+        raise HTTPException(status_code=409, detail=str(erro)) from erro
+    except GeracaoConcorrenteEmAndamento as erro:
         raise HTTPException(status_code=409, detail=str(erro)) from erro
     except TemplateEstruturalmenteInvalido as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro

@@ -62,6 +62,7 @@ from app.domain.relatorio_transparencia.motor_decisao import OcorrenciaFinanceir
 from app.domain.relatorio_transparencia.motor_reconciliacao import reconciliar
 from app.planilha.escritor_relatorio_transparencia import (
     DestinoJaExiste,
+    GeracaoConcorrenteEmAndamento,
     RelatorioBloqueadoPorPendencias,
     RelatorioGeradoResultado,
     TemplateEstruturalmenteInvalido,
@@ -79,6 +80,7 @@ __all__ = [
     "VersaoEsquemaIncompativel",
     "RelatorioBloqueadoPorPendencias",
     "DestinoJaExiste",
+    "GeracaoConcorrenteEmAndamento",
     "TemplateEstruturalmenteInvalido",
     "TemplateOficialIndisponivel",
     "ConfiguracaoTemplateCorrompida",

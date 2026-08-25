@@ -18,7 +18,18 @@ confirmado célula a célula — ver relatório da Micro-sprint 3F):
                                   (Micro-sprint 3F.1: o modelo real armazena
                                   esta coluna como texto em 100% das linhas,
                                   nunca como data/serial Excel)
-    C Nome                    <- OrdemBancaria.nome
+    C Nome                    <- OrdemBancaria.nome (fonte primária), com
+                                  fallback para OrdemBancaria.credor SOMENTE
+                                  quando nome for comprovadamente um
+                                  truncamento/prefixo de credor (decisão de
+                                  negócio aprovada após investigação
+                                  read-only NOME×CREDOR — Base OB real tem
+                                  ~18,5% dos NOME cortados por um limite de
+                                  campo de ~30 caracteres da fonte, enquanto
+                                  CREDOR preserva o nome completo nesses
+                                  casos; nunca uma troca por tamanho nem por
+                                  simples divergência de grafia — ver
+                                  `_nome_publicado` abaixo)
     D Cargo                   <- RegistroControle.cargo (Controle DIMCAC
                                   coluna G, matriz de origem confirmada pelo
                                   negócio, Micro-sprint 3G.1), com fallback
@@ -71,6 +82,7 @@ from app.domain.relatorio_transparencia.quantidade_diarias import resolver_quant
 __all__ = [
     "RelatorioBloqueadoPorPendencias",
     "DestinoJaExiste",
+    "GeracaoConcorrenteEmAndamento",
     "TemplateEstruturalmenteInvalido",
     "RelatorioGeradoResultado",
     "gerar_xlsx_relatorio_transparencia",
@@ -96,6 +108,14 @@ class RelatorioBloqueadoPorPendencias(Exception):
 class DestinoJaExiste(Exception):
     """Item 17 — nunca sobrescreve silenciosamente um arquivo já existente
     no destino."""
+
+
+class GeracaoConcorrenteEmAndamento(Exception):
+    """Confronto QA / homologação operacional — duas requisições `/gerar`
+    simultâneas para o MESMO destino não podem ambas concluir com sucesso.
+    Levantada quando outra geração para este destino específico já está em
+    andamento (arquivo de lock, ver `_adquirir_trava_destino` abaixo);
+    nunca uma condição sobre o conteúdo do relatório em si."""
 
 
 class TemplateEstruturalmenteInvalido(Exception):
@@ -266,6 +286,34 @@ def _valor_do_controle_com_fallback(
     return valor_base_ob
 
 
+def _nome_publicado(ordem: OrdemBancaria) -> str | None:
+    """Micro-sprint corretiva NOME×CREDOR — decisão de negócio aprovada
+    após investigação read-only dedicada (ver relatório da investigação):
+    `nome` (Base OB.NOME) continua a fonte PRIMÁRIA; só cai para
+    `credor` (Base OB.CREDOR) quando houver relação de truncamento/prefixo
+    COMPROVADA — nunca por `nome` ter 30 caracteres, nunca só por serem
+    diferentes. Detecção deliberadamente conservadora: só remove espaços
+    externos (necessário para reconhecer continuação com segurança sem
+    depender de como a fonte formatou o campo); NENHUMA normalização de
+    acento/caixa, NENHUM fuzzy matching, NENHUMA tentativa de decidir qual
+    grafia é "correta" — isso trataria uma simples divergência de nome
+    (ex.: "LUIS"/"LUIZ", acento diferente) como se fosse truncamento, o
+    que a investigação explicitamente definiu como fora do escopo desta
+    regra. Na dúvida (relação de prefixo não comprovada), mantém `nome` —
+    o mesmo comportamento de sempre."""
+    nome = ordem.nome
+    credor = ordem.credor
+    if not isinstance(nome, str) or not isinstance(credor, str):
+        return nome
+    nome_stripped = nome.strip()
+    credor_stripped = credor.strip()
+    if not nome_stripped:
+        return nome
+    if len(credor_stripped) > len(nome_stripped) and credor_stripped.startswith(nome_stripped):
+        return credor_stripped
+    return nome
+
+
 def _escrever_linha_ocorrencia(
     ws: Worksheet,
     linha: int,
@@ -278,7 +326,7 @@ def _escrever_linha_ocorrencia(
 
     ws[f"A{linha}"] = ordem.ob
     ws[f"B{linha}"] = _data_pagamento_como_texto(ordem.data_pagamento)
-    ws[f"C{linha}"] = ordem.nome
+    ws[f"C{linha}"] = _nome_publicado(ordem)
     ws[f"D{linha}"] = cargo
     ws[f"E{linha}"] = _valor_data(ordem.periodo_inicial)
     ws[f"F{linha}"] = _valor_data(ordem.periodo_final)
@@ -294,6 +342,48 @@ def _escrever_linha_ocorrencia(
     ws[f"M{linha}"] = ordem.valor  # RN02 — sempre o valor bruto da Base OB, zero incluso
 
     return ordem.valor or 0.0
+
+
+def _caminho_trava(caminho_destino: str) -> str:
+    return f"{caminho_destino}.gerando.lock"
+
+
+def _adquirir_trava_destino(caminho_destino: str) -> str:
+    """Confronto QA / homologação operacional — `os.path.exists(destino)`
+    sozinho é só uma checagem, não uma reserva: duas requisições `/gerar`
+    simultâneas para o MESMO destino passavam as duas por ela (nenhuma via
+    o arquivo do outro ainda), geravam em paralelo e a última a chamar
+    `os.replace` no fim vencia silenciosamente — nunca um erro, nunca um
+    aviso, só uma sobrescrita.
+
+    A correção não depende de nada no frontend (um duplo-clique, uma aba
+    duplicada, um retry automático — nenhum deles pode ser assumido como
+    impossível pelo backend). `os.open(..., O_CREAT | O_EXCL)` é a mesma
+    chamada de sistema (`open(2)`/`CreateFileW` com `CREATE_NEW`) usada
+    para lockfiles há décadas justamente porque cria-e-falha-se-já-existir
+    é atômico no nível do sistema de arquivos, em qualquer SO local — não
+    há janela entre "checar" e "criar" para uma segunda chamada colar no
+    meio, ao contrário de `os.path.exists` seguido de qualquer escrita
+    posterior. Suficiente e apropriado aqui porque o caso de uso é
+    desktop/local de um único usuário por vez (nunca um serviço
+    multiusuário/distribuído) — não precisa de um lock distribuído, só de
+    impedir que duas requisições HTTP concorrentes no mesmo processo/
+    máquina peguem o mesmo destino ao mesmo tempo.
+
+    O arquivo de trava fica AO LADO do destino real (nunca substitui nem
+    aparenta ser o relatório — sufixo `.gerando.lock`, nunca `.xlsx`), então
+    uma pasta sendo observada nunca mostra um `.xlsx` vazio/inválido
+    aparecendo antes da hora (ver também `os.replace` atômico do
+    temporário, já existente, para o próprio conteúdo do arquivo)."""
+    caminho_lock = _caminho_trava(caminho_destino)
+    try:
+        descritor_lock = os.open(caminho_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as erro:
+        raise GeracaoConcorrenteEmAndamento(
+            f"Já existe uma geração em andamento para este destino: {caminho_destino}"
+        ) from erro
+    os.close(descritor_lock)
+    return caminho_lock
 
 
 def _chave_ordenacao(candidato: CandidatoNormal):
@@ -331,110 +421,146 @@ def gerar_xlsx_relatorio_transparencia(
     if not os.path.isfile(caminho_template):
         raise TemplateEstruturalmenteInvalido(f"Template não encontrado: {caminho_template}")
 
-    if os.path.exists(caminho_destino):
-        raise DestinoJaExiste(f"Já existe um arquivo no destino: {caminho_destino}")
-
     candidatos_ordenados = sorted(resultado.candidatos_publicaveis, key=_chave_ordenacao)
 
     destino_dir = os.path.dirname(os.path.abspath(caminho_destino)) or "."
     os.makedirs(destino_dir, exist_ok=True)
 
-    # Item 17 — escrita segura: gera num temporário na MESMA pasta do
-    # destino (garante que o `os.replace` final seja atômico, mesmo
-    # sistema de arquivos), nunca deixa um arquivo final parcialmente
-    # escrito no destino real.
-    descritor_tmp, caminho_tmp = tempfile.mkstemp(suffix=".xlsx", dir=destino_dir)
-    os.close(descritor_tmp)
+    # Confronto QA / homologação operacional — a trava precisa existir
+    # ANTES da checagem de "já existe" abaixo: é ela quem garante que só
+    # uma requisição por vez chega a fazer essa checagem para este
+    # destino (ver `_adquirir_trava_destino`).
+    caminho_lock = _adquirir_trava_destino(caminho_destino)
     try:
-        shutil.copy2(caminho_template, caminho_tmp)
-        workbook = load_workbook(caminho_tmp, data_only=False)
-        if _NOME_ABA_DADOS not in workbook.sheetnames:
-            raise TemplateEstruturalmenteInvalido(
-                f"Aba obrigatória ausente no template: {_NOME_ABA_DADOS!r}"
-            )
-        ws = workbook[_NOME_ABA_DADOS]
+        if os.path.exists(caminho_destino):
+            raise DestinoJaExiste(f"Já existe um arquivo no destino: {caminho_destino}")
 
-        linha_total_antiga = _localizar_linha_total(ws)
-        quantidade_antiga = linha_total_antiga - _PRIMEIRA_LINHA_DADOS
-        quantidade_nova = len(candidatos_ordenados)
+        # Item 17 — escrita segura: gera num temporário na MESMA pasta do
+        # destino (garante que o `os.replace` final seja atômico, mesmo
+        # sistema de arquivos), nunca deixa um arquivo final parcialmente
+        # escrito no destino real.
+        descritor_tmp, caminho_tmp = tempfile.mkstemp(suffix=".xlsx", dir=destino_dir)
+        os.close(descritor_tmp)
+        try:
+            shutil.copy2(caminho_template, caminho_tmp)
+            workbook = load_workbook(caminho_tmp, data_only=False)
+            if _NOME_ABA_DADOS not in workbook.sheetnames:
+                raise TemplateEstruturalmenteInvalido(
+                    f"Aba obrigatória ausente no template: {_NOME_ABA_DADOS!r}"
+                )
+            ws = workbook[_NOME_ABA_DADOS]
 
-        colunas_dados = "ABCDEFGHIJKLM"
+            linha_total_antiga = _localizar_linha_total(ws)
+            quantidade_antiga = linha_total_antiga - _PRIMEIRA_LINHA_DADOS
+            quantidade_nova = len(candidatos_ordenados)
 
-        if quantidade_nova > quantidade_antiga:
-            diferenca = quantidade_nova - quantidade_antiga
-            ws.insert_rows(linha_total_antiga, amount=diferenca)
-            _realinhar_merges(ws, linha_total_antiga, diferenca)
-            _realinhar_alturas_de_linha(ws, linha_total_antiga, diferenca)
-            for offset in range(diferenca):
-                linha_nova = linha_total_antiga + offset
-                _copiar_estilo_linha(ws, _PRIMEIRA_LINHA_DADOS, linha_nova, colunas_dados)
-        elif quantidade_nova < quantidade_antiga:
-            diferenca = quantidade_antiga - quantidade_nova
-            inicio_remocao = _PRIMEIRA_LINHA_DADOS + quantidade_nova
-            ws.delete_rows(inicio_remocao, amount=diferenca)
-            _realinhar_merges(ws, inicio_remocao + diferenca, -diferenca)
-            _realinhar_alturas_de_linha(ws, inicio_remocao + diferenca, -diferenca)
+            colunas_dados = "ABCDEFGHIJKLM"
 
-        linha_total_nova = _PRIMEIRA_LINHA_DADOS + quantidade_nova
-        ultima_linha_dados = linha_total_nova - 1 if quantidade_nova > 0 else _PRIMEIRA_LINHA_DADOS - 1
+            if quantidade_nova > quantidade_antiga:
+                diferenca = quantidade_nova - quantidade_antiga
+                ws.insert_rows(linha_total_antiga, amount=diferenca)
+                _realinhar_merges(ws, linha_total_antiga, diferenca)
+                _realinhar_alturas_de_linha(ws, linha_total_antiga, diferenca)
+                for offset in range(diferenca):
+                    linha_nova = linha_total_antiga + offset
+                    _copiar_estilo_linha(ws, _PRIMEIRA_LINHA_DADOS, linha_nova, colunas_dados)
+            elif quantidade_nova < quantidade_antiga:
+                diferenca = quantidade_antiga - quantidade_nova
+                inicio_remocao = _PRIMEIRA_LINHA_DADOS + quantidade_nova
+                ws.delete_rows(inicio_remocao, amount=diferenca)
+                _realinhar_merges(ws, inicio_remocao + diferenca, -diferenca)
+                _realinhar_alturas_de_linha(ws, inicio_remocao + diferenca, -diferenca)
 
-        total_valor = 0.0
-        for indice, candidato in enumerate(candidatos_ordenados):
-            linha = _PRIMEIRA_LINHA_DADOS + indice
-            total_valor += _escrever_linha_ocorrencia(
-                ws, linha, candidato.ocorrencia.ordem_bancaria, candidato.registros_controle
-            )
+            linha_total_nova = _PRIMEIRA_LINHA_DADOS + quantidade_nova
+            ultima_linha_dados = linha_total_nova - 1 if quantidade_nova > 0 else _PRIMEIRA_LINHA_DADOS - 1
 
-        # Fórmulas de total — sempre recalculadas para a faixa REAL de
-        # dados desta geração (o histórico tinha uma faixa desatualizada,
-        # ver relatório da investigação — G01, não reproduzido).
-        if quantidade_nova > 0:
-            ws[f"J{linha_total_nova}"] = f"=SUM(J{_PRIMEIRA_LINHA_DADOS}:J{ultima_linha_dados})"
-            ws[f"M{linha_total_nova}"] = f"=SUM(M{_PRIMEIRA_LINHA_DADOS}:M{ultima_linha_dados})"
-        else:
-            ws[f"J{linha_total_nova}"] = 0
-            ws[f"M{linha_total_nova}"] = 0
+            total_valor = 0.0
+            for indice, candidato in enumerate(candidatos_ordenados):
+                linha = _PRIMEIRA_LINHA_DADOS + indice
+                total_valor += _escrever_linha_ocorrencia(
+                    ws, linha, candidato.ocorrencia.ordem_bancaria, candidato.registros_controle
+                )
 
-        # Título/competência (linha 3) e data de atualização (2 linhas
-        # abaixo da linha de totais, mesmo deslocamento do template real).
-        mes_nome = _MESES_EXTENSO[mes_referencia - 1]
-        ws["A3"] = f"PAGAS ATÉ {mes_nome}/{ano_exercicio}"
+            # Fórmulas de total — sempre recalculadas para a faixa REAL de
+            # dados desta geração (o histórico tinha uma faixa desatualizada,
+            # ver relatório da investigação — G01, não reproduzido).
+            if quantidade_nova > 0:
+                ws[f"J{linha_total_nova}"] = f"=SUM(J{_PRIMEIRA_LINHA_DADOS}:J{ultima_linha_dados})"
+                ws[f"M{linha_total_nova}"] = f"=SUM(M{_PRIMEIRA_LINHA_DADOS}:M{ultima_linha_dados})"
+            else:
+                ws[f"J{linha_total_nova}"] = 0
+                ws[f"M{linha_total_nova}"] = 0
 
-        linha_atualizacao = linha_total_nova + 2
-        data_referencia = hoje or date.today()
-        celula_atualizacao = ws[f"A{linha_atualizacao}"]
-        if isinstance(celula_atualizacao.value, str) and celula_atualizacao.value.startswith(
-            "Data da última atualização"
-        ):
-            celula_atualizacao.value = (
-                f"Data da última atualização: {data_referencia.strftime('%d.%m.%Y')}"
-            )
+            # Título/competência (linha 3) e data de atualização (2 linhas
+            # abaixo da linha de totais, mesmo deslocamento do template real).
+            mes_nome = _MESES_EXTENSO[mes_referencia - 1]
+            ws["A3"] = f"PAGAS ATÉ {mes_nome}/{ano_exercicio}"
 
-        # Autofiltro cobre cabeçalho + dados (nunca a área de totais/notas
-        # — decisão deliberada desta Micro-sprint, ver relatório).
-        if quantidade_nova > 0:
-            ws.auto_filter.ref = f"A5:O{ultima_linha_dados}"
-        else:
-            ws.auto_filter.ref = "A5:O5"
+            linha_atualizacao = linha_total_nova + 2
+            data_referencia = hoje or date.today()
+            celula_atualizacao = ws[f"A{linha_atualizacao}"]
+            if isinstance(celula_atualizacao.value, str) and celula_atualizacao.value.startswith(
+                "Data da última atualização"
+            ):
+                celula_atualizacao.value = (
+                    f"Data da última atualização: {data_referencia.strftime('%d.%m.%Y')}"
+                )
 
-        workbook.save(caminho_tmp)
-        workbook.close()
+            # Autofiltro cobre cabeçalho + dados (nunca a área de totais/notas
+            # — decisão deliberada desta Micro-sprint, ver relatório).
+            if quantidade_nova > 0:
+                ws.auto_filter.ref = f"A5:O{ultima_linha_dados}"
+            else:
+                ws.auto_filter.ref = "A5:O5"
 
-        # Validação mínima antes do replace: reabre o temporário e
-        # confere que a aba e a contagem de linhas batem com o esperado —
-        # nunca promove um arquivo que não passou por esta checagem.
-        validacao = load_workbook(caminho_tmp, data_only=False)
-        if _NOME_ABA_DADOS not in validacao.sheetnames:
-            raise TemplateEstruturalmenteInvalido("Falha ao validar o arquivo gerado (aba ausente).")
-        ws_validacao = validacao[_NOME_ABA_DADOS]
-        if quantidade_nova > 0:
-            assert ws_validacao[f"A{_PRIMEIRA_LINHA_DADOS}"].value == candidatos_ordenados[0].ocorrencia.ordem_bancaria.ob
-        validacao.close()
+            workbook.save(caminho_tmp)
+            workbook.close()
 
-        os.replace(caminho_tmp, caminho_destino)
+            # Validação mínima antes do replace: reabre o temporário e
+            # confere que a aba e a contagem de linhas batem com o esperado —
+            # nunca promove um arquivo que não passou por esta checagem.
+            validacao = load_workbook(caminho_tmp, data_only=False)
+            if _NOME_ABA_DADOS not in validacao.sheetnames:
+                raise TemplateEstruturalmenteInvalido("Falha ao validar o arquivo gerado (aba ausente).")
+            ws_validacao = validacao[_NOME_ABA_DADOS]
+            if quantidade_nova > 0:
+                assert ws_validacao[f"A{_PRIMEIRA_LINHA_DADOS}"].value == candidatos_ordenados[0].ocorrencia.ordem_bancaria.ob
+            validacao.close()
+
+            # Confronto QA / revalidação Codex — a checagem `os.path.exists`
+            # feita mais acima (ainda sob a trava) só protege contra OUTRA
+            # geração deste app: um terceiro processo (ou o próprio usuário,
+            # via Explorer) pode criar um arquivo em `caminho_destino` DEPOIS
+            # dessa checagem e ANTES desta promoção — a trava é cooperativa
+            # entre chamadas deste módulo, nunca um lock do sistema de
+            # arquivos sobre o destino em si. `os.replace` (que sempre
+            # sobrescreve, mesmo semântica de `rename(2)` POSIX) reabriria
+            # exatamente essa janela na última linha da função.
+            #
+            # `os.rename` no Windows mapeia para `MoveFileExW` SEM a flag
+            # `MOVEFILE_REPLACE_EXISTING` — falha com `FileExistsError` se o
+            # destino já existir, numa única chamada de sistema atômica (o
+            # próprio SO faz checar+renomear como uma operação só, sem
+            # janela para uma escrita de terceiro colar no meio — ao
+            # contrário de um `exists()` seguido de qualquer operação
+            # posterior). O arquivo que apareceu no destino nunca é tocado
+            # (confirmado: `os.rename` falhando não move nem apaga nada); o
+            # temporário desta geração segue intacto e é removido no
+            # `finally` abaixo — nunca fica um XLSX parcial no destino real.
+            try:
+                os.rename(caminho_tmp, caminho_destino)
+            except FileExistsError as erro:
+                raise DestinoJaExiste(
+                    f"Já existe um arquivo no destino: {caminho_destino}"
+                ) from erro
+        finally:
+            if os.path.exists(caminho_tmp):
+                os.remove(caminho_tmp)
     finally:
-        if os.path.exists(caminho_tmp):
-            os.remove(caminho_tmp)
+        # A trava é liberada sempre — sucesso ou falha — nunca deixando um
+        # `DestinoJaExiste`/erro de geração órfão bloquear indefinidamente
+        # uma nova tentativa para o mesmo destino.
+        os.remove(caminho_lock)
 
     return RelatorioGeradoResultado(
         caminho_arquivo=caminho_destino,

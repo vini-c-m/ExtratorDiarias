@@ -32,11 +32,18 @@ VERSAO_ESQUEMA_ATUAL = 1
 
 
 class PersistenciaDecisoesCorrompida(Exception):
-    """JSON malformado, ou estrutura interna que não corresponde ao
-    esquema esperado — nunca silenciada, nunca "corrigida" automaticamente
-    (mesma filosofia de `OrdensBancariasEstruturalmenteInvalida`/
+    """JSON malformado, estrutura interna que não corresponde ao esquema
+    esperado, bytes que não decodificam como UTF-8, ou o arquivo
+    simplesmente não pôde ser lido (permissão negada, bloqueado por outro
+    processo, outro erro de I/O) — nunca silenciada, nunca "corrigida"
+    automaticamente (mesma filosofia de
+    `OrdensBancariasEstruturalmenteInvalida`/
     `ControleDimcacEstruturalmenteInvalido`: falha explícita, mensagem já
-    adequada para o usuário)."""
+    adequada para o usuário). Mesmo critério de
+    `configuracao_template_relatorio_transparencia.ConfiguracaoTemplateCorrompida`
+    para o arquivo irmão de configuração do template (confronto QA Codex /
+    QA-RT-03) — nunca deixa `UnicodeDecodeError`/`PermissionError`/
+    `OSError` escaparem como um 500 genérico."""
 
 
 class VersaoEsquemaIncompativel(PersistenciaDecisoesCorrompida):
@@ -79,13 +86,32 @@ def carregar_decisoes(caminho: str | Path) -> dict[str, DecisaoHumana]:
     """Arquivo inexistente é um estado normal (nenhuma decisão registrada
     ainda) — devolve `{}`, nunca levanta exceção. Qualquer outra falha de
     leitura (JSON malformado, campo obrigatório ausente, versão de
-    esquema diferente) é sempre explícita, nunca silenciada."""
+    esquema diferente, bytes que não decodificam como UTF-8, ou o arquivo
+    existir mas não poder ser lido) é sempre explícita, nunca silenciada
+    (confronto QA Codex — achado real: `UnicodeDecodeError`/
+    `PermissionError`/`OSError` genérico escapavam daqui até `/preparar`,
+    `/revisoes`, o registro de decisão e `/gerar` como um 500 técnico)."""
     caminho = Path(caminho)
     if not caminho.is_file():
         return {}
 
     try:
-        bruto = json.loads(caminho.read_text(encoding="utf-8"))
+        texto = caminho.read_text(encoding="utf-8")
+    except UnicodeDecodeError as erro:
+        raise PersistenciaDecisoesCorrompida(
+            "Arquivo de decisões corrompido (codificação de texto inválida)."
+        ) from erro
+    except PermissionError as erro:
+        raise PersistenciaDecisoesCorrompida(
+            "Arquivo de decisões não pôde ser lido (permissão negada)."
+        ) from erro
+    except OSError as erro:
+        raise PersistenciaDecisoesCorrompida(
+            "Arquivo de decisões não pôde ser lido (falha de leitura)."
+        ) from erro
+
+    try:
+        bruto = json.loads(texto)
     except json.JSONDecodeError as erro:
         raise PersistenciaDecisoesCorrompida(
             f"Arquivo de decisões corrompido (JSON inválido): {caminho} ({erro})"

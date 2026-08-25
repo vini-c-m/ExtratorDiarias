@@ -3,8 +3,10 @@ Transparência. Dados 100% sintéticos (identificadores fictícios, sem
 nenhuma base real)."""
 
 import os
+import threading
 from datetime import date
 
+import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook
 
@@ -528,6 +530,43 @@ def test_post_gerar_nao_sobrescreve_destino_existente_409(tmp_path):
     assert caminho_destino.read_bytes() == b"conteudo previo"
 
 
+def test_post_gerar_duas_requisicoes_http_simultaneas_mesmo_destino_apenas_uma_200(tmp_path):
+    """Confronto QA / homologação operacional — reproduz exatamente o
+    cenário original (2 requisições `/gerar` simultâneas para o mesmo
+    `caminho_destino`) na própria camada HTTP, não só na função interna do
+    escritor. Antes da correção: 200 + 200, a segunda sobrescrevendo a
+    primeira silenciosamente. Esperado agora: exatamente um 200, o outro
+    409 — nunca as duas concluindo."""
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida_concorrente.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+
+    liberar_barreira = threading.Barrier(2, timeout=10)
+    respostas: dict[str, object] = {}
+
+    def _chamar(chave):
+        liberar_barreira.wait()
+        respostas[chave] = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    t1 = threading.Thread(target=_chamar, args=("a",))
+    t2 = threading.Thread(target=_chamar, args=("b",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    status = sorted(r.status_code for r in respostas.values())
+    assert status == [200, 409], f"esperado [200, 409], obtido {status}"
+    assert caminho_destino.exists()
+
+
 def test_post_gerar_sem_template_configurado_404(tmp_path):
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
@@ -712,3 +751,188 @@ def test_post_template_reconfigurar_corrige_configuracao_corrompida(tmp_path):
     )
     assert resposta_get.status_code == 200
     assert resposta_get.json()["configurado"] is True
+
+
+# --- Confronto QA Codex / revalidação final — QA-RT-03 incompleto: bytes
+# inválidos em UTF-8 (achado real do Codex) também precisam virar 503
+# amigável, nunca 500 genérico. As mesmas checagens de status/mensagem já
+# feitas acima para JSON malformado, agora para o novo caso.
+
+
+def test_get_template_bytes_utf8_invalidos_503_amigavel(tmp_path):
+    caminho_configuracao_template = tmp_path / "bytes_invalidos.json"
+    caminho_configuracao_template.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+
+    resposta = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+
+    assert resposta.status_code == 503
+    corpo = resposta.json()
+    assert "detail" in corpo
+    assert "Traceback" not in corpo["detail"]
+    assert "UnicodeDecodeError" not in corpo["detail"]
+
+
+def test_post_gerar_com_configuracao_bytes_utf8_invalidos_503_nunca_500(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = tmp_path / "bytes_invalidos.json"
+    caminho_configuracao_template.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=str(caminho_configuracao_template),
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 503
+    assert not caminho_destino.exists()
+
+
+def test_post_template_reconfigurar_corrige_configuracao_com_bytes_invalidos(tmp_path):
+    """Mesma recuperação natural de `test_post_template_reconfigurar_corrige_configuracao_corrompida`,
+    agora para o caso de bytes inválidos em UTF-8."""
+    caminho_configuracao_template = tmp_path / "bytes_invalidos.json"
+    caminho_configuracao_template.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+
+    resposta_corrompida = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+    assert resposta_corrompida.status_code == 503
+
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    caminho_template = tmp_path / "novo_template.xlsx"
+    construir_template_sintetico(str(caminho_template))
+
+    resposta_config = client.post(
+        f"{_BASE_URL}/template",
+        json={
+            "caminho_configuracao_template": str(caminho_configuracao_template),
+            "caminho_template": str(caminho_template),
+        },
+    )
+    assert resposta_config.status_code == 200
+
+    resposta_get = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+    assert resposta_get.status_code == 200
+    assert resposta_get.json()["configurado"] is True
+
+
+# --- Confronto QA Codex — arquivo de DECISÕES corrompido/ilegível também
+# precisa virar 503 amigável em TODOS os endpoints que o leem (nunca 500
+# genérico). Achado real: `UnicodeDecodeError` (e, por extensão,
+# `PermissionError`/`OSError` — já cobertos no nível unitário de
+# `test_persistencia_decisoes.py`) escapavam de `carregar_decisoes`.
+
+
+def _decisoes_json_invalido(tmp_path) -> str:
+    caminho = tmp_path / "decisoes_corrompidas.json"
+    caminho.write_text("{ isso nao e json valido ][", encoding="utf-8")
+    return str(caminho)
+
+
+def _decisoes_bytes_invalidos(tmp_path) -> str:
+    caminho = tmp_path / "decisoes_bytes_invalidos.json"
+    caminho.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+    return str(caminho)
+
+
+def _assert_503_amigavel(resposta):
+    assert resposta.status_code == 503
+    corpo = resposta.json()
+    assert "detail" in corpo
+    assert "Traceback" not in corpo["detail"]
+    assert "UnicodeDecodeError" not in corpo["detail"]
+    assert "JSONDecodeError" not in corpo["detail"]
+
+
+@pytest.mark.parametrize("fabrica_decisoes", [_decisoes_json_invalido, _decisoes_bytes_invalidos])
+def test_post_preparar_com_decisoes_corrompidas_503_amigavel(tmp_path, fabrica_decisoes):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, _ = _preparar_fontes(tmp_path, linhas)
+    caminho_decisoes = fabrica_decisoes(tmp_path)
+
+    resposta = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    )
+    _assert_503_amigavel(resposta)
+
+
+@pytest.mark.parametrize("fabrica_decisoes", [_decisoes_json_invalido, _decisoes_bytes_invalidos])
+def test_get_revisoes_com_decisoes_corrompidas_503_amigavel(tmp_path, fabrica_decisoes):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, _ = _preparar_fontes(tmp_path, linhas)
+    caminho_decisoes = fabrica_decisoes(tmp_path)
+
+    resposta = client.get(
+        f"{_BASE_URL}/revisoes", params=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    )
+    _assert_503_amigavel(resposta)
+
+
+@pytest.mark.parametrize("fabrica_decisoes", [_decisoes_json_invalido, _decisoes_bytes_invalidos])
+def test_registrar_decisao_com_decisoes_corrompidas_503_amigavel(tmp_path, fabrica_decisoes):
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, _ = _preparar_fontes(tmp_path, linhas)
+    caminho_decisoes = fabrica_decisoes(tmp_path)
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        acao="publicar", autor="servidor.teste", obs_selecionadas=["2026OB000002"],
+    )
+
+    resposta = client.post(f"{_BASE_URL}/revisoes/qualquer-identidade/decisao", json=payload)
+    _assert_503_amigavel(resposta)
+
+
+@pytest.mark.parametrize("fabrica_decisoes", [_decisoes_json_invalido, _decisoes_bytes_invalidos])
+def test_post_gerar_com_decisoes_corrompidas_503_nunca_500(tmp_path, fabrica_decisoes):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, _ = _preparar_fontes(tmp_path, linhas)
+    caminho_decisoes = fabrica_decisoes(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    _assert_503_amigavel(resposta)
+    assert not caminho_destino.exists()
+
+
+def test_decisoes_validas_continuam_funcionando_apos_a_correcao(tmp_path):
+    """Controle — a correção não pode quebrar o caminho feliz já
+    homologado: preparar, decidir e listar continuam funcionando com um
+    arquivo de decisões válido."""
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload_fontes = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+
+    corpo = client.post(f"{_BASE_URL}/preparar", json=payload_fontes).json()
+    identidade = corpo["revisoes"][0]["identidade_grupo"]
+
+    payload_decisao = dict(
+        payload_fontes, acao="publicar", autor="servidor.teste", obs_selecionadas=["2026OB000002", "2026OB000003"]
+    )
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload_decisao)
+    assert resposta.status_code == 200
+    assert resposta.json()["pode_gerar_relatorio"] is True
+
+    resposta_revisoes = client.get(f"{_BASE_URL}/revisoes", params=payload_fontes)
+    assert resposta_revisoes.status_code == 200
+    assert resposta_revisoes.json()["revisoes"][0]["estado"] == "decidida"

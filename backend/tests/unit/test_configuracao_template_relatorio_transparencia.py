@@ -191,6 +191,49 @@ def test_carregar_configuracao_template_corrompida_nunca_expoe_caminho_interno(t
     assert "configuracao_interna_sensivel" not in str(excinfo.value)
 
 
+def test_carregar_configuracao_template_bytes_utf8_invalidos(tmp_path):
+    """Confronto QA Codex / revalidação final — bytes que não decodificam
+    como UTF-8 escapavam como `UnicodeDecodeError` cru antes desta
+    correção (não capturado por nenhum dos `except` existentes)."""
+    caminho_configuracao = tmp_path / "bytes_invalidos.json"
+    caminho_configuracao.write_bytes(b"\x80\x81\x82\x83 nao decodifica como utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+def test_carregar_configuracao_template_permission_error(tmp_path, monkeypatch):
+    """Confronto QA Codex / revalidação final — arquivo existe (passa em
+    `os.path.isfile`) mas a leitura em si falha por permissão negada;
+    escapava como `PermissionError` cru antes desta correção."""
+    caminho_configuracao = tmp_path / "sem_permissao.json"
+    caminho_configuracao.write_text('{"caminho_template": "x", "configurado_em": "y"}', encoding="utf-8")
+
+    def _read_text_nega_permissao(self, *args, **kwargs):
+        raise PermissionError("Acesso negado (simulado)")
+
+    monkeypatch.setattr("pathlib.Path.read_text", _read_text_nega_permissao)
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+def test_carregar_configuracao_template_oserror_generico(tmp_path, monkeypatch):
+    """Confronto QA Codex / revalidação final — qualquer outro `OSError`
+    de leitura (arquivo bloqueado por outro processo, falha de I/O etc.)
+    também precisa virar erro de domínio controlado, nunca escapar cru."""
+    caminho_configuracao = tmp_path / "falha_io.json"
+    caminho_configuracao.write_text('{"caminho_template": "x", "configurado_em": "y"}', encoding="utf-8")
+
+    def _read_text_falha_io(self, *args, **kwargs):
+        raise OSError("Falha de E/S simulada")
+
+    monkeypatch.setattr("pathlib.Path.read_text", _read_text_falha_io)
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
 def test_resolver_caminho_template_propaga_configuracao_corrompida(tmp_path):
     """`resolver_caminho_template` (usado por `/gerar`) não engole nem
     reinterpreta a corrupção como "não configurado" — propaga o erro

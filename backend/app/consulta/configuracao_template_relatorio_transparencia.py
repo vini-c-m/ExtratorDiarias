@@ -54,14 +54,17 @@ class ConfiguracaoTemplateCorrompida(Exception):
     """Confronto QA Codex / QA-RT-03 — o arquivo de configuração
     (`caminho_configuracao_template`, infraestrutura interna) existe, mas
     não pôde ser lido como configuração válida: JSON sintaticamente
-    inválido, estrutura que não é um objeto, ou campos obrigatórios
-    ausentes/de tipo errado. Mesmo papel de `PersistenciaDecisoesCorrompida`
-    (`app/consulta/persistencia_decisoes.py`) para o arquivo irmão de
-    decisões — nunca falha silenciosamente, nunca deixa `JSONDecodeError`/
-    `KeyError`/`TypeError` escaparem para um 500 genérico; mensagem já
-    adequada para exibição direta ao usuário, nunca menciona caminho
-    interno (o arquivo de configuração é infraestrutura, não algo que o
-    usuário escolheu nesta ação)."""
+    inválido, estrutura que não é um objeto, campos obrigatórios ausentes/
+    de tipo errado, bytes que não decodificam como UTF-8, ou o arquivo
+    simplesmente não pôde ser lido (permissão negada, bloqueado por outro
+    processo, outro erro de I/O). Mesmo papel de
+    `PersistenciaDecisoesCorrompida` (`app/consulta/persistencia_decisoes.py`)
+    para o arquivo irmão de decisões — nunca falha silenciosamente, nunca
+    deixa `JSONDecodeError`/`KeyError`/`TypeError`/`UnicodeDecodeError`/
+    `OSError` escaparem para um 500 genérico; mensagem já adequada para
+    exibição direta ao usuário, nunca menciona caminho interno (o arquivo
+    de configuração é infraestrutura, não algo que o usuário escolheu
+    nesta ação)."""
 
 
 @dataclass(frozen=True)
@@ -106,15 +109,33 @@ def carregar_configuracao_template(caminho_configuracao_template: str) -> Config
     """`None` quando nada foi configurado ainda — nunca um erro (mesmo
     critério de `configuracao_app.carregar`). Qualquer outra falha de
     leitura (JSON malformado, estrutura que não é um objeto, campo
-    obrigatório ausente ou de tipo errado) sempre levanta
+    obrigatório ausente ou de tipo errado, bytes que não decodificam como
+    UTF-8, ou o arquivo existir mas não poder ser lido — permissão negada,
+    bloqueado por outro processo, outro erro de I/O) sempre levanta
     `ConfiguracaoTemplateCorrompida` — nunca deixa `JSONDecodeError`/
-    `KeyError`/`TypeError` escaparem para quem chamou (confronto QA Codex /
-    QA-RT-03; mesmo critério de `persistencia_decisoes.carregar_decisoes`)."""
+    `KeyError`/`TypeError`/`UnicodeDecodeError`/`OSError` escaparem para
+    quem chamou como um 500 genérico (confronto QA Codex / QA-RT-03; mesmo
+    critério de `persistencia_decisoes.carregar_decisoes`)."""
     if not os.path.isfile(caminho_configuracao_template):
         return None
 
     try:
-        dados = json.loads(Path(caminho_configuracao_template).read_text(encoding="utf-8"))
+        texto = Path(caminho_configuracao_template).read_text(encoding="utf-8")
+    except UnicodeDecodeError as erro:
+        raise ConfiguracaoTemplateCorrompida(
+            "Configuração do template oficial corrompida (codificação de texto inválida)."
+        ) from erro
+    except PermissionError as erro:
+        raise ConfiguracaoTemplateCorrompida(
+            "Configuração do template oficial não pôde ser lida (permissão negada)."
+        ) from erro
+    except OSError as erro:
+        raise ConfiguracaoTemplateCorrompida(
+            "Configuração do template oficial não pôde ser lida (falha de leitura)."
+        ) from erro
+
+    try:
+        dados = json.loads(texto)
     except json.JSONDecodeError as erro:
         raise ConfiguracaoTemplateCorrompida(
             f"Configuração do template oficial corrompida (JSON inválido: {erro})."

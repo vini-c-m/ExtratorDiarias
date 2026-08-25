@@ -6,6 +6,7 @@ backend homologado (Micro-sprint 3C) já entrega."""
 
 import glob
 import os
+import threading
 from datetime import date, datetime
 
 import openpyxl
@@ -28,10 +29,13 @@ from app.domain.relatorio_transparencia.motor_decisao import (
 )
 from app.planilha.escritor_relatorio_transparencia import (
     DestinoJaExiste,
+    GeracaoConcorrenteEmAndamento,
     RelatorioBloqueadoPorPendencias,
     TemplateEstruturalmenteInvalido,
     _NOME_ABA_DADOS,
     _PRIMEIRA_LINHA_DADOS,
+    _caminho_trava,
+    _nome_publicado,
     gerar_xlsx_relatorio_transparencia,
 )
 from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
@@ -46,6 +50,7 @@ def _ordem(
     dh="2026DH000001",
     linha=2,
     nome="FULANO DE TAL",
+    credor=None,
     cargo="Cargo de Teste",
     periodo_inicial=date(2026, 1, 10),
     periodo_final=date(2026, 1, 10),
@@ -59,7 +64,7 @@ def _ordem(
         linha=linha,
         dh=dh,
         ob=ob,
-        credor=nome,
+        credor=credor if credor is not None else nome,
         situacao="Paga",
         data_pagamento=data_pagamento,
         sei="19.20.0001.0000001/2026-01",
@@ -233,6 +238,230 @@ def test_nao_deixa_arquivo_temporario_apos_falha_de_bloqueio(tmp_path, template)
 
     temporarios = glob.glob(str(tmp_path / "tmp*.xlsx"))
     assert temporarios == []
+
+
+# --- Concorrência (Confronto QA / homologação operacional) -----------------
+#
+# A homologação reproduziu 2 requisições HTTP simultâneas para `/gerar` com
+# o MESMO `caminho_destino`: as duas retornavam 200, a segunda a terminar
+# sobrescrevendo silenciosamente o resultado da primeira — `os.path.exists`
+# seguido de escrita não é atômico. A correção usa `os.open(...,
+# O_CREAT | O_EXCL)` (ver `_adquirir_trava_destino`) para reservar o destino
+# antes de qualquer trabalho pesado. Os testes abaixo reproduzem a corrida
+# de verdade (threads reais disputando o mesmo destino), não só simulam a
+# sequência de chamadas.
+
+
+def test_nao_deixa_arquivo_de_trava_apos_sucesso(tmp_path, template):
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+
+    assert not os.path.exists(_caminho_trava(destino))
+
+
+def test_nao_deixa_arquivo_de_trava_apos_falha_de_bloqueio(tmp_path, template):
+    revisao = RevisaoNecessaria(regra="RN07", motivo="Motivo de teste", ocorrencias=[])
+    resultado = _resultado(revisoes=[RevisaoComEstado(revisao=revisao, estado=EstadoRevisao.PENDENTE)])
+    destino = str(tmp_path / "saida.xlsx")
+
+    with pytest.raises(RelatorioBloqueadoPorPendencias):
+        _gerar(resultado, template, destino)
+
+    assert not os.path.exists(_caminho_trava(destino))
+
+
+def test_nao_deixa_arquivo_de_trava_apos_destino_ja_existente(tmp_path, template):
+    destino = str(tmp_path / "saida.xlsx")
+    with open(destino, "wb") as f:
+        f.write(b"conteudo previo")
+
+    with pytest.raises(DestinoJaExiste):
+        _gerar(_resultado(), template, destino)
+
+    assert not os.path.exists(_caminho_trava(destino))
+
+
+def test_trava_liberada_apos_erro_permite_nova_tentativa_no_mesmo_destino(tmp_path, template):
+    """A trava nunca deve ficar órfã bloqueando retentativas legítimas após
+    uma falha que não seja uma corrida real (aqui: destino ocupado por um
+    arquivo alheio, removido antes da segunda tentativa)."""
+    destino = str(tmp_path / "saida.xlsx")
+    with open(destino, "wb") as f:
+        f.write(b"conteudo previo")
+    with pytest.raises(DestinoJaExiste):
+        _gerar(_resultado(), template, destino)
+
+    os.remove(destino)
+    resultado_gerado = _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+
+    assert os.path.exists(destino)
+    assert resultado_gerado.total_ocorrencias == 1
+
+
+def test_duas_geracoes_simultaneas_no_mesmo_destino_apenas_uma_conclui(tmp_path, template):
+    """Reproduz o achado da homologação com concorrência REAL (2 threads),
+    não uma sequência de chamadas simulando concorrência. Nunca as duas
+    podem retornar sucesso para o mesmo destino."""
+    destino = str(tmp_path / "saida.xlsx")
+    liberar_barreira = threading.Barrier(2, timeout=10)
+    resultados: dict[str, object] = {}
+
+    def _tentar(chave):
+        liberar_barreira.wait()  # maximiza a chance real de colisão
+        try:
+            resultados[chave] = _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+        except Exception as erro:  # noqa: BLE001 - captura para asserção, não engolida
+            resultados[chave] = erro
+
+    t1 = threading.Thread(target=_tentar, args=("a",))
+    t2 = threading.Thread(target=_tentar, args=("b",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    valores = list(resultados.values())
+    sucessos = [v for v in valores if not isinstance(v, Exception)]
+    falhas_concorrencia = [v for v in valores if isinstance(v, GeracaoConcorrenteEmAndamento)]
+
+    assert len(sucessos) == 1, f"esperado exatamente 1 sucesso, obtido {len(sucessos)}: {valores}"
+    assert len(falhas_concorrencia) == 1, (
+        f"esperado exatamente 1 GeracaoConcorrenteEmAndamento, obtido {len(falhas_concorrencia)}: {valores}"
+    )
+    assert os.path.exists(destino)
+    assert not os.path.exists(_caminho_trava(destino))
+    # nunca 200+200: o arquivo final corresponde ao único candidato
+    # publicado — nunca um estado indefinido de "quem escreveu por último".
+    workbook = openpyxl.load_workbook(destino)
+    ws = workbook[_NOME_ABA_DADOS]
+    assert ws[f"A{_PRIMEIRA_LINHA_DADOS}"].value == "2026OB000001"
+    workbook.close()
+
+
+def test_duas_geracoes_simultaneas_em_destinos_diferentes_ambas_concluem(tmp_path, template):
+    """A trava é por destino, nunca global — duas gerações concorrentes
+    para arquivos diferentes não podem se bloquear uma à outra."""
+    destino_a = str(tmp_path / "saida_a.xlsx")
+    destino_b = str(tmp_path / "saida_b.xlsx")
+    liberar_barreira = threading.Barrier(2, timeout=10)
+    resultados: dict[str, object] = {}
+
+    def _tentar(chave, destino):
+        liberar_barreira.wait()
+        try:
+            resultados[chave] = _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+        except Exception as erro:  # noqa: BLE001
+            resultados[chave] = erro
+
+    t1 = threading.Thread(target=_tentar, args=("a", destino_a))
+    t2 = threading.Thread(target=_tentar, args=("b", destino_b))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    assert not isinstance(resultados["a"], Exception), resultados["a"]
+    assert not isinstance(resultados["b"], Exception), resultados["b"]
+    assert os.path.exists(destino_a)
+    assert os.path.exists(destino_b)
+
+
+def test_quatro_geracoes_simultaneas_no_mesmo_destino_apenas_uma_conclui(tmp_path, template):
+    """Confronto QA / revalidação Codex — mesmo teste da corrida com 2
+    threads, mas com 4 disputando o mesmo destino: a trava cooperativa
+    precisa segurar TODAS as concorrentes, não só a "segunda"."""
+    destino = str(tmp_path / "saida.xlsx")
+    n = 4
+    liberar_barreira = threading.Barrier(n, timeout=10)
+    resultados: dict[str, object] = {}
+
+    def _tentar(chave):
+        liberar_barreira.wait()
+        try:
+            resultados[chave] = _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+        except Exception as erro:  # noqa: BLE001
+            resultados[chave] = erro
+
+    threads = [threading.Thread(target=_tentar, args=(str(i),)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    valores = list(resultados.values())
+    sucessos = [v for v in valores if not isinstance(v, Exception)]
+    falhas_concorrencia = [v for v in valores if isinstance(v, GeracaoConcorrenteEmAndamento)]
+
+    assert len(sucessos) == 1, f"esperado exatamente 1 sucesso entre {n} concorrentes, obtido {len(sucessos)}: {valores}"
+    assert len(falhas_concorrencia) == n - 1, (
+        f"esperado {n - 1} GeracaoConcorrenteEmAndamento, obtido {len(falhas_concorrencia)}: {valores}"
+    )
+    assert os.path.exists(destino)
+    assert not os.path.exists(_caminho_trava(destino))
+
+
+def test_terceiro_cria_destino_entre_verificacao_e_promocao_preserva_arquivo_do_terceiro(tmp_path, template, monkeypatch):
+    """Reproduz a janela TOCTOU remanescente: um arquivo aparece no destino
+    DEPOIS da checagem inicial (feita sob a trava) e ANTES da promoção
+    final — cenário de um terceiro processo/usuário, não de outra chamada
+    deste módulo (a trava cooperativa não protege contra isso). A
+    promoção precisa falhar de forma controlada, nunca sobrescrever, e o
+    arquivo do terceiro precisa sobreviver intacto.
+
+    O monkeypatch injeta a criação do arquivo de terceiro no momento exato
+    da promoção e então delega para o `os.rename` REAL — a falha
+    observada (`FileExistsError` -> `DestinoJaExiste`) vem do sistema
+    operacional de verdade, não é fabricada pelo teste."""
+    import app.planilha.escritor_relatorio_transparencia as modulo_escritor
+
+    destino = str(tmp_path / "saida.xlsx")
+    conteudo_terceiro = b"CONTEUDO DE UM TERCEIRO PROCESSO - NAO TOCAR"
+    os_rename_real = os.rename
+    ja_injetou = {"valor": False}
+
+    def _rename_com_terceiro_no_meio(origem, destino_chamado, *args, **kwargs):
+        if not ja_injetou["valor"]:
+            ja_injetou["valor"] = True
+            with open(destino_chamado, "wb") as f:
+                f.write(conteudo_terceiro)
+        return os_rename_real(origem, destino_chamado, *args, **kwargs)
+
+    monkeypatch.setattr(modulo_escritor.os, "rename", _rename_com_terceiro_no_meio)
+
+    with pytest.raises(DestinoJaExiste):
+        _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+
+    with open(destino, "rb") as f:
+        assert f.read() == conteudo_terceiro, "arquivo do terceiro foi sobrescrito — TOCTOU não corrigido"
+    assert glob.glob(str(tmp_path / "tmp*.xlsx")) == [], "temporário não foi limpo após a falha"
+    assert not os.path.exists(_caminho_trava(destino)), "trava não foi liberada após a falha"
+
+    # nova tentativa para um destino DIFERENTE continua funcionando
+    # normalmente (a falha do terceiro não deixou o módulo num estado ruim)
+    outro_destino = str(tmp_path / "saida_2.xlsx")
+    resultado = _gerar(_resultado(candidatos=[_candidato()]), template, outro_destino)
+    assert os.path.exists(outro_destino)
+    assert resultado.total_ocorrencias == 1
+
+
+def test_excecao_durante_geracao_com_trava_ja_adquirida_libera_trava_e_permite_retentativa(tmp_path):
+    """Distinto do teste de bloqueio por pendências (que falha ANTES da
+    trava ser adquirida): aqui o template existe e é aberto, mas não tem a
+    aba obrigatória — a exceção acontece DEPOIS de `_adquirir_trava_destino`,
+    dentro do trabalho pesado. Confirma que mesmo uma falha "no meio" da
+    geração libera a trava (nunca bloqueia retentativas futuras)."""
+    caminho_template_invalido = str(tmp_path / "template_sem_aba.xlsx")
+    wb = openpyxl.Workbook()
+    wb.active.title = "Aba Qualquer"
+    wb.save(caminho_template_invalido)
+    destino = str(tmp_path / "saida.xlsx")
+
+    with pytest.raises(TemplateEstruturalmenteInvalido):
+        _gerar(_resultado(candidatos=[_candidato()]), caminho_template_invalido, destino)
+
+    assert not os.path.exists(_caminho_trava(destino))
+    assert glob.glob(str(tmp_path / "tmp*.xlsx")) == []
+    assert not os.path.exists(destino)
 
 
 # --- Conteúdo ---------------------------------------------------------------
@@ -703,3 +932,107 @@ def test_demais_campos_continuam_com_as_fontes_ja_homologadas(tmp_path, template
     assert ws[f"I{_PRIMEIRA_LINHA_DADOS}"].value == "Motivo da Base OB"
     assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value == "-"
     assert ws[f"M{_PRIMEIRA_LINHA_DADOS}"].value == 999.99
+
+
+# --- Nome x Credor (Micro-sprint corretiva, decisão de negócio aprovada) ---
+#
+# Base OB.NOME continua a fonte primária do campo Nome; só cai para
+# Base OB.CREDOR quando houver relação de truncamento/prefixo COMPROVADA
+# (nunca por NOME ter 30 caracteres, nunca só por serem diferentes — ver
+# `_nome_publicado` e o relatório da investigação read-only dedicada).
+
+
+def test_nome_igual_credor_publica_nome():
+    ordem = _ordem(nome="FULANO DE TAL", credor="FULANO DE TAL")
+    assert _nome_publicado(ordem) == "FULANO DE TAL"
+
+
+def test_nome_prefixo_de_credor_publica_credor():
+    ordem = _ordem(
+        nome="JOÃO CARLOS ALBUQUERQUE DE OLI",
+        credor="JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA",
+    )
+    assert _nome_publicado(ordem) == "JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA"
+
+
+def test_nome_de_30_caracteres_mas_nao_prefixo_publica_nome():
+    nome_30 = "A" * 30
+    assert len(nome_30) == 30
+    ordem = _ordem(nome=nome_30, credor="B" * 40)
+    assert _nome_publicado(ordem) == nome_30
+
+
+def test_nome_menor_que_30_mas_prefixo_comprovado_publica_credor():
+    ordem = _ordem(nome="ANA LIMA", credor="ANA LIMA DE ALBUQUERQUE SOUZA")
+    assert len(ordem.nome) < 30
+    assert _nome_publicado(ordem) == "ANA LIMA DE ALBUQUERQUE SOUZA"
+
+
+def test_nome_maior_que_30_mas_prefixo_comprovado_publica_credor():
+    """Regra é sobre RELAÇÃO, não tamanho — mesmo NOME já tendo mais de 30
+    caracteres, se ainda for prefixo comprovado de um CREDOR mais longo,
+    publica CREDOR."""
+    nome_35 = "MARIA DAS GRAÇAS PEREIRA DE ALBUQ"
+    assert len(nome_35) > 30
+    credor_completo = "MARIA DAS GRAÇAS PEREIRA DE ALBUQUERQUE"
+    ordem = _ordem(nome=nome_35, credor=credor_completo)
+    assert _nome_publicado(ordem) == credor_completo
+
+
+def test_nome_maior_que_30_e_nao_prefixo_publica_nome():
+    """Mesmo tamanho grande, sem relação de prefixo comprovada -> mantém
+    NOME (não decide por tamanho)."""
+    nome_35 = "MARIA DAS GRAÇAS PEREIRA DE ALBUQ"
+    assert len(nome_35) > 30
+    ordem = _ordem(nome=nome_35, credor="OUTRO NOME COMPLETAMENTE DIFERENTE")
+    assert _nome_publicado(ordem) == nome_35
+
+
+def test_nome_e_credor_com_trim_externo_ainda_detecta_continuacao():
+    ordem = _ordem(nome="  JOÃO CARLOS ALBUQUERQUE DE OLI  ", credor="  JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA  ")
+    assert _nome_publicado(ordem) == "JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA"
+
+
+def test_nome_e_credor_grafias_diferentes_publica_nome():
+    """Divergência de grafia (não truncamento) -> mantém NOME, nunca tenta
+    decidir qual grafia é correta."""
+    ordem = _ordem(nome="LUIS ALBUQUERQUE PEREIRA", credor="LUIZ ALBUQUERQUE PEREIRA DE SOUZA")
+    assert _nome_publicado(ordem) == "LUIS ALBUQUERQUE PEREIRA"
+
+
+def test_nome_com_acento_diferente_publica_nome():
+    ordem = _ordem(nome="JOSE ALBUQUERQUE", credor="JOSÉ ALBUQUERQUE PEREIRA")
+    assert _nome_publicado(ordem) == "JOSE ALBUQUERQUE"
+
+
+def test_credor_menor_que_nome_publica_nome():
+    ordem = _ordem(nome="JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA", credor="JOÃO CARLOS")
+    assert _nome_publicado(ordem) == "JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA"
+
+
+def test_ausencia_de_credor_publica_nome():
+    ordem = _ordem(nome="FULANO DE TAL", credor=None)
+    assert _nome_publicado(ordem) == "FULANO DE TAL"
+
+
+def test_ausencia_de_nome_preserva_comportamento_atual():
+    """NOME ausente não aciona nenhuma regra nova — comportamento
+    preservado, compatível com a arquitetura atual (a mesma coisa que
+    aconteceria hoje ao escrever `ordem.nome` direto: célula fica vazia,
+    nunca inventa um valor a partir de CREDOR)."""
+    ordem = _ordem(nome=None, credor="ALGUEM DE TAL")
+    assert _nome_publicado(ordem) is None
+
+
+def test_nome_publicado_e_escrito_de_fato_no_xlsx_gerado(tmp_path, template):
+    """Confirma a fiação ponta-a-ponta (não só a função pura isolada)."""
+    candidato = _candidato(
+        nome="JOÃO CARLOS ALBUQUERQUE DE OLI",
+        credor="JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA",
+    )
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"C{_PRIMEIRA_LINHA_DADOS}"].value == "JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA"
