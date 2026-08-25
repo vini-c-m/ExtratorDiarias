@@ -1,5 +1,7 @@
 from datetime import date, datetime
 
+import pytest
+
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.entities.registro_controle import ClassificacaoSei, RegistroControle
 from app.domain.relatorio_transparencia.decisao import (
@@ -24,6 +26,10 @@ def _ordem(
     ob="2026OB000001",
     linha=2,
     cpf="11111111111",
+    nome="FULANO DE TAL",
+    sei="19.20.0001.0000001/2026-01",
+    cargo="Cargo de Teste",
+    transporte="CARRO",
     periodo_inicial=date(2026, 5, 10),
     periodo_final=date(2026, 5, 10),
     trecho="RECIFE-GARANHUNS",
@@ -41,15 +47,15 @@ def _ordem(
         credor="FULANO DE TAL",
         situacao=situacao,
         data_pagamento=data_pagamento,
-        sei="19.20.0001.0000001/2026-01",
+        sei=sei,
         cpf=cpf,
-        nome="FULANO DE TAL",
-        cargo="Cargo de Teste",
+        nome=nome,
+        cargo=cargo,
         periodo_inicial=periodo_inicial,
         periodo_final=periodo_final,
         cidade_origem=None,
         cidade_destino=None,
-        transporte="CARRO",
+        transporte=transporte,
         motivo=motivo,
         valor=valor,
         valor_bruto_sem_formula=valor,
@@ -204,6 +210,138 @@ def test_fingerprint_mudanca_material_real_continua_alterando_o_hash():
     a = _oc(ob="2026OB000001", valor=154.09)
     b = _oc(ob="2026OB000001", valor=999.99)
     assert calcular_fingerprint([a]) != calcular_fingerprint([b])
+
+
+# --- Revalidação Codex / NOVO-RT-08 — o fingerprint precisa mudar para
+# TODO campo que `CAMPOS_EVIDENCIA_MATERIAL` (motor_decisao.py) já
+# considera material para RN04, nunca só o subconjunto que a versão
+# anterior desta função serializava manualmente. Cobre explicitamente
+# todos os campos pedidos na revalidação, incluindo os que ficaram de fora
+# antes da correção (SEI, cargo, transporte — o achado real do confronto —
+# e DH/CPF/nome, testados aqui isoladamente além dos testes de
+# independência de ordem já existentes acima).
+
+
+@pytest.mark.parametrize(
+    "campo_kwarg,valor_a,valor_b",
+    [
+        ("dh", "2026DH000001", "2026DH999999"),
+        ("cpf", "11111111111", "99999999999"),
+        ("nome", "FULANO DE TAL", "CICLANO DA SILVA"),
+        ("sei", "19.20.0001.0000001/2026-01", "19.20.0009.0000999/2026-09"),
+        ("periodo_final", date(2026, 5, 10), date(2026, 5, 22)),
+        ("motivo", "Motivo de teste", "Motivo completamente diferente"),
+        ("cargo", "Cargo de Teste", "Outro Cargo"),
+        ("transporte", "CARRO", "AVIÃO"),
+        ("restituicao", None, 50.0),
+        ("data_pagamento", datetime(2026, 5, 15, 9, 0, 0), datetime(2026, 5, 20, 9, 0, 0)),
+    ],
+)
+def test_fingerprint_muda_quando_campo_material_muda(campo_kwarg, valor_a, valor_b):
+    """`dh` é parâmetro de `_oc` (a `OcorrenciaFinanceira.dh`, que é o que
+    `CAMPOS_EVIDENCIA_MATERIAL["dh"]` de fato lê — nunca `OrdemBancaria.dh`,
+    hardcoded no helper `_ordem`); os demais são parâmetros de `_ordem`,
+    encaminhados por `_oc(**kwargs)`."""
+    a = calcular_fingerprint([_oc(ob="2026OB000001", **{campo_kwarg: valor_a})])
+    b = calcular_fingerprint([_oc(ob="2026OB000001", **{campo_kwarg: valor_b})])
+    assert a != b
+
+
+def test_fingerprint_muda_com_nome_diferente_mesma_ob_ordem_invertida():
+    """Espelha os testes `test_fingerprint_mesma_ob_independe_da_ordem_com_*`
+    já existentes, agora para `nome` (NOVO-RT-07): precisa ser
+    simultaneamente order-independent E sensível à mudança — as duas
+    garantias, não uma às custas da outra."""
+    a = _oc(ob="2026OB000001", linha=10, nome="FULANO DE TAL")
+    b = _oc(ob="2026OB000001", linha=11, nome="CICLANO DA SILVA")
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+    assert calcular_fingerprint([a, b]) != calcular_fingerprint([a, a])
+
+
+# --- Revalidação Codex / NOVO-RT-08 — fluxo completo: RN04 real (não só
+# `calcular_fingerprint` isolado) -> decisão registrada -> só o campo
+# material muda na fonte -> revisão reconstruída -> decisões reaplicadas ->
+# estado DESATUALIZADA. Cobre especificamente os 4 campos do achado real do
+# confronto (SEI/cargo/transporte foram os citados pelo Codex; nome é o
+# achado irmão do NOVO-RT-07).
+
+
+def _revisao_rn04_mesma_ob(ordem_a, ordem_b) -> RevisaoNecessaria:
+    """Grupo RN04 real de repetição física — as duas ocorrências
+    compartilham a MESMA OB (`identidade_grupo` depende só do conjunto de
+    OBs, nunca de quantas ocorrências físicas existem por trás dele)."""
+    return RevisaoNecessaria(
+        regra="RN04",
+        motivo="Divergência material entre linhas físicas da mesma OB.",
+        ocorrencias=[
+            OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_a),
+            OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_b),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "campo_kwarg,valor_a,valor_b",
+    [
+        ("nome", "FULANO DE TAL", "CICLANO DA SILVA"),
+        ("sei", "19.20.0001.0000001/2026-01", "19.20.0009.0000999/2026-09"),
+        ("cargo", "Cargo de Teste", "Outro Cargo"),
+        ("transporte", "CARRO", "AVIÃO"),
+    ],
+)
+def test_novo_rt08_fluxo_completo_ate_desatualizada(campo_kwarg, valor_a, valor_b):
+    """1. produz um RN04 real de repetição física (via `_revisao_rn04_mesma_ob`,
+    não uma revisão sintética arbitrária);
+    2. registra uma decisão humana válida sobre ele;
+    3. altera SÓ o campo material em questão na fonte (linha 11);
+    4. reconstrói a revisão a partir da evidência "nova" (`_revisao_rn04_mesma_ob`
+    de novo, com o campo alterado — equivalente a `_montar_resultado_revisado`
+    relendo as fontes brutas na API real);
+    5. reaplica as decisões persistidas (`aplicar_decisoes`);
+    6. confirma que o estado é DESATUALIZADA — nunca reaproveitada como
+    DECIDIDA com evidência diferente da que foi de fato decidida."""
+    ordem_a = _ordem(ob="2026OB000001", linha=10, valor=154.09)
+    ordem_b_original = _ordem(ob="2026OB000001", linha=11, valor=154.09, **{campo_kwarg: valor_a})
+    revisao_original = _revisao_rn04_mesma_ob(ordem_a, ordem_b_original)
+
+    decisao = registrar_decisao(
+        revisao_original, acao=AcaoDecisao.PUBLICAR, autor="servidor.teste", obs_publicaveis=["2026OB000001"]
+    )
+
+    ordem_b_alterada = _ordem(ob="2026OB000001", linha=11, valor=154.09, **{campo_kwarg: valor_b})
+    revisao_reconstruida = _revisao_rn04_mesma_ob(ordem_a, ordem_b_alterada)
+    resultado = _resultado(revisoes=[revisao_reconstruida])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
+    assert revisado.pode_gerar_relatorio is False
+    assert revisado.candidatos_publicaveis == []
+
+
+@pytest.mark.parametrize(
+    "campo_kwarg",
+    ["nome", "sei", "cargo", "transporte"],
+)
+def test_novo_rt08_fluxo_completo_sem_mudanca_permanece_decidida(campo_kwarg):
+    """Controle negativo do fluxo completo acima — reconstruir a MESMA
+    evidência (nenhum campo mudou) continua reaproveitando a decisão sem
+    pedir revisão de novo (G06)."""
+    ordem_a = _ordem(ob="2026OB000001", linha=10, valor=154.09)
+    ordem_b = _ordem(ob="2026OB000001", linha=11, valor=154.09)
+    revisao_original = _revisao_rn04_mesma_ob(ordem_a, ordem_b)
+
+    decisao = registrar_decisao(
+        revisao_original, acao=AcaoDecisao.PUBLICAR, autor="servidor.teste", obs_publicaveis=["2026OB000001"]
+    )
+
+    revisao_reconstruida = _revisao_rn04_mesma_ob(ordem_a, ordem_b)
+    resultado = _resultado(revisoes=[revisao_reconstruida])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+    assert revisado.pode_gerar_relatorio is True
 
 
 # --- Confronto 3C.1: DUPLICIDADE isolada não pode invalidar (RN03) --------

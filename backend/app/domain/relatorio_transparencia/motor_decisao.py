@@ -26,6 +26,7 @@ __all__ = [
     "RevisaoNecessaria",
     "DiagnosticoRepeticaoFisica",
     "ResultadoRelatorio",
+    "CAMPOS_EVIDENCIA_MATERIAL",
     "classificar",
 ]
 
@@ -92,17 +93,26 @@ class ResultadoRelatorio:
     diagnosticos_repeticao_fisica: list[DiagnosticoRepeticaoFisica] = field(default_factory=list)
 
 
-# Confronto QA Codex / QA-RT-01 — lista original (Micro-sprint 3B) cobria só
-# trecho/motivo/situacao/data_pagamento. Campos adicionados aqui e por quê
-# (nenhum inventado — todos já são materialmente relevantes segundo RN01-07/
-# I01-I03/RN02 ou já saem publicados no XLSX final,
-# `app/planilha/escritor_relatorio_transparencia.py`):
+# Confronto QA Codex / QA-RT-01 (e revalidação NOVO-RT-07) — lista original
+# (Micro-sprint 3B) cobria só trecho/motivo/situacao/data_pagamento. Campos
+# adicionados aqui e por quê (nenhum inventado — todos já são materialmente
+# relevantes segundo RN01-07/I01-I03/RN02 ou já saem publicados no XLSX
+# final, `app/planilha/escritor_relatorio_transparencia.py`):
 #   dh          — I01 ("DH é o elo estrutural primário") / I03 (1 DH -> N
 #                 OBs sempre preservado): duas ocorrências físicas da mesma
 #                 OB sob DHs diferentes são, por definição, dois documentos
 #                 administrativos distintos — nunca "a mesma ocorrência".
 #   cpf         — identifica o beneficiário (§1: "quem recebeu"); CPF
 #                 divergente é a pessoa errada recebendo o pagamento.
+#   nome        — NOVO-RT-07 (achado real do confronto QA Codex, revalidação
+#                 pós QA-RT-01): coluna C do XLSX final, conteúdo
+#                 efetivamente publicado — grafia divergente do beneficiário
+#                 entre linhas físicas da mesma OB é o mesmo tipo de
+#                 ambiguidade material que `cpf` já cobre para identidade.
+#                 Comparação sempre por igualdade exata (sem normalização de
+#                 grafia/maiúsculas/espaçamento) — nunca decide
+#                 automaticamente qual grafia é "correta" (isso continua
+#                 sendo decisão humana).
 #   sei         — identifica o processo administrativo (mesmo raciocínio de
 #                 `dh`; I02 só proíbe usar SEI para deduplicar
 #                 destrutivamente — aqui SEI divergente faz o oposto, força
@@ -119,20 +129,35 @@ class ResultadoRelatorio:
 #                 para, sozinho, forçar RN04 quando o valor pago não é
 #                 zero; divergência entre linhas físicas é o mesmo tipo de
 #                 ambiguidade que RN02 já recusa resolver sozinha.
-# `nome` foi deliberadamente NÃO incluído: nenhuma RN o cita isoladamente e
-# `cpf` já cobre a divergência de identidade; incluir texto livre (sujeito a
-# variação cosmética de digitação) sem evidência específica seria inventar
-# regra nova — se necessário, tratar em confronto separado.
 # `duplicidade` continua fora (RN03: nunca decide nada isoladamente) e
 # `linha` continua fora (é só posição física na planilha, nunca dado
 # publicável — mesmo critério já usado por `calcular_fingerprint`).
-_CAMPOS_DIVERGENCIA_FISICA: dict[str, Callable[[OcorrenciaFinanceira], object]] = {
+#
+# NOVO-RT-08 — este dicionário é agora a ÚNICA definição de "campo
+# materialmente relevante de uma ocorrência física" do módulo, reutilizada
+# também por `decisao.calcular_fingerprint` (que importa esta constante
+# diretamente em vez de manter sua própria lista paralela). Antes desta
+# correção as duas listas podiam divergir silenciosamente — foi exatamente
+# o que aconteceu (SEI/cargo/transporte passaram a gerar RN04 aqui sem
+# nunca terem sido adicionados ao fingerprint, deixando uma decisão antiga
+# "presa" como válida mesmo depois da evidência mudar). Regra permanente:
+# todo campo adicionado aqui automaticamente participa do fingerprint —
+# nunca adicionar um campo só em um dos dois lugares. Campos que o
+# fingerprint precisa além destes (público, exclusivo de `calcular_fingerprint`):
+# `ordem.ob` (discriminador entre OBs distintas, irrelevante aqui porque
+# todas as ocorrências de um grupo de repetição física já compartilham a
+# mesma OB), `ordem.valor` (tem semântica de equivalência própria —
+# zero-vs-real — tratada à parte em `_resolver_repeticao_fisica`, nunca por
+# igualdade simples) e `normalizar_trecho(ordem.trecho)` (chave de
+# agrupamento do RN07, redundante com `trecho` mas mantida por segurança).
+CAMPOS_EVIDENCIA_MATERIAL: dict[str, Callable[[OcorrenciaFinanceira], object]] = {
     "dh": lambda o: o.dh,
     "trecho": lambda o: o.ordem_bancaria.trecho,
     "motivo": lambda o: o.ordem_bancaria.motivo,
     "situacao": lambda o: o.ordem_bancaria.situacao,
     "data_pagamento": lambda o: o.ordem_bancaria.data_pagamento,
     "cpf": lambda o: o.ordem_bancaria.cpf,
+    "nome": lambda o: o.ordem_bancaria.nome,
     "sei": lambda o: o.ordem_bancaria.sei,
     "periodo_inicial": lambda o: o.ordem_bancaria.periodo_inicial,
     "periodo_final": lambda o: o.ordem_bancaria.periodo_final,
@@ -145,7 +170,7 @@ _CAMPOS_DIVERGENCIA_FISICA: dict[str, Callable[[OcorrenciaFinanceira], object]] 
 def _campos_divergentes(ocorrencias: list[OcorrenciaFinanceira]) -> list[str]:
     return [
         nome
-        for nome, extrator in _CAMPOS_DIVERGENCIA_FISICA.items()
+        for nome, extrator in CAMPOS_EVIDENCIA_MATERIAL.items()
         if len({extrator(o) for o in ocorrencias}) > 1
     ]
 

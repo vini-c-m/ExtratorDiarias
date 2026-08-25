@@ -22,6 +22,7 @@ def _ordem(
     ob="2026OB000001",
     linha=2,
     cpf="11111111111",
+    nome="FULANO DE TAL",
     periodo_inicial=date(2026, 5, 10),
     periodo_final=date(2026, 5, 10),
     trecho="RECIFE-GARANHUNS",
@@ -41,7 +42,7 @@ def _ordem(
         data_pagamento=data_pagamento,
         sei="19.20.0001.0000001/2026-01",
         cpf=cpf,
-        nome="FULANO DE TAL",
+        nome=nome,
         cargo="Cargo de Teste",
         periodo_inicial=periodo_inicial,
         periodo_final=periodo_final,
@@ -470,7 +471,7 @@ def test_dh_so_no_controle_sem_ob_nao_vira_pagamento_ficticio_mas_nao_e_perdido(
 # repetição física da mesma OB. Achado real: a versão anterior só
 # comparava trecho/motivo/situacao/data_pagamento, e só entre as linhas de
 # valor NÃO-zero (deixando a linha zero inteiramente fora da checagem) —
-# corrigido em `_resolver_repeticao_fisica`/`_CAMPOS_DIVERGENCIA_FISICA`.
+# corrigido em `_resolver_repeticao_fisica`/`CAMPOS_EVIDENCIA_MATERIAL`.
 
 
 def _duas_ocorrencias_mesma_ob(*, dh_a="2026DH000001", dh_b="2026DH000001", ordem_a=None, ordem_b=None):
@@ -671,6 +672,76 @@ def test_qa_rt01_repeticao_realmente_identica_nao_gera_revisao_indevida():
     cenário zero+real): continua colapsando para 1 candidato, sem RN04
     espúrio."""
     ordens = [_ordem(ob="2026OB000001", linha=10, valor=154.09), _ordem(ob="2026OB000001", linha=11, valor=154.09)]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.revisoes_necessarias == []
+    assert len(saida.candidatos_normais) == 1
+    assert len(saida.diagnosticos_repeticao_fisica) == 1
+    assert len(saida.diagnosticos_repeticao_fisica[0].ocorrencias) == 2
+
+
+# --- 22. Revalidação Codex / NOVO-RT-07 — nome divergente em repetição
+# física da mesma OB. Achado real: mesma OB + mesmo CPF + nome A != nome B
+# colapsava silenciosamente (candidatos=1, revisões=[]), publicando uma das
+# duas grafias sem qualquer sinal de revisão — nome é conteúdo publicado
+# (coluna C do XLSX final) e agora entra em `CAMPOS_EVIDENCIA_MATERIAL`.
+
+
+def test_novo_rt07_mesma_ob_mesmo_cpf_nome_divergente_vira_revisao():
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09, cpf="11111111111", nome="FULANO DE TAL"),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09, cpf="11111111111", nome="FULANO D'TAL"),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "nome" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_novo_rt07_zero_mais_real_com_nome_divergente_vira_revisao():
+    """Mesmo cenário zero+real do QA-RT-01 original, agora com nome como o
+    único campo divergente — antes desta correção, `nome` não estava em
+    `CAMPOS_EVIDENCIA_MATERIAL`, então este caso colapsava silenciosamente."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=0, nome="FULANO DE TAL"),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09, nome="OUTRO NOME COMPLETAMENTE DIFERENTE"),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "nome" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_novo_rt07_nome_igual_preserva_comportamento_anterior():
+    """Controle — nome idêntico (junto de tudo mais idêntico) continua
+    colapsando normalmente, sem RN04 espúria."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=0, nome="FULANO DE TAL"),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09, nome="FULANO DE TAL"),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.revisoes_necessarias == []
+    assert len(saida.candidatos_normais) == 1
+    assert saida.candidatos_normais[0].ocorrencia.ordem_bancaria.valor == 154.09
+
+
+def test_novo_rt07_repeticao_totalmente_equivalente_com_nome_continua_sem_revisao():
+    """Controle negativo explícito — repetição totalmente equivalente
+    (mesmo valor não-zero, tudo igual, nome incluso) continua sem RN04."""
+    ordens = [
+        _ordem(ob="2026OB000001", linha=10, valor=154.09, nome="FULANO DE TAL"),
+        _ordem(ob="2026OB000001", linha=11, valor=154.09, nome="FULANO DE TAL"),
+    ]
     resultado = _resultado(_documento("2026DH000001", ordens=ordens))
 
     saida = classificar(resultado, _INTERVALO_PADRAO)

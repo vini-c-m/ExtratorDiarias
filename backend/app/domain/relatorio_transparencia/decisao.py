@@ -16,6 +16,7 @@ from enum import Enum
 import hashlib
 
 from app.domain.relatorio_transparencia.motor_decisao import (
+    CAMPOS_EVIDENCIA_MATERIAL,
     CandidatoNormal,
     DiagnosticoRepeticaoFisica,
     OcorrenciaFinanceira,
@@ -201,32 +202,42 @@ def calcular_fingerprint(ocorrencias: Iterable[OcorrenciaFinanceira]) -> str:
     toda vez que esse campo mudasse, mesmo sem nenhuma mudança material
     (achado real: a investigação dos 17 casos "Duplicado" mostrou que o
     campo mistura fenômenos incompatíveis e não tem significado
-    financeiro confiável isolado). `situacao` continua incluída — ao
-    contrário de `duplicidade`, não há nenhuma RN que a declare
-    irrelevante, e ela já é campo de divergência de RN04
-    (`_campos_divergentes`); na ausência de evidência que justifique
-    excluí-la, o lado conservador (mais propenso a revalidar do que a
-    reaproveitar cegamente) é o escolhido.
+    financeiro confiável isolado).
 
-    O valor bruto de CPF/motivo/trecho nunca é persistido em claro pela
-    camada de persistência (§12 da especificação) — só entra aqui, dentro
-    do hash, nunca no JSON salvo."""
+    Confronto QA Codex / NOVO-RT-08 (achado real, corrigido aqui): antes
+    desta correção, esta função mantinha sua PRÓPRIA lista de campos
+    materiais (`ob, dh, cpf, periodo_inicial, periodo_final, valor, trecho,
+    trecho_normalizado, motivo, data_pagamento, restituicao, situacao`),
+    paralela e independente de `CAMPOS_EVIDENCIA_MATERIAL`
+    (`motor_decisao.py`, usada para decidir se uma repetição física é RN04).
+    As duas listas divergiram silenciosamente: quando QA-RT-01 acrescentou
+    `sei`/`cargo`/`transporte` (e a revalidação seguinte acrescentou `nome`)
+    a `CAMPOS_EVIDENCIA_MATERIAL`, esta função não foi atualizada — um
+    grupo podia virar RN04 por SEI divergente, receber uma decisão humana,
+    o SEI mudar de novo, e o fingerprint permanecer idêntico (SEI nunca
+    entrava no hash), mantendo a decisão antiga como "válida" mesmo com
+    evidência diferente. Corrigido reutilizando `CAMPOS_EVIDENCIA_MATERIAL`
+    diretamente como base — nunca mais duas listas paralelas: todo campo
+    adicionado lá agora participa automaticamente do fingerprint. Além
+    desses campos, esta função inclui três exclusivos seus: `ordem.ob`
+    (discriminador entre OBs distintas — irrelevante para
+    `CAMPOS_EVIDENCIA_MATERIAL`, que só compara ocorrências que já
+    compartilham a mesma OB), `ordem.valor` (tem semântica de equivalência
+    própria, zero-vs-real, tratada à parte — nunca por igualdade simples) e
+    `normalizar_trecho(ordem.trecho)` (chave de agrupamento do RN07,
+    redundante com `trecho` mas mantida por segurança).
+
+    O valor bruto de CPF/nome/motivo/trecho nunca é persistido em claro
+    pela camada de persistência (§12 da especificação) — só entra aqui,
+    dentro do hash, nunca no JSON salvo."""
     linhas = []
     for oc in ocorrencias:
         ordem = oc.ordem_bancaria
         campos = [
             ordem.ob,
-            oc.dh,
-            ordem.cpf,
-            ordem.periodo_inicial,
-            ordem.periodo_final,
             ordem.valor,
-            ordem.trecho,
             normalizar_trecho(ordem.trecho),
-            ordem.motivo,
-            ordem.data_pagamento,
-            ordem.restituicao,
-            ordem.situacao,
+            *(extrator(oc) for extrator in CAMPOS_EVIDENCIA_MATERIAL.values()),
         ]
         linhas.append(_SEPARADOR_CAMPO.join(_campo_serializavel(c) for c in campos))
     # QA-RT-02 — ordena as linhas JÁ serializadas (conteúdo puro), nunca as
