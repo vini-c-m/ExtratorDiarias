@@ -37,15 +37,18 @@ _PADRAO_TITULO_REQUERIMENTO = re.compile(
 _RODAPE_SEI_OPCIONAL = r"(?:[ \t]*\n[^\n]*SEI\s+[\d./\-]+\s*/\s*pg\.\s*\d+[^\n]*)?"
 
 # Sprint de Correção Crítica — CPF interrompido por um separador atípico
-# ENTRE os grupos de dígitos. Processo real 19.20.0001.0000138/2026-34:
-# `pdf_reader.ler_texto` devolve "CPF:\n111.111 111-11" — confirmado, com o
-# PDF real, que o caractere entre "582" e "004" é um espaço comum (U+0020),
-# não uma quebra de linha nem o rodapé do SEI (`_RODAPE_SEI_OPCIONAL`, acima,
-# não se aplica aqui — não há nenhum "SEI ... / pg. N" envolvido). Dois
-# extratores independentes (pdfplumber e PyMuPDF) produzem o mesmo espaço, e
-# o mesmo CPF aparece corretamente pontuado mais adiante no próprio
-# documento — evidência de que é uma inconsistência de como aquele campo
-# específico do PDF foi preenchido, não um padrão de quebra de página.
+# ENTRE os grupos de dígitos, achado num processo real (SEI e CPF deste
+# comentário sanitizados na varredura de privacidade QA-RT-06 — nenhum dado
+# real permanece aqui, só a estrutura do bug):
+# `pdf_reader.ler_texto` devolvia "CPF:\n111.111 111-11" — confirmado, com o
+# PDF real, que o caractere entre o 2º e o 3º grupo de dígitos é um espaço
+# comum (U+0020), não uma quebra de linha nem o rodapé do SEI
+# (`_RODAPE_SEI_OPCIONAL`, acima, não se aplica aqui — não há nenhum "SEI
+# ... / pg. N" envolvido). Dois extratores independentes (pdfplumber e
+# PyMuPDF) produzem o mesmo espaço, e o mesmo CPF aparece corretamente
+# pontuado mais adiante no próprio documento — evidência de que é uma
+# inconsistência de como aquele campo específico do PDF foi preenchido, não
+# um padrão de quebra de página.
 #
 # A regex antiga (`[\d.-]+`) não reconhece espaço como parte de um CPF e
 # parava exatamente aí, produzindo um fragmento de 6 dígitos.

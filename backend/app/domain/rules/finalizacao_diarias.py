@@ -25,9 +25,13 @@ _INICIO_ORDEM_BANCARIA = re.compile(r"^[ \t]*ORDEM BANC[ÁA]RIA\b", re.MULTILINE
 
 # Linha estrutural que o próprio SEI grava para QUALQUER documento anexado
 # que não seja um formulário CMFC (ex.: "Recibo (1371455) SEI .../ pg. 6",
-# "Anexo Comprovante (1373700) SEI .../ pg. 6") — validado contra os dois
-# processos reais de referência (SEI 19.20.0001.0000375/2026-24 e
-# 19.20.0001.0000639/2026-96) e contra os 145 PDFs reais de legado/pdfs.
+# "Anexo Comprovante (1373700) SEI .../ pg. 6") — validado contra dois
+# processos reais de referência (um Recibo, um Anexo Comprovante — ver
+# `tests/integration/test_finalizacao_pdfs_reais.py`, roda só localmente,
+# SEIs nunca versionados) e contra os 145 PDFs reais de legado/pdfs. O
+# padrão em si é puramente estrutural (título + id entre parênteses +
+# rodapé "SEI .../ pg. N") — nunca depende do número específico de nenhum
+# processo, real ou sintético.
 _PADRAO_TITULO_ANEXO_GENERICO = re.compile(
     r"^(?!CMFC -)([^\n(]{1,80})\(\d+\)\s*SEI\s+[\d./-]+\s*/\s*pg\.\s*\d+", re.MULTILINE
 )

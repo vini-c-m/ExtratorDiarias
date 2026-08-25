@@ -25,7 +25,7 @@ def test_complemento_so_integrais_gera_01_diaria_integral_sem_mencionar_parcial(
 def test_complemento_duas_integrais_gera_02_diarias_integrais_sem_mencionar_parcial() -> None:
     """Exemplo do usuário: complemento de 2 diárias integrais, sem parcial —
     reprodução fiel do caso real (SEI 19.20.0001.0004758/2026-36, Validação
-    de Diária complementar 1439057: INTEGRAL=2, PARCIAL="-")."""
+    de Diária complementar 9500001: INTEGRAL=2, PARCIAL="-")."""
     texto = montar_historico(
         sei="19.20.0001.0004758/2026-36",
         nome_servidor="Roberto Alves Ferreira",

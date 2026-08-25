@@ -1,9 +1,23 @@
-"""Validação com os dois processos reais de referência da funcionalidade
-"Finalizar Diárias" (SEI 19.20.0001.0000375/2026-24 — Recibo;
-19.20.0001.0000639/2026-96 — Anexo Comprovante). Roda só nesta máquina, contra
-uma CÓPIA SEGURA da Planilha Oficial real (nunca o arquivo original) — pulado
-automaticamente onde os dois arquivos não estiverem disponíveis (ex.: CI)."""
+"""Validação com dois processos reais de referência da funcionalidade
+"Finalizar Diárias" (um Recibo, um Anexo Comprovante). Roda só nesta
+máquina, contra uma CÓPIA SEGURA da Planilha Oficial real (nunca o arquivo
+original) — pulado automaticamente onde a configuração local não estiver
+disponível (ex.: CI).
 
+Confronto QA Codex / QA-RT-06 (fechamento) — os dois SEIs de referência
+também eram hardcoded (junto dos caminhos, já externalizados numa correção
+anterior desta mesma sprint). Passam a vir de
+`EXTRATOR_DIARIAS_TESTE_SEIS_REFERENCIA` (variável de ambiente, nunca
+commitada, cada desenvolvedor define a sua localmente com os SEIs reais que
+tem em `EXTRATOR_DIARIAS_TESTE_LEGADO_DIR`) — mesmo comportamento de
+"disponível só nesta máquina" de antes, agora sem nenhum identificador real
+versionado. O nome do PDF de cada caso é derivado do SEI (nunca informado à
+parte): mesma convenção real de nomenclatura que os PDFs exportados do SEI
+já seguem em todo este projeto (ver `_nome_arquivo_pdf_do_sei` abaixo e
+`tests/fixtures/gerar_fixtures_sinteticas.py`), então não há como o
+identificador e o nome do arquivo divergirem."""
+
+import os
 import shutil
 from pathlib import Path
 
@@ -12,20 +26,45 @@ from openpyxl import load_workbook
 
 from app.services.finalizacao_service import ItemConfirmacao, StatusFinalizacao, analisar_lote, confirmar
 
-_LEGADO_DIR = Path("C:/Users/usuario/Workspace/legado/pdfs")
-_PLANILHA_OFICIAL_REAL = Path(
-    "C:/Users/usuario/Workspace/planilha/"
-    "CONTROLE DIARIAS EXEMPLO - Banco de Dados 2026 (1).xlsx"
-)
+def _caminho_opcional(variavel_ambiente: str) -> Path | None:
+    """`None` quando a variável não está definida — nunca `Path("")`, que o
+    `pathlib` normaliza silenciosamente para `Path(".")` (o diretório atual
+    sempre existe, o que quebraria a condição de skip abaixo — "não
+    configurado" precisa continuar distinto de "diretório atual")."""
+    valor = os.environ.get(variavel_ambiente)
+    return Path(valor) if valor else None
 
-_CASOS = [
-    ("19.20.0001.0000375/2026-24", "SEI_19.20.0001.0000375_2026_24.pdf"),
-    ("19.20.0001.0000639/2026-96", "SEI_19.20.0001.0000639_2026_96.pdf"),
+
+def _nome_arquivo_pdf_do_sei(sei: str) -> str:
+    """Mesma convenção real de nomenclatura que os PDFs exportados do SEI já
+    seguem em todo este projeto (`SEI_<numero>.pdf`, com "/" e "-"
+    trocados por "_" — ver `tests/fixtures/gerar_fixtures_sinteticas.py`,
+    que gera fixtures sintéticas com o mesmo padrão): nunca um segundo dado
+    configurado à parte que pudesse divergir do SEI."""
+    return f"SEI_{sei.replace('/', '_').replace('-', '_')}.pdf"
+
+
+_LEGADO_DIR = _caminho_opcional("EXTRATOR_DIARIAS_TESTE_LEGADO_DIR")
+_PLANILHA_OFICIAL_REAL = _caminho_opcional("EXTRATOR_DIARIAS_TESTE_PLANILHA_OFICIAL_REAL")
+
+_SEIS_REFERENCIA = [
+    sei.strip()
+    for sei in os.environ.get("EXTRATOR_DIARIAS_TESTE_SEIS_REFERENCIA", "").split(",")
+    if sei.strip()
 ]
+_CASOS = [(sei, _nome_arquivo_pdf_do_sei(sei)) for sei in _SEIS_REFERENCIA]
 
 pytestmark = pytest.mark.skipif(
-    not _LEGADO_DIR.is_dir() or not _PLANILHA_OFICIAL_REAL.is_file(),
-    reason="PDFs/planilha reais de referência não disponíveis nesta máquina",
+    _LEGADO_DIR is None
+    or _PLANILHA_OFICIAL_REAL is None
+    or len(_CASOS) != 2
+    or not _LEGADO_DIR.is_dir()
+    or not _PLANILHA_OFICIAL_REAL.is_file(),
+    reason="PDFs/planilha/SEIs reais de referência não disponíveis nesta máquina "
+    "(defina EXTRATOR_DIARIAS_TESTE_LEGADO_DIR, "
+    "EXTRATOR_DIARIAS_TESTE_PLANILHA_OFICIAL_REAL e "
+    "EXTRATOR_DIARIAS_TESTE_SEIS_REFERENCIA (2 SEIs separados por vírgula) "
+    "localmente para rodar este teste)",
 )
 
 

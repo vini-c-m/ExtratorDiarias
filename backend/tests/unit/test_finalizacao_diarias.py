@@ -1,8 +1,9 @@
 from app.domain.rules.finalizacao_diarias import SituacaoComprovante, avaliar
 
 # Trechos reproduzindo a estrutura real dos dois processos de referência
-# (SEI 19.20.0001.0000375/2026-24 — Recibo; SEI 19.20.0001.0000639/2026-96 —
-# Anexo Comprovante), sem dados pessoais reais.
+# (um Recibo, um Anexo Comprovante — mesmos dois de
+# `tests/integration/test_finalizacao_pdfs_reais.py`, que só roda localmente
+# e nunca versiona os SEIs reais), sem dados pessoais reais.
 
 _CONFIRMACAO_SIM = """
 CMFC - Confirmação dos Serviços - Diária -Servidor - 1000001
