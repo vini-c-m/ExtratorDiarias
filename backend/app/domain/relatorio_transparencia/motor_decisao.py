@@ -273,19 +273,43 @@ def classificar(
     2/3A), para a janela temporal `intervalo` (RN06). Função pura, sem I/O
     — quem lê/reconcilia as fontes continua sendo `app/consulta/` +
     `motor_reconciliacao.reconciliar`, nunca este módulo."""
+    # Confronto QA Codex / HOMO-RT-01 (achado real, corrigido aqui): o
+    # recorte de competência (RN05/RN06, abaixo) só era aplicado DEPOIS da
+    # repetição física (I11) — `_resolver_repeticao_fisica` via TODO o
+    # acervo reconciliado, sem nenhum recorte temporal, então uma OB
+    # fisicamente repetida com divergência virava uma `RevisaoNecessaria`
+    # RN04 incondicional, presente em `revisoes` para QUALQUER janela —
+    # inclusive competências anteriores ao mês em que o pagamento
+    # efetivamente ocorreu (ex.: um conflito de maio bloqueando a geração
+    # de janeiro). O recorte por `intervalo` (R11, acumulativo — nunca um
+    # filtro de mês isolado) precisa acontecer ANTES de `ocorrencias_por_ob`
+    # ser montado, para que I11 nunca veja, e portanto nunca gere revisão
+    # sobre, uma ocorrência fora da janela desta competência. DATA OB
+    # ausente continua SEMPRE em escopo (não dá para saber a que
+    # competência pertence, então nunca é filtrada silenciosamente — vira
+    # RN04 abaixo, mesmo comportamento de antes) — só uma DATA OB presente
+    # e comprovadamente fora do intervalo é excluída aqui.
     ocorrencias_por_ob: dict[str, list[OcorrenciaFinanceira]] = defaultdict(list)
     for dh, documento in resultado.documentos.items():
         registros_controle_do_dh = list(documento.controle)
         for ordem in documento.ordens_bancarias:
+            data_pagamento = ordem.data_pagamento
+            if data_pagamento is not None and not intervalo.contem(data_pagamento.date()):
+                continue  # fora da janela desta competência — I11/RN04 nunca vê isto
             ocorrencias_por_ob[ordem.ob].append(
                 OcorrenciaFinanceira(dh=dh, ordem_bancaria=ordem, registros_controle=registros_controle_do_dh)
             )
 
-    # I11 — repetição física do mesmo número de OB, resolvida antes de tudo.
+    # I11 — repetição física do mesmo número de OB, resolvida antes de tudo
+    # (já restrita à janela desta competência, ver acima).
     representantes, revisoes, diagnosticos = _resolver_repeticao_fisica(ocorrencias_por_ob)
 
     # RN05/RN06 — competência pela DATA OB; DATA OB ausente é conflito
-    # material (RN04), nunca um filtro silencioso.
+    # material (RN04), nunca um filtro silencioso. `representantes` já só
+    # contém ocorrências sem DATA OB ou dentro do intervalo (filtro acima),
+    # então a checagem de intervalo aqui nunca mais é alcançada para o caso
+    # "fora da janela" — mantida mesmo assim por defesa em profundidade,
+    # nunca removida só para "simplificar".
     dentro_da_competencia: list[OcorrenciaFinanceira] = []
     for oc in representantes:
         data_pagamento = oc.ordem_bancaria.data_pagamento

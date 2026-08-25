@@ -750,3 +750,173 @@ def test_novo_rt07_repeticao_totalmente_equivalente_com_nome_continua_sem_revisa
     assert len(saida.candidatos_normais) == 1
     assert len(saida.diagnosticos_repeticao_fisica) == 1
     assert len(saida.diagnosticos_repeticao_fisica[0].ocorrencias) == 2
+
+
+# --- Confronto QA Codex / HOMO-RT-01 — isolamento por competência --------
+#
+# Achado real (Codex, homologação multicenário): `_resolver_repeticao_fisica`
+# (I11) rodava sobre TODO o acervo reconciliado, sem nenhum recorte
+# temporal — uma OB fisicamente repetida com divergência em maio virava
+# uma `RevisaoNecessaria` RN04 incondicional, presente em toda e qualquer
+# janela, inclusive competências anteriores a maio (ex.: preparar janeiro
+# mostrava — e bloqueava — uma pendência de maio). Corrigido filtrando por
+# `intervalo` (R11, acumulativo) ANTES de montar `ocorrencias_por_ob`,
+# nunca depois.
+
+_INTERVALO_JANEIRO = intervalo_acumulado(2026, 1)
+_INTERVALO_ABRIL = intervalo_acumulado(2026, 4)
+_INTERVALO_MAIO = intervalo_acumulado(2026, 5)
+
+
+def _ordens_repeticao_fisica_divergente_em_maio():
+    """Mesma OB, duas linhas físicas, DATA OB de ambas em maio, motivo
+    divergente — mesmo cenário de `test_ob_fisicamente_repetida_com_divergencia_material_vira_revisao_rn04`,
+    só que com datas explícitas em maio (a data importa para este confronto)."""
+    return [
+        _ordem(
+            ob="2026OB000001", linha=10, valor=1069.14,
+            motivo="Curso obrigatório para o vitaliciamento",
+            data_pagamento=datetime(2026, 5, 12, 9, 0, 0),
+            periodo_inicial=date(2026, 5, 10), periodo_final=date(2026, 5, 10),
+        ),
+        _ordem(
+            ob="2026OB000001", linha=11, valor=1069.14,
+            motivo="PARTICIPAÇÃO EM ETAPA PRESENCIAL DO CURSO DE VITALICIAMENTO",
+            data_pagamento=datetime(2026, 5, 13, 9, 0, 0),
+            periodo_inicial=date(2026, 5, 10), periodo_final=date(2026, 5, 10),
+        ),
+    ]
+
+
+def test_homo_rt01_pendencia_de_maio_nao_aparece_nem_bloqueia_janeiro():
+    ordens = _ordens_repeticao_fisica_divergente_em_maio()
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida_janeiro = classificar(resultado, _INTERVALO_JANEIRO)
+
+    assert saida_janeiro.revisoes_necessarias == [], (
+        "pendência RN04 de maio vazou para a janela de janeiro"
+    )
+    assert saida_janeiro.candidatos_normais == []
+    assert saida_janeiro.diagnosticos_repeticao_fisica == []
+
+
+def test_homo_rt01_pendencia_de_maio_tambem_nao_bloqueia_fevereiro_marco_abril():
+    ordens = _ordens_repeticao_fisica_divergente_em_maio()
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    for mes in (2, 3, 4):
+        saida = classificar(resultado, intervalo_acumulado(2026, mes))
+        assert saida.revisoes_necessarias == [], f"vazou para o mês {mes}"
+        assert saida.candidatos_normais == []
+
+
+def test_homo_rt01_maio_continua_detectando_sua_propria_pendencia():
+    ordens = _ordens_repeticao_fisica_divergente_em_maio()
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida_maio = classificar(resultado, _INTERVALO_MAIO)
+
+    assert len(saida_maio.revisoes_necessarias) == 1
+    assert saida_maio.revisoes_necessarias[0].regra == "RN04"
+    assert "motivo" in saida_maio.revisoes_necessarias[0].evidencias["campos_divergentes"]
+    assert {oc.ordem_bancaria.linha for oc in saida_maio.revisoes_necessarias[0].ocorrencias} == {10, 11}
+
+
+def test_homo_rt01_competencia_sem_pendencias_continua_liberada():
+    """Controle — nenhuma repetição física envolvida: candidatos normais
+    de janeiro continuam aparecendo e liberados, sem nenhuma revisão
+    espúria introduzida pela correção."""
+    ordens_janeiro = [
+        _ordem(ob="2026OB000010", linha=2, data_pagamento=datetime(2026, 1, 15, 9, 0, 0)),
+    ]
+    ordens_maio = [
+        _ordem(ob="2026OB000020", linha=3, data_pagamento=datetime(2026, 5, 15, 9, 0, 0)),
+    ]
+    resultado = _resultado(
+        _documento("2026DH000010", ordens=ordens_janeiro),
+        _documento("2026DH000020", ordens=ordens_maio),
+    )
+
+    saida_janeiro = classificar(resultado, _INTERVALO_JANEIRO)
+
+    assert saida_janeiro.revisoes_necessarias == []
+    assert {c.ocorrencia.ordem_bancaria.ob for c in saida_janeiro.candidatos_normais} == {"2026OB000010"}
+
+
+def test_homo_rt01_mesma_ob_em_meses_diferentes_nao_contamina_competencias_anteriores():
+    """A mesma OB física repetida, uma linha em janeiro e outra em maio
+    (fronteira do acumulado crescendo mês a mês) — janeiro e abril veem
+    só a linha de janeiro (candidato normal, sem repetição física
+    detectável ainda); só a partir de maio, quando as DUAS linhas entram
+    na janela acumulada, a divergência é detectada."""
+    ordens = [
+        _ordem(
+            ob="2026OB000001", linha=10, valor=100.0, motivo="Motivo de janeiro",
+            data_pagamento=datetime(2026, 1, 10, 9, 0, 0),
+            periodo_inicial=date(2026, 1, 8), periodo_final=date(2026, 1, 8),
+        ),
+        _ordem(
+            ob="2026OB000001", linha=11, valor=200.0, motivo="Motivo de maio, divergente",
+            data_pagamento=datetime(2026, 5, 20, 9, 0, 0),
+            periodo_inicial=date(2026, 5, 18), periodo_final=date(2026, 5, 18),
+        ),
+    ]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida_janeiro = classificar(resultado, _INTERVALO_JANEIRO)
+    assert saida_janeiro.revisoes_necessarias == []
+    assert len(saida_janeiro.candidatos_normais) == 1
+    assert saida_janeiro.candidatos_normais[0].ocorrencia.ordem_bancaria.linha == 10
+
+    saida_abril = classificar(resultado, _INTERVALO_ABRIL)
+    assert saida_abril.revisoes_necessarias == []
+    assert len(saida_abril.candidatos_normais) == 1
+    assert saida_abril.candidatos_normais[0].ocorrencia.ordem_bancaria.linha == 10
+
+    saida_maio = classificar(resultado, _INTERVALO_MAIO)
+    assert saida_maio.candidatos_normais == []
+    assert len(saida_maio.revisoes_necessarias) == 1
+    assert saida_maio.revisoes_necessarias[0].regra == "RN04"
+    assert {oc.ordem_bancaria.linha for oc in saida_maio.revisoes_necessarias[0].ocorrencias} == {10, 11}
+
+
+def test_homo_rt01_identidade_do_grupo_e_estavel_independente_da_janela_que_o_expos():
+    """A revisão só passa a existir a partir de maio (ver teste acima), mas
+    quando existe, a identidade do grupo (regra + OBs) é exatamente a
+    mesma calculada por `identidade_grupo` — decisões humanas persistidas
+    continuam corretamente associadas à evidência certa, nunca a uma
+    identidade diferente por causa de qual competência revelou o grupo."""
+    from app.domain.relatorio_transparencia.decisao import identidade_grupo
+
+    ordens = _ordens_repeticao_fisica_divergente_em_maio()
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida_maio = classificar(resultado, _INTERVALO_MAIO)
+    revisao = saida_maio.revisoes_necessarias[0]
+    obs_do_grupo = [oc.ordem_bancaria.ob for oc in revisao.ocorrencias]
+
+    assert identidade_grupo(revisao.regra, obs_do_grupo) == identidade_grupo("RN04", ["2026OB000001"])
+
+    saida_junho = classificar(resultado, intervalo_acumulado(2026, 6))
+    revisao_junho = saida_junho.revisoes_necessarias[0]
+    obs_do_grupo_junho = [oc.ordem_bancaria.ob for oc in revisao_junho.ocorrencias]
+    assert identidade_grupo(revisao.regra, obs_do_grupo) == identidade_grupo(
+        revisao_junho.regra, obs_do_grupo_junho
+    )
+
+
+def test_homo_rt01_julho_preserva_comportamento_ja_homologado():
+    """Controle — nenhuma OB fisicamente repetida no cenário; julho (mês 7)
+    continua classificando normalmente, exatamente como antes desta
+    correção (repetição física em escopo, sem nada fora da janela)."""
+    ordens = [
+        _ordem(ob="2026OB000030", linha=2, data_pagamento=datetime(2026, 7, 10, 9, 0, 0)),
+    ]
+    resultado = _resultado(_documento("2026DH000030", ordens=ordens))
+
+    saida_julho = classificar(resultado, intervalo_acumulado(2026, 7))
+
+    assert saida_julho.revisoes_necessarias == []
+    assert len(saida_julho.candidatos_normais) == 1
+    assert saida_julho.candidatos_normais[0].ocorrencia.ordem_bancaria.ob == "2026OB000030"
