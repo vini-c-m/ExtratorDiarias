@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from app.consulta.configuracao_template_relatorio_transparencia import (
+    ConfiguracaoTemplateCorrompida,
     TemplateOficialIndisponivel,
     resolver_caminho_template,
 )
@@ -80,6 +81,7 @@ __all__ = [
     "DestinoJaExiste",
     "TemplateEstruturalmenteInvalido",
     "TemplateOficialIndisponivel",
+    "ConfiguracaoTemplateCorrompida",
     "OcorrenciaResumo",
     "RevisaoResumo",
     "ResumoRelatorio",

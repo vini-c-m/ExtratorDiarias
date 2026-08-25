@@ -1043,6 +1043,23 @@ function mensagem422Gerar(corpo: unknown, status: number): string {
   return mensagemDoErro422(corpo, status);
 }
 
+/** Confronto QA Codex / QA-RT-03 — `GET /template` e `POST /gerar` também
+ * respondem 503 quando o arquivo de configuração do Template Oficial está
+ * corrompido (`ConfiguracaoTemplateCorrompida`, backend), não só quando a
+ * persistência de decisões está indisponível (`ErroRelatorioTransparenciaIndisponivel`,
+ * mensagem fixa já existente sobre "dados de decisões" — enganosa para
+ * este caso). Distingue pelo prefixo já usado pelo backend e reescreve
+ * numa mensagem limpa (nunca o texto técnico do `JSONDecodeError`/`KeyError`
+ * embutido no `detail`), mesmo critério de `mensagemGerarBloqueado`. */
+function mensagem503RelatorioTransparencia(detail: string): Error {
+  if (detail.startsWith("Configuração do template oficial corrompida")) {
+    return new Error(
+      "Não foi possível ler a configuração do template oficial — o arquivo está corrompido. Selecione o template oficial novamente.",
+    );
+  }
+  return new ErroRelatorioTransparenciaIndisponivel();
+}
+
 const CAMINHO_BASE_RELATORIO_TRANSPARENCIA = `${BACKEND_URL}/api/v1/relatorio-transparencia`;
 
 /** `POST /preparar` — sem sessão no backend: os 5 parâmetros de fonte
@@ -1145,7 +1162,8 @@ export async function obterStatusTemplateRelatorioTransparencia(
   );
 
   if (resposta.status === 503) {
-    throw new ErroRelatorioTransparenciaIndisponivel();
+    const corpo = await resposta.json().catch(() => null);
+    throw mensagem503RelatorioTransparencia((corpo as { detail?: string })?.detail ?? "");
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
@@ -1198,7 +1216,8 @@ export async function gerarRelatorioTransparencia(
     throw new Error(mensagemGerarBloqueado((corpo as { detail?: string })?.detail ?? ""));
   }
   if (resposta.status === 503) {
-    throw new ErroRelatorioTransparenciaIndisponivel();
+    const corpo = await resposta.json().catch(() => null);
+    throw mensagem503RelatorioTransparencia((corpo as { detail?: string })?.detail ?? "");
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);

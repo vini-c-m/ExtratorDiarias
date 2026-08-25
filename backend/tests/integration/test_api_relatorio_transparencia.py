@@ -625,3 +625,90 @@ def test_get_template_configurado_mas_arquivo_sumiu(tmp_path):
     assert resposta.status_code == 200
     corpo = resposta.json()
     assert corpo == {"configurado": True, "disponivel": False, "caminho_template": None}
+
+
+# --- Confronto QA Codex / QA-RT-03: configuração de Template Oficial
+# corrompida vira erro de domínio controlado (503, mensagem amigável),
+# nunca HTTP 500 genérico. Achado real (reproduzido antes da correção):
+# `JSONDecodeError`/`KeyError` escapavam de `carregar_configuracao_template`
+# até o middleware padrão do FastAPI, que devolvia 500 sem nenhuma
+# orientação para o usuário.
+
+
+def test_get_template_json_corrompido_503_amigavel(tmp_path):
+    caminho_configuracao_template = tmp_path / "corrompido.json"
+    caminho_configuracao_template.write_text("{ isso nao e json valido ][", encoding="utf-8")
+
+    resposta = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+
+    assert resposta.status_code == 503
+    corpo = resposta.json()
+    assert "detail" in corpo
+    # Nunca o nome cru da exceção Python nem um traceback.
+    assert "Traceback" not in corpo["detail"]
+    assert "JSONDecodeError" not in corpo["detail"]
+
+
+def test_get_template_estrutura_incompleta_503_amigavel(tmp_path):
+    caminho_configuracao_template = tmp_path / "incompleto.json"
+    caminho_configuracao_template.write_text('{"outra_coisa": 1}', encoding="utf-8")
+
+    resposta = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+
+    assert resposta.status_code == 503
+    corpo = resposta.json()
+    assert "KeyError" not in corpo["detail"]
+
+
+def test_post_gerar_com_configuracao_template_corrompida_503_nunca_500(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = tmp_path / "corrompido.json"
+    caminho_configuracao_template.write_text("{ isso nao e json valido ][", encoding="utf-8")
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=str(caminho_configuracao_template),
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 503
+    assert not caminho_destino.exists()
+
+
+def test_post_template_reconfigurar_corrige_configuracao_corrompida(tmp_path):
+    """Recuperação natural: selecionar o template de novo sobrescreve o
+    JSON corrompido (o `POST /template` nunca lê o arquivo anterior)."""
+    caminho_configuracao_template = tmp_path / "corrompido.json"
+    caminho_configuracao_template.write_text("{ isso nao e json valido ][", encoding="utf-8")
+
+    resposta_corrompida = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+    assert resposta_corrompida.status_code == 503
+
+    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
+
+    caminho_template = tmp_path / "novo_template.xlsx"
+    construir_template_sintetico(str(caminho_template))
+
+    resposta_config = client.post(
+        f"{_BASE_URL}/template",
+        json={
+            "caminho_configuracao_template": str(caminho_configuracao_template),
+            "caminho_template": str(caminho_template),
+        },
+    )
+    assert resposta_config.status_code == 200
+
+    resposta_get = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": str(caminho_configuracao_template)}
+    )
+    assert resposta_get.status_code == 200
+    assert resposta_get.json()["configurado"] is True

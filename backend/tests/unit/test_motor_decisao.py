@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import date, datetime
 
 from app.domain.entities.ordem_bancaria import OrdemBancaria
@@ -463,3 +464,218 @@ def test_dh_so_no_controle_sem_ob_nao_vira_pagamento_ficticio_mas_nao_e_perdido(
     assert saida.candidatos_normais == []
     assert saida.revisoes_necessarias == []
     assert resultado.documentos["2026DH000001"].controle[0].dh == "2026DH000001"
+
+
+# --- 21. Confronto QA Codex / QA-RT-01 — equivalência material de
+# repetição física da mesma OB. Achado real: a versão anterior só
+# comparava trecho/motivo/situacao/data_pagamento, e só entre as linhas de
+# valor NÃO-zero (deixando a linha zero inteiramente fora da checagem) —
+# corrigido em `_resolver_repeticao_fisica`/`_CAMPOS_DIVERGENCIA_FISICA`.
+
+
+def _duas_ocorrencias_mesma_ob(*, dh_a="2026DH000001", dh_b="2026DH000001", ordem_a=None, ordem_b=None):
+    """Helper QA-RT-01 — monta duas linhas físicas da MESMA OB, cada uma
+    sob seu próprio `dh` de agrupamento (`_documento`), reproduzindo
+    exatamente como `classificar()` atribui `OcorrenciaFinanceira.dh` (a
+    chave externa de `resultado.documentos`, não `OrdemBancaria.dh`)."""
+    ordem_a = ordem_a or _ordem(ob="2026OB000001", linha=10)
+    ordem_b = ordem_b or _ordem(ob="2026OB000001", linha=11)
+    if dh_a == dh_b:
+        return _resultado(_documento(dh_a, ordens=[ordem_a, ordem_b]))
+    return _resultado(_documento(dh_a, ordens=[ordem_a]), _documento(dh_b, ordens=[ordem_b]))
+
+
+def test_qa_rt01_zero_mais_real_equivalentes_continua_sem_revisao():
+    """Comportamento ANTERIOR preservado — zero + valor real, resto
+    idêntico, continua colapsando para 1 candidato sem revisão (mesmo
+    cenário de `test_ob_fisicamente_repetida_equivalente_vira_diagnostico_e_um_candidato`,
+    repetido aqui como regressão nomeada do confronto QA-RT-01)."""
+    ordens = [_ordem(ob="2026OB000001", linha=10, valor=0), _ordem(ob="2026OB000001", linha=11, valor=154.09)]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.revisoes_necessarias == []
+    assert len(saida.candidatos_normais) == 1
+    assert saida.candidatos_normais[0].ocorrencia.ordem_bancaria.valor == 154.09
+    assert len(saida.diagnosticos_repeticao_fisica) == 1
+    assert len(saida.diagnosticos_repeticao_fisica[0].ocorrencias) == 2
+
+
+def test_qa_rt01_zero_mais_real_com_motivo_divergente_vira_revisao():
+    """Achado real do confronto — antes, a linha zero nunca entrava na
+    comparação de `motivo`/`trecho` (só linhas de valor não-zero eram
+    comparadas entre si); agora é detectado."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=0, motivo="Diária cancelada"),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09, motivo="Viagem completamente diferente"),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "motivo" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_zero_mais_real_com_trecho_divergente_vira_revisao():
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=0, trecho="RECIFE-GARANHUNS"),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09, trecho="RECIFE-PETROLINA"),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "trecho" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_mesma_ob_com_dh_divergente_vira_revisao():
+    """I01/I03 — duas linhas físicas da mesma OB sob DHs diferentes são,
+    por definição, dois documentos administrativos distintos."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        dh_a="2026DH000001",
+        dh_b="2026DH999999",
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "dh" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_cpf_divergente_vira_revisao():
+    """§1 — CPF divergente é a pessoa errada recebendo o pagamento."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09, cpf="11111111111"),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09, cpf="99999999999"),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "cpf" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_periodo_divergente_vira_revisao():
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(
+            ob="2026OB000001", linha=10, valor=154.09,
+            periodo_inicial=date(2026, 5, 10), periodo_final=date(2026, 5, 10),
+        ),
+        ordem_b=_ordem(
+            ob="2026OB000001", linha=11, valor=154.09,
+            periodo_inicial=date(2026, 5, 20), periodo_final=date(2026, 5, 22),
+        ),
+    )
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    campos = saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+    assert "periodo_inicial" in campos
+    assert "periodo_final" in campos
+
+
+def test_qa_rt01_sei_divergente_vira_revisao():
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09),
+    )
+    # `_ordem()` não tem parâmetro `sei` — cria as duas variantes na mão
+    # a partir do objeto retornado, mesma técnica de `dataclasses.replace`.
+    doc = list(resultado.documentos.values())[0]
+    ordens = [replace(doc.ordens_bancarias[0], sei="19.20.0001.0000001/2026-01"),
+              replace(doc.ordens_bancarias[1], sei="19.20.0009.0000999/2026-09")]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert saida.revisoes_necessarias[0].regra == "RN04"
+    assert "sei" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_cargo_divergente_vira_revisao():
+    """Coluna D do XLSX final (`escritor_relatorio_transparencia.py`) —
+    materialmente aplicável porque é conteúdo publicado, com fallback para
+    a Base OB quando o Controle DIMCAC não resolve."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09),
+    )
+    doc = list(resultado.documentos.values())[0]
+    ordens = [replace(doc.ordens_bancarias[0], cargo="Professor"),
+              replace(doc.ordens_bancarias[1], cargo="Analista")]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert "cargo" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_transporte_divergente_vira_revisao():
+    """Coluna H do XLSX final — mesmo raciocínio de `cargo` acima."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09),
+    )
+    doc = list(resultado.documentos.values())[0]
+    ordens = [replace(doc.ordens_bancarias[0], transporte="CARRO"),
+              replace(doc.ordens_bancarias[1], transporte="AVIÃO")]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert "transporte" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_restituicao_divergente_vira_revisao():
+    """RN02 já trata RESTITUIÇÃO como campo sensível o bastante para
+    sozinho forçar RN04 — divergência entre linhas físicas é o mesmo tipo
+    de ambiguidade."""
+    resultado = _duas_ocorrencias_mesma_ob(
+        ordem_a=_ordem(ob="2026OB000001", linha=10, valor=154.09),
+        ordem_b=_ordem(ob="2026OB000001", linha=11, valor=154.09),
+    )
+    doc = list(resultado.documentos.values())[0]
+    ordens = [replace(doc.ordens_bancarias[0], restituicao=None),
+              replace(doc.ordens_bancarias[1], restituicao=50.0)]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.candidatos_normais == []
+    assert len(saida.revisoes_necessarias) == 1
+    assert "restituicao" in saida.revisoes_necessarias[0].evidencias["campos_divergentes"]
+
+
+def test_qa_rt01_repeticao_realmente_identica_nao_gera_revisao_indevida():
+    """Controle negativo — mesmo valor não-zero, TUDO igual (não é o
+    cenário zero+real): continua colapsando para 1 candidato, sem RN04
+    espúrio."""
+    ordens = [_ordem(ob="2026OB000001", linha=10, valor=154.09), _ordem(ob="2026OB000001", linha=11, valor=154.09)]
+    resultado = _resultado(_documento("2026DH000001", ordens=ordens))
+
+    saida = classificar(resultado, _INTERVALO_PADRAO)
+
+    assert saida.revisoes_necessarias == []
+    assert len(saida.candidatos_normais) == 1
+    assert len(saida.diagnosticos_repeticao_fisica) == 1
+    assert len(saida.diagnosticos_repeticao_fisica[0].ocorrencias) == 2

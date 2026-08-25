@@ -173,7 +173,22 @@ def _campo_serializavel(valor: object) -> str:
 def calcular_fingerprint(ocorrencias: Iterable[OcorrenciaFinanceira]) -> str:
     """Serialização determinística das evidências materialmente relevantes
     de um grupo — nunca a representação padrão de objeto Python.
-    Deliberadamente ordenada por OB para não depender da ordem de entrada.
+    Deliberadamente canonicalizada para não depender da ordem de entrada.
+
+    Confronto QA Codex / QA-RT-02 (achado real, corrigido aqui): a versão
+    anterior ordenava as ocorrências por `ordem.ob` ANTES de serializar.
+    Isso normaliza corretamente grupos de OBs DISTINTAS (RN07), mas para um
+    grupo onde todas as ocorrências têm a MESMA OB (exatamente o caso de
+    revisão RN04 por repetição física, I11) a chave de ordenação empata
+    para todas — como `sorted()` do Python é estável, o empate preserva a
+    ordem de ENTRADA sem normalizar nada, e o fingerprint acabava
+    dependendo da ordem física das linhas na fonte (achado real: OB
+    repetida com motivo/trecho divergente produzia hashes diferentes só
+    por inverter a ordem das ocorrências). Correção: serializa cada
+    ocorrência primeiro (função pura do conteúdo, nunca da posição), e só
+    ORDENA as strings já serializadas — a canonicalização passa a depender
+    exclusivamente do conteúdo material da evidência, nunca da ordem de
+    entrada nem do número da linha (que já não entra em `campos` abaixo).
 
     `linha` (posição física na Base OB) é deliberadamente EXCLUÍDA — é só
     diagnóstico de localização na planilha, nunca afeta o significado do
@@ -197,7 +212,7 @@ def calcular_fingerprint(ocorrencias: Iterable[OcorrenciaFinanceira]) -> str:
     camada de persistência (§12 da especificação) — só entra aqui, dentro
     do hash, nunca no JSON salvo."""
     linhas = []
-    for oc in sorted(ocorrencias, key=lambda o: o.ordem_bancaria.ob):
+    for oc in ocorrencias:
         ordem = oc.ordem_bancaria
         campos = [
             ordem.ob,
@@ -214,7 +229,10 @@ def calcular_fingerprint(ocorrencias: Iterable[OcorrenciaFinanceira]) -> str:
             ordem.situacao,
         ]
         linhas.append(_SEPARADOR_CAMPO.join(_campo_serializavel(c) for c in campos))
-    canonico = _SEPARADOR_OCORRENCIA.join(linhas)
+    # QA-RT-02 — ordena as linhas JÁ serializadas (conteúdo puro), nunca as
+    # ocorrências por um campo que pode empatar (`ordem.ob`); determinístico
+    # mesmo quando todas as ocorrências compartilham a mesma OB.
+    canonico = _SEPARADOR_OCORRENCIA.join(sorted(linhas))
     return hashlib.sha256(canonico.encode("utf-8")).hexdigest()
 
 

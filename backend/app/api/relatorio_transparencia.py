@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 
 from app.consulta.configuracao_template_relatorio_transparencia import (
+    ConfiguracaoTemplateCorrompida,
     TemplateOficialInvalido,
     carregar_configuracao_template,
     persistir_configuracao_template,
@@ -109,6 +110,8 @@ def _levantar_erro_de_fontes(erro: Exception) -> None:
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     if isinstance(erro, TemplateOficialIndisponivel):
         raise HTTPException(status_code=404, detail=str(erro)) from erro
+    if isinstance(erro, ConfiguracaoTemplateCorrompida):
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
     raise erro
 
 
@@ -164,6 +167,7 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
         TemplateOficialIndisponivel,
+        ConfiguracaoTemplateCorrompida,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -254,7 +258,10 @@ def _status_template_resposta(configuracao) -> StatusTemplateResposta:
 def obter_status_template(
     parametros: Annotated[ParametrosConfiguracaoTemplateQuery, Query()],
 ) -> StatusTemplateResposta:
-    configuracao = carregar_configuracao_template(parametros.caminho_configuracao_template)
+    try:
+        configuracao = carregar_configuracao_template(parametros.caminho_configuracao_template)
+    except ConfiguracaoTemplateCorrompida as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
     return _status_template_resposta(configuracao)
 
 

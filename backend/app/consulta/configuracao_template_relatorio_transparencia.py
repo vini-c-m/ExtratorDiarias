@@ -30,6 +30,7 @@ from openpyxl import load_workbook
 __all__ = [
     "TemplateOficialInvalido",
     "TemplateOficialIndisponivel",
+    "ConfiguracaoTemplateCorrompida",
     "ConfiguracaoTemplate",
     "carregar_configuracao_template",
     "persistir_configuracao_template",
@@ -49,6 +50,20 @@ class TemplateOficialIndisponivel(Exception):
     interno."""
 
 
+class ConfiguracaoTemplateCorrompida(Exception):
+    """Confronto QA Codex / QA-RT-03 — o arquivo de configuração
+    (`caminho_configuracao_template`, infraestrutura interna) existe, mas
+    não pôde ser lido como configuração válida: JSON sintaticamente
+    inválido, estrutura que não é um objeto, ou campos obrigatórios
+    ausentes/de tipo errado. Mesmo papel de `PersistenciaDecisoesCorrompida`
+    (`app/consulta/persistencia_decisoes.py`) para o arquivo irmão de
+    decisões — nunca falha silenciosamente, nunca deixa `JSONDecodeError`/
+    `KeyError`/`TypeError` escaparem para um 500 genérico; mensagem já
+    adequada para exibição direta ao usuário, nunca menciona caminho
+    interno (o arquivo de configuração é infraestrutura, não algo que o
+    usuário escolheu nesta ação)."""
+
+
 @dataclass(frozen=True)
 class ConfiguracaoTemplate:
     caminho_template: str
@@ -59,9 +74,18 @@ class ConfiguracaoTemplate:
 
     @staticmethod
     def from_dict(dados: dict) -> "ConfiguracaoTemplate":
-        return ConfiguracaoTemplate(
-            caminho_template=dados["caminho_template"], configurado_em=dados["configurado_em"]
-        )
+        """Levanta `KeyError` (campo ausente) ou `TypeError` (campo com
+        tipo errado) quando `dados` não corresponde ao esquema esperado —
+        `carregar_configuracao_template` é quem traduz isso para
+        `ConfiguracaoTemplateCorrompida`, nunca esta função (mantém o
+        mesmo nível de responsabilidade de `_decisao_de_dict` em
+        `persistencia_decisoes.py`, que também não trata seus próprios
+        erros)."""
+        caminho_template = dados["caminho_template"]
+        configurado_em = dados["configurado_em"]
+        if not isinstance(caminho_template, str) or not isinstance(configurado_em, str):
+            raise TypeError("'caminho_template' e 'configurado_em' devem ser strings")
+        return ConfiguracaoTemplate(caminho_template=caminho_template, configurado_em=configurado_em)
 
 
 def _validar_template(caminho_template: str) -> None:
@@ -80,11 +104,33 @@ def _validar_template(caminho_template: str) -> None:
 
 def carregar_configuracao_template(caminho_configuracao_template: str) -> ConfiguracaoTemplate | None:
     """`None` quando nada foi configurado ainda — nunca um erro (mesmo
-    critério de `configuracao_app.carregar`)."""
+    critério de `configuracao_app.carregar`). Qualquer outra falha de
+    leitura (JSON malformado, estrutura que não é um objeto, campo
+    obrigatório ausente ou de tipo errado) sempre levanta
+    `ConfiguracaoTemplateCorrompida` — nunca deixa `JSONDecodeError`/
+    `KeyError`/`TypeError` escaparem para quem chamou (confronto QA Codex /
+    QA-RT-03; mesmo critério de `persistencia_decisoes.carregar_decisoes`)."""
     if not os.path.isfile(caminho_configuracao_template):
         return None
-    dados = json.loads(Path(caminho_configuracao_template).read_text(encoding="utf-8"))
-    return ConfiguracaoTemplate.from_dict(dados)
+
+    try:
+        dados = json.loads(Path(caminho_configuracao_template).read_text(encoding="utf-8"))
+    except json.JSONDecodeError as erro:
+        raise ConfiguracaoTemplateCorrompida(
+            f"Configuração do template oficial corrompida (JSON inválido: {erro})."
+        ) from erro
+
+    if not isinstance(dados, dict):
+        raise ConfiguracaoTemplateCorrompida(
+            "Configuração do template oficial corrompida (estrutura inesperada)."
+        )
+
+    try:
+        return ConfiguracaoTemplate.from_dict(dados)
+    except (KeyError, TypeError) as erro:
+        raise ConfiguracaoTemplateCorrompida(
+            f"Configuração do template oficial corrompida (campo ausente ou inválido: {erro})."
+        ) from erro
 
 
 def persistir_configuracao_template(
@@ -112,7 +158,11 @@ def persistir_configuracao_template(
 def resolver_caminho_template(caminho_configuracao_template: str) -> str:
     """Único ponto de entrada que `gerar_relatorio_xlsx` deveria conhecer —
     devolve um caminho de template pronto para uso, ou levanta
-    `TemplateOficialIndisponivel` com mensagem já pronta para a tela."""
+    `TemplateOficialIndisponivel` com mensagem já pronta para a tela.
+    Também pode propagar `ConfiguracaoTemplateCorrompida` (vinda de
+    `carregar_configuracao_template`) quando o arquivo de configuração em
+    si está corrompido — o chamador (API) mapeia as duas para respostas
+    HTTP distintas, nunca deixa nenhuma das duas virar um 500 genérico."""
     configuracao = carregar_configuracao_template(caminho_configuracao_template)
     if configuracao is None:
         raise TemplateOficialIndisponivel(

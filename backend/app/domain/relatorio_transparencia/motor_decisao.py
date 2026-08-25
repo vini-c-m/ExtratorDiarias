@@ -92,11 +92,53 @@ class ResultadoRelatorio:
     diagnosticos_repeticao_fisica: list[DiagnosticoRepeticaoFisica] = field(default_factory=list)
 
 
+# Confronto QA Codex / QA-RT-01 — lista original (Micro-sprint 3B) cobria só
+# trecho/motivo/situacao/data_pagamento. Campos adicionados aqui e por quê
+# (nenhum inventado — todos já são materialmente relevantes segundo RN01-07/
+# I01-I03/RN02 ou já saem publicados no XLSX final,
+# `app/planilha/escritor_relatorio_transparencia.py`):
+#   dh          — I01 ("DH é o elo estrutural primário") / I03 (1 DH -> N
+#                 OBs sempre preservado): duas ocorrências físicas da mesma
+#                 OB sob DHs diferentes são, por definição, dois documentos
+#                 administrativos distintos — nunca "a mesma ocorrência".
+#   cpf         — identifica o beneficiário (§1: "quem recebeu"); CPF
+#                 divergente é a pessoa errada recebendo o pagamento.
+#   sei         — identifica o processo administrativo (mesmo raciocínio de
+#                 `dh`; I02 só proíbe usar SEI para deduplicar
+#                 destrutivamente — aqui SEI divergente faz o oposto, força
+#                 revisão em vez de fundir).
+#   periodo_inicial/periodo_final — a viagem em si (coluna E/F do XLSX
+#                 final); períodos diferentes são viagens diferentes.
+#   cargo, transporte — colunas D/H do XLSX final (com precedência do
+#                 Controle DIMCAC, mas fallback para a Base OB quando o
+#                 Controle não resolve — se as linhas físicas da Base OB já
+#                 divergem aqui, o mesmo raciocínio de "nunca escolher à
+#                 toa" do fallback do escritor se aplica antes mesmo de
+#                 chegar lá).
+#   restituicao — RN02 trata RESTITUIÇÃO como campo sensível o bastante
+#                 para, sozinho, forçar RN04 quando o valor pago não é
+#                 zero; divergência entre linhas físicas é o mesmo tipo de
+#                 ambiguidade que RN02 já recusa resolver sozinha.
+# `nome` foi deliberadamente NÃO incluído: nenhuma RN o cita isoladamente e
+# `cpf` já cobre a divergência de identidade; incluir texto livre (sujeito a
+# variação cosmética de digitação) sem evidência específica seria inventar
+# regra nova — se necessário, tratar em confronto separado.
+# `duplicidade` continua fora (RN03: nunca decide nada isoladamente) e
+# `linha` continua fora (é só posição física na planilha, nunca dado
+# publicável — mesmo critério já usado por `calcular_fingerprint`).
 _CAMPOS_DIVERGENCIA_FISICA: dict[str, Callable[[OcorrenciaFinanceira], object]] = {
+    "dh": lambda o: o.dh,
     "trecho": lambda o: o.ordem_bancaria.trecho,
     "motivo": lambda o: o.ordem_bancaria.motivo,
     "situacao": lambda o: o.ordem_bancaria.situacao,
     "data_pagamento": lambda o: o.ordem_bancaria.data_pagamento,
+    "cpf": lambda o: o.ordem_bancaria.cpf,
+    "sei": lambda o: o.ordem_bancaria.sei,
+    "periodo_inicial": lambda o: o.ordem_bancaria.periodo_inicial,
+    "periodo_final": lambda o: o.ordem_bancaria.periodo_final,
+    "cargo": lambda o: o.ordem_bancaria.cargo,
+    "transporte": lambda o: o.ordem_bancaria.transporte,
+    "restituicao": lambda o: o.ordem_bancaria.restituicao,
 }
 
 
@@ -115,10 +157,23 @@ def _resolver_repeticao_fisica(
     mesmo número de OB aparece em mais de uma linha da Base OB, resolve por
     equivalência (nunca por escolha arbitrária): linhas com valor zero
     convivendo com uma linha de valor real (achado real — artefato de
-    exportação em lote) colapsam para a linha de valor real; valores
-    reais divergentes, ou qualquer outro campo publicável divergente entre
-    as linhas "primárias", vira RN04 (não é seguro decidir sozinho qual
-    versão publicar)."""
+    exportação em lote) colapsam para a linha de valor real SE E SOMENTE SE
+    todo o resto também for idêntico (I11b: "resto idêntico" é a própria
+    descrição empírica que fundamenta a equivalência — nunca presumida sem
+    checar); valores reais divergentes, ou qualquer outro campo
+    materialmente relevante divergente entre QUALQUER par de linhas físicas
+    (inclusive a de valor zero), vira RN04 (não é seguro decidir sozinho
+    qual versão publicar).
+
+    Confronto QA Codex / QA-RT-01 (achado real, corrigido aqui): a versão
+    anterior comparava só as linhas de valor NÃO-zero entre si
+    (`primarias`), o que deixava a linha de valor zero inteiramente fora de
+    qualquer checagem de divergência — motivo/trecho/CPF/DH/período/etc.
+    completamente diferentes na linha zero nunca eram detectados. A
+    checagem agora roda sobre TODAS as ocorrências físicas do grupo,
+    sempre; `primarias`/`valores_nao_zero` continuam existindo só para
+    escolher QUAL linha vira a representante quando o grupo é de fato
+    equivalente, nunca para decidir o que é comparado."""
     representantes: list[OcorrenciaFinanceira] = []
     revisoes: list[RevisaoNecessaria] = []
     diagnosticos: list[DiagnosticoRepeticaoFisica] = []
@@ -146,19 +201,18 @@ def _resolver_repeticao_fisica(
             )
             continue
 
-        primarias = (
-            [o for o in ocorrencias if o.ordem_bancaria.valor in valores_nao_zero]
-            if valores_nao_zero
-            else ocorrencias
-        )
-        divergentes = _campos_divergentes(primarias)
+        # QA-RT-01 — compara TODAS as ocorrências físicas do grupo (nunca só
+        # as de valor não-zero) contra todos os campos materialmente
+        # relevantes; só decide qual linha representa o grupo DEPOIS de
+        # confirmar que não há divergência.
+        divergentes = _campos_divergentes(ocorrencias)
         if divergentes:
             revisoes.append(
                 RevisaoNecessaria(
                     regra="RN04",
                     motivo=(
                         f"OB {numero_ob} aparece {len(ocorrencias)}x fisicamente na Base OB "
-                        f"com divergência em campo(s) publicável(is): {', '.join(divergentes)}."
+                        f"com divergência em campo(s) materialmente relevante(s): {', '.join(divergentes)}."
                     ),
                     ocorrencias=ocorrencias,
                     evidencias={"campos_divergentes": divergentes},
@@ -167,7 +221,12 @@ def _resolver_repeticao_fisica(
             continue
 
         diagnosticos.append(DiagnosticoRepeticaoFisica(ob=numero_ob, ocorrencias=ocorrencias))
-        representantes.append(min(primarias, key=lambda o: o.ordem_bancaria.linha))
+        candidatas_representante = (
+            [o for o in ocorrencias if o.ordem_bancaria.valor in valores_nao_zero]
+            if valores_nao_zero
+            else ocorrencias
+        )
+        representantes.append(min(candidatas_representante, key=lambda o: o.ordem_bancaria.linha))
 
     return representantes, revisoes, diagnosticos
 

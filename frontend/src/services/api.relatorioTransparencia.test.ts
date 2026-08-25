@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ErroRelatorioTransparenciaIndisponivel,
+  gerarRelatorioTransparencia,
   listarRevisoesRelatorioTransparencia,
+  obterStatusTemplateRelatorioTransparencia,
   prepararRelatorioTransparencia,
   registrarDecisaoRevisaoRelatorioTransparencia,
 } from "./api";
@@ -204,5 +206,66 @@ describe("registrarDecisaoRevisaoRelatorioTransparencia", () => {
         autor: "servidor.teste",
       }),
     ).rejects.toThrow(/OB\(s\) fora do grupo/);
+  });
+});
+
+// --- Confronto QA Codex / QA-RT-03 — 503 de configuração de template
+// corrompida (`ConfiguracaoTemplateCorrompida`, backend) precisa de uma
+// mensagem distinta do 503 genérico de persistência de decisões
+// indisponível (`ErroRelatorioTransparenciaIndisponivel`, mensagem fixa
+// sobre "dados de decisões" — enganosa para este caso).
+
+
+function resposta503TemplateCorrompido() {
+  return {
+    ok: false,
+    status: 503,
+    json: async () => ({
+      detail: "Configuração do template oficial corrompida (JSON inválido: linha 1 coluna 3).",
+    }),
+  };
+}
+
+describe("obterStatusTemplateRelatorioTransparencia", () => {
+  it("503 de template corrompido vira mensagem específica, nunca a de 'dados de decisões'", async () => {
+    const fetchMock = vi.fn(async () => resposta503TemplateCorrompido());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      obterStatusTemplateRelatorioTransparencia("C:\\fake\\AppData\\template_configuracao.json"),
+    ).rejects.toThrow(/template oficial.*corrompido/i);
+  });
+
+  it("503 sem relação com template continua caindo no erro genérico já existente", async () => {
+    const fetchMock = vi.fn(async () => resposta503());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      obterStatusTemplateRelatorioTransparencia("C:\\fake\\AppData\\template_configuracao.json"),
+    ).rejects.toThrow(ErroRelatorioTransparenciaIndisponivel);
+  });
+});
+
+describe("gerarRelatorioTransparencia — 503 de template corrompido", () => {
+  const REQUISICAO_GERAR = {
+    ...PARAMETROS_FONTES,
+    caminho_configuracao_template: "C:\\fake\\AppData\\template_configuracao.json",
+    caminho_destino: "C:\\fake\\Relatorio.xlsx",
+  };
+
+  it("503 de template corrompido vira mensagem específica", async () => {
+    const fetchMock = vi.fn(async () => resposta503TemplateCorrompido());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(gerarRelatorioTransparencia(REQUISICAO_GERAR)).rejects.toThrow(/template oficial.*corrompido/i);
+  });
+
+  it("503 sem relação com template continua caindo no erro genérico já existente", async () => {
+    const fetchMock = vi.fn(async () => resposta503());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(gerarRelatorioTransparencia(REQUISICAO_GERAR)).rejects.toThrow(
+      ErroRelatorioTransparenciaIndisponivel,
+    );
   });
 });

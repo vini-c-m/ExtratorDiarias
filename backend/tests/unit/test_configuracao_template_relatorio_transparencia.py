@@ -121,3 +121,94 @@ def test_mensagens_de_indisponivel_nunca_expoem_caminho_interno(tmp_path):
         config.resolver_caminho_template(caminho_configuracao)
 
     assert "configuracao_interna_sensivel" not in str(excinfo.value)
+
+
+# --- Confronto QA Codex / QA-RT-03 — configuração corrompida/estruturalmente
+# inválida vira erro de domínio controlado (`ConfiguracaoTemplateCorrompida`),
+# nunca `JSONDecodeError`/`KeyError`/`TypeError` cru. Achado real: antes
+# desta correção, essas exceções escapavam de `carregar_configuracao_template`
+# até a API, resultando em HTTP 500 genérico (ver
+# `tests/integration/test_api_relatorio_transparencia.py`).
+
+
+def test_carregar_configuracao_template_json_sintaticamente_invalido(tmp_path):
+    caminho_configuracao = tmp_path / "corrompido.json"
+    caminho_configuracao.write_text("{ isso nao e json valido ][", encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+def test_carregar_configuracao_template_sem_campo_obrigatorio(tmp_path):
+    caminho_configuracao = tmp_path / "incompleto.json"
+    caminho_configuracao.write_text(json.dumps({"configurado_em": "2026-01-01T00:00:00"}), encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+def test_carregar_configuracao_template_sem_o_outro_campo_obrigatorio(tmp_path):
+    caminho_configuracao = tmp_path / "incompleto2.json"
+    caminho_configuracao.write_text(json.dumps({"caminho_template": "C:\\fake\\t.xlsx"}), encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+@pytest.mark.parametrize(
+    "conteudo",
+    [
+        json.dumps({"caminho_template": 123, "configurado_em": "2026-01-01T00:00:00"}),
+        json.dumps({"caminho_template": None, "configurado_em": "2026-01-01T00:00:00"}),
+        json.dumps({"caminho_template": ["a", "b"], "configurado_em": "2026-01-01T00:00:00"}),
+        json.dumps({"caminho_template": "C:\\fake\\t.xlsx", "configurado_em": 20260101}),
+    ],
+)
+def test_carregar_configuracao_template_tipos_estruturalmente_invalidos(tmp_path, conteudo):
+    caminho_configuracao = tmp_path / "tipo_errado.json"
+    caminho_configuracao.write_text(conteudo, encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+@pytest.mark.parametrize("conteudo", [json.dumps([1, 2, 3]), json.dumps("apenas uma string"), json.dumps(42)])
+def test_carregar_configuracao_template_json_valido_mas_nao_e_objeto(tmp_path, conteudo):
+    caminho_configuracao = tmp_path / "nao_e_objeto.json"
+    caminho_configuracao.write_text(conteudo, encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+
+def test_carregar_configuracao_template_corrompida_nunca_expoe_caminho_interno(tmp_path):
+    caminho_configuracao = tmp_path / "configuracao_interna_sensivel.json"
+    caminho_configuracao.write_text("{ invalido", encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida) as excinfo:
+        config.carregar_configuracao_template(str(caminho_configuracao))
+
+    assert "configuracao_interna_sensivel" not in str(excinfo.value)
+
+
+def test_resolver_caminho_template_propaga_configuracao_corrompida(tmp_path):
+    """`resolver_caminho_template` (usado por `/gerar`) não engole nem
+    reinterpreta a corrupção como "não configurado" — propaga o erro
+    específico, para a API distinguir os dois casos."""
+    caminho_configuracao = tmp_path / "corrompido.json"
+    caminho_configuracao.write_text("{ invalido", encoding="utf-8")
+
+    with pytest.raises(config.ConfiguracaoTemplateCorrompida):
+        config.resolver_caminho_template(str(caminho_configuracao))
+
+
+def test_config_valida_continua_funcionando_apos_a_correcao(tmp_path):
+    """Controle — a correção não pode quebrar o caminho feliz já
+    homologado."""
+    caminho_template = _criar_xlsx(tmp_path / "template.xlsx")
+    caminho_configuracao = str(tmp_path / "configuracao.json")
+    config.persistir_configuracao_template(caminho_configuracao, caminho_template)
+
+    carregada = config.carregar_configuracao_template(caminho_configuracao)
+
+    assert carregada.caminho_template == caminho_template

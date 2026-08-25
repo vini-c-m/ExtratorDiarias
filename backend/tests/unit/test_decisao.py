@@ -150,6 +150,62 @@ def test_fingerprint_independe_da_ordem_das_ocorrencias():
     assert calcular_fingerprint(ocs1) == calcular_fingerprint(ocs2)
 
 
+# --- Confronto QA Codex / QA-RT-02 — fingerprint determinístico também
+# quando TODAS as ocorrências compartilham a MESMA OB (cenário RN04 de
+# repetição física, I11). Achado real: `sorted(ocorrencias, key=lambda o:
+# o.ordem_bancaria.ob)` só normaliza a ordem quando a OB difere entre as
+# ocorrências — com a mesma OB, o `sorted()` estável do Python preservava a
+# ordem de ENTRADA, e o fingerprint variava só por inverter a ordem física
+# das linhas. Corrigido serializando cada ocorrência primeiro e ordenando
+# as strings já serializadas.
+
+
+def test_fingerprint_mesma_ob_independe_da_ordem_com_motivo_divergente():
+    a = _oc(ob="2026OB000001", linha=10, motivo="Curso obrigatório para o vitaliciamento")
+    b = _oc(ob="2026OB000001", linha=11, motivo="PARTICIPAÇÃO EM ETAPA PRESENCIAL DO CURSO")
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+def test_fingerprint_mesma_ob_independe_da_ordem_com_trecho_divergente():
+    a = _oc(ob="2026OB000001", linha=10, trecho="RECIFE-GARANHUNS")
+    b = _oc(ob="2026OB000001", linha=11, trecho="RECIFE-PETROLINA")
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+def test_fingerprint_mesma_ob_independe_da_ordem_com_dh_divergente():
+    a = _oc(dh="2026DH000001", ob="2026OB000001", linha=10)
+    b = _oc(dh="2026DH999999", ob="2026OB000001", linha=11)
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+def test_fingerprint_mesma_ob_independe_da_ordem_com_cpf_divergente():
+    a = _oc(ob="2026OB000001", linha=10, cpf="11111111111")
+    b = _oc(ob="2026OB000001", linha=11, cpf="99999999999")
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+def test_fingerprint_mesma_ob_independe_da_ordem_com_periodo_divergente():
+    a = _oc(ob="2026OB000001", linha=10, periodo_inicial=date(2026, 5, 10))
+    b = _oc(ob="2026OB000001", linha=11, periodo_inicial=date(2026, 5, 20))
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+def test_fingerprint_obs_distintas_continua_determinístico_apos_a_correcao():
+    """Controle — o cenário RN07 (OBs distintas) já funcionava antes;
+    confirma que a correção não regrediu esse caminho."""
+    a = _oc(ob="2026OB000001", linha=10)
+    b = _oc(dh="2026DH000002", ob="2026OB000002", linha=20)
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+def test_fingerprint_mudanca_material_real_continua_alterando_o_hash():
+    """Controle — a correção não pode tornar o fingerprint insensível a
+    mudanças de verdade (só à ORDEM de entrada)."""
+    a = _oc(ob="2026OB000001", valor=154.09)
+    b = _oc(ob="2026OB000001", valor=999.99)
+    assert calcular_fingerprint([a]) != calcular_fingerprint([b])
+
+
 # --- Confronto 3C.1: DUPLICIDADE isolada não pode invalidar (RN03) --------
 
 
