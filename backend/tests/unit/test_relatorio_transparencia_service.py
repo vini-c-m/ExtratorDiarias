@@ -933,13 +933,26 @@ def test_registrar_decisao_nao_loga_autor(tmp_path, caplog):
 # --- Micro-sprint 3F: gerar_relatorio_xlsx — orquestração fontes+decisões+geração
 
 
-def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
+def _configurar_template(tmp_path, nome_arquivo="template.xlsx"):
+    """Micro-sprint 3H — o template deixou de ser um parâmetro direto de
+    `gerar_relatorio_xlsx`: agora é resolvido via configuração isolada do
+    módulo (`configuracao_template_relatorio_transparencia`), configurada
+    uma vez. Devolve `caminho_configuracao_template`, pronto para reuso em
+    toda chamada de `gerar_relatorio_xlsx` no teste."""
+    from app.consulta.configuracao_template_relatorio_transparencia import persistir_configuracao_template
     from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
 
+    caminho_template = str(tmp_path / nome_arquivo)
+    construir_template_sintetico(caminho_template)
+    caminho_configuracao_template = str(tmp_path / "template_configuracao.json")
+    persistir_configuracao_template(caminho_configuracao_template, caminho_template)
+    return caminho_configuracao_template
+
+
+def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
-    caminho_template = str(tmp_path / "template.xlsx")
-    construir_template_sintetico(caminho_template)
+    caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
@@ -948,7 +961,7 @@ def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
         ano_exercicio=2026,
         mes_referencia=5,
         caminho_decisoes=caminho_decisoes,
-        caminho_template=caminho_template,
+        caminho_configuracao_template=caminho_configuracao_template,
         caminho_destino=caminho_destino,
     )
 
@@ -959,15 +972,12 @@ def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
 
 
 def test_gerar_relatorio_xlsx_bloqueia_com_revisao_pendente(tmp_path):
-    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
-
     linhas = [
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
         _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
     ]
     _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
-    caminho_template = str(tmp_path / "template.xlsx")
-    construir_template_sintetico(caminho_template)
+    caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     with pytest.raises(service.RelatorioBloqueadoPorPendencias):
@@ -977,7 +987,28 @@ def test_gerar_relatorio_xlsx_bloqueia_com_revisao_pendente(tmp_path):
             ano_exercicio=2026,
             mes_referencia=5,
             caminho_decisoes=caminho_decisoes,
-            caminho_template=caminho_template,
+            caminho_configuracao_template=caminho_configuracao_template,
+            caminho_destino=caminho_destino,
+        )
+
+
+def test_gerar_relatorio_xlsx_sem_template_configurado_levanta_erro_dedicado(tmp_path):
+    """Micro-sprint 3H — nunca gera com um template inexistente/ausente:
+    `TemplateOficialIndisponivel` é distinto de `RelatorioBloqueadoPorPendencias`
+    (G05) para a UI conseguir mostrar a orientação certa em cada caso."""
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = str(tmp_path / "template_configuracao_nunca_criado.json")
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    with pytest.raises(service.TemplateOficialIndisponivel):
+        service.gerar_relatorio_xlsx(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            caminho_configuracao_template=caminho_configuracao_template,
             caminho_destino=caminho_destino,
         )
 
@@ -987,8 +1018,6 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
     de OBs, valores) — o único jeito de mudar o que é publicado é registrar
     uma decisão humana real e deixá-la ser reconstruída a partir das
     fontes."""
-    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
-
     linhas = [
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
         _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
@@ -1006,8 +1035,7 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
         obs_selecionadas=["2026OB000002"],
         autor="servidor.teste",
     )
-    caminho_template = str(tmp_path / "template.xlsx")
-    construir_template_sintetico(caminho_template)
+    caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
@@ -1016,7 +1044,7 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
         ano_exercicio=2026,
         mes_referencia=5,
         caminho_decisoes=caminho_decisoes,
-        caminho_template=caminho_template,
+        caminho_configuracao_template=caminho_configuracao_template,
         caminho_destino=caminho_destino,
     )
 

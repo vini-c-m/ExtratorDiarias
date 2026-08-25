@@ -27,6 +27,7 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
     estado,
     preparando,
     enviandoDecisao,
+    parametrosFontesAtuais,
     preparar,
     iniciarRevisao,
     confirmarDecisao,
@@ -51,6 +52,23 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
     if (typeof window.api?.obterCaminhoDecisoesRelatorioTransparencia !== "function") return;
     window.api.obterCaminhoDecisoesRelatorioTransparencia().then((caminho) => {
       if (!cancelado) setCaminhoDecisoes(caminho);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
+
+  // Micro-sprint 3H — mesmo critério de `caminhoDecisoes` acima: caminho da
+  // configuração do Template Oficial (infraestrutura interna, nunca
+  // exibida), resolvido uma vez via IPC e repassado para `PainelResumo`
+  // (única tela que precisa disso, para a ação "Gerar Relatório").
+  const [caminhoConfiguracaoTemplate, setCaminhoConfiguracaoTemplate] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    if (typeof window.api?.obterCaminhoConfiguracaoTemplateRelatorioTransparencia !== "function") return;
+    window.api.obterCaminhoConfiguracaoTemplateRelatorioTransparencia().then((caminho) => {
+      if (!cancelado) setCaminhoConfiguracaoTemplate(caminho);
     });
     return () => {
       cancelado = true;
@@ -105,7 +123,13 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
       )}
 
       {estado.fase === "resumo" && (
-        <PainelResumo resumo={estado.resumo} onRevisarCasos={iniciarRevisao} onVoltarParaEntrada={voltarParaEntrada} />
+        <PainelResumo
+          resumo={estado.resumo}
+          parametrosFontes={parametrosFontesAtuais}
+          caminhoConfiguracaoTemplate={caminhoConfiguracaoTemplate}
+          onRevisarCasos={iniciarRevisao}
+          onVoltarParaEntrada={voltarParaEntrada}
+        />
       )}
 
       {estado.fase === "revisao" && casoAtual && (

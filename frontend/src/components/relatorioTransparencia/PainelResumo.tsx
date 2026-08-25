@@ -1,16 +1,155 @@
-import { AlertTriangle, CheckCircle2, History } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FolderOpen, History } from "lucide-react";
+import type { ChangeEvent } from "react";
 import { SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
+import { useGerarRelatorioTransparencia } from "../../hooks/useGerarRelatorioTransparencia";
 import Alerta from "../ui/Alerta";
-import Badge from "../ui/Badge";
+import BotaoArquivo from "../ui/BotaoArquivo";
 import Botao from "../ui/Botao";
 import Cartao from "../ui/Cartao";
-import type { ResumoRelatorioTransparencia } from "../../types/relatorioTransparencia";
+import type { ParametrosFontesRelatorioTransparencia, ResumoRelatorioTransparencia } from "../../types/relatorioTransparencia";
 
 interface Props {
   resumo: ResumoRelatorioTransparencia;
+  /** Micro-sprint 3H — os mesmos 5 parâmetros de fonte da preparação em
+   * curso (`useRelatorioTransparencia.parametrosFontesAtuais`), necessários
+   * para "Gerar Relatório" reenviar. `null` só é possível em teste
+   * isolado — na tela real esta fase só existe depois de "Preparar
+   * Relatório" ter sucesso. */
+  parametrosFontes: ParametrosFontesRelatorioTransparencia | null;
+  /** Infraestrutura interna (nunca exibida) — resolvida via IPC pela
+   * página, mesmo padrão de `caminho_decisoes`. */
+  caminhoConfiguracaoTemplate: string | null;
   onRevisarCasos: () => void;
   onVoltarParaEntrada: () => void;
+}
+
+// Micro-sprint 3H — bloco de geração final do XLSX, mostrado só quando
+// `resumo.pode_gerar_relatorio` é `true`. O Template Oficial é
+// infraestrutura fixa do módulo (configurada uma vez, item 11 da
+// especificação) — este bloco só lê `statusTemplate` do hook, nunca decide
+// sozinho se pode gerar (isso continua sendo só `resumo.pode_gerar_relatorio`,
+// já resolvido acima na árvore de decisão do componente).
+function BlocoGeracao({
+  parametrosFontes,
+  caminhoConfiguracaoTemplate,
+}: {
+  parametrosFontes: ParametrosFontesRelatorioTransparencia | null;
+  caminhoConfiguracaoTemplate: string | null;
+}) {
+  const {
+    statusTemplate,
+    carregarStatusTemplate,
+    configurandoTemplate,
+    configurarTemplate,
+    estadoGeracao,
+    gerando,
+    gerar,
+    erroAcaoPosGeracao,
+    abrirRelatorio,
+    abrirPasta,
+  } = useGerarRelatorioTransparencia(caminhoConfiguracaoTemplate);
+
+  function aoSelecionarTemplate(evento: ChangeEvent<HTMLInputElement>) {
+    const arquivo = evento.target.files?.[0];
+    if (!arquivo) return;
+    configurarTemplate(window.api.getPathForFile(arquivo));
+    evento.target.value = "";
+  }
+
+  if (estadoGeracao.fase === "sucesso") {
+    return (
+      <div className="w-full">
+        <div className="flex flex-wrap items-center justify-between gap-5">
+          <div>
+            <p className={TIPOGRAFIA.subtitulo}>Relatório gerado com sucesso.</p>
+            <p className={`mt-1 truncate ${TIPOGRAFIA.textoAuxiliar}`}>
+              {estadoGeracao.caminhoArquivo.split(/[\\/]/).pop()}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Botao variante="secundaria" onClick={abrirRelatorio}>
+              Abrir relatório
+            </Botao>
+            <Botao variante="secundaria" onClick={abrirPasta}>
+              <FolderOpen aria-hidden="true" className="h-4 w-4" />
+              Abrir pasta
+            </Botao>
+          </div>
+        </div>
+        {erroAcaoPosGeracao && (
+          <div className="mt-4">
+            <Alerta variante="erro">{erroAcaoPosGeracao}</Alerta>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (statusTemplate.fase === "carregando") {
+    return <p className={TIPOGRAFIA.textoAuxiliar}>Verificando o modelo do relatório...</p>;
+  }
+
+  if (statusTemplate.fase === "erro") {
+    return (
+      <div className="w-full">
+        <Alerta variante="erro">{statusTemplate.mensagem}</Alerta>
+        <div className="mt-3">
+          <Botao variante="secundaria" onClick={carregarStatusTemplate}>
+            Tentar novamente
+          </Botao>
+        </div>
+      </div>
+    );
+  }
+
+  if (statusTemplate.fase === "nao-configurado" || statusTemplate.fase === "indisponivel") {
+    return (
+      <div className="w-full">
+        <p className={TIPOGRAFIA.subtitulo}>Geração do relatório final</p>
+        <p className={`mt-1 mb-4 ${TIPOGRAFIA.textoAuxiliar}`}>
+          {statusTemplate.fase === "indisponivel"
+            ? "O template oficial configurado não foi encontrado. Selecione-o novamente para gerar o relatório."
+            : "Selecione o template oficial do relatório antes de gerar (feito apenas uma vez)."}
+        </p>
+        <BotaoArquivo
+          accept=".xlsx"
+          desabilitado={configurandoTemplate}
+          titulo="Selecionar Template Oficial"
+          onChange={aoSelecionarTemplate}
+        >
+          <FolderOpen aria-hidden="true" className="h-4 w-4" />
+          {configurandoTemplate ? "Salvando..." : "Selecionar Template Oficial"}
+        </BotaoArquivo>
+      </div>
+    );
+  }
+
+  // statusTemplate.fase === "pronto"
+  return (
+    <div className="w-full">
+      <div className="flex flex-wrap items-center justify-between gap-5">
+        <div>
+          <p className={TIPOGRAFIA.subtitulo}>Geração do relatório final</p>
+          <p className={`mt-1 ${TIPOGRAFIA.textoAuxiliar}`}>Modelo oficial: {statusTemplate.nomeArquivo}</p>
+        </div>
+        <Botao
+          variante="primaria"
+          tamanho="grande"
+          disabled={gerando || !parametrosFontes}
+          carregando={gerando}
+          onClick={() => parametrosFontes && gerar(parametrosFontes)}
+        >
+          {gerando ? "Gerando relatório..." : "Gerar Relatório"}
+        </Botao>
+      </div>
+      {estadoGeracao.fase === "erro" && (
+        <div className="mt-4">
+          <Alerta variante="erro">{estadoGeracao.mensagem}</Alerta>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // Micro-sprint 3E.1 — uma só tela para Tela 2 ("resultado da preparação")
@@ -19,7 +158,13 @@ interface Props {
 // (calculado pelo backend, RN "G05") decide qual das duas variantes mostrar,
 // nunca um cálculo próprio do frontend. Reuso, não duplicação (SEARCH →
 // REUSE → EXTEND).
-export default function PainelResumo({ resumo, onRevisarCasos, onVoltarParaEntrada }: Props) {
+export default function PainelResumo({
+  resumo,
+  parametrosFontes,
+  caminhoConfiguracaoTemplate,
+  onRevisarCasos,
+  onVoltarParaEntrada,
+}: Props) {
   // Único critério para saber quantos casos ainda precisam de decisão —
   // mesmo filtro usado pelo hook para decidir a navegação, repetido aqui só
   // para o texto da tela ("N Casos"). O resultado (`pode_gerar_relatorio`)
@@ -48,17 +193,8 @@ export default function PainelResumo({ resumo, onRevisarCasos, onVoltarParaEntra
           />
         </div>
 
-        <div className={`${SUPERFICIE_BASE} flex flex-wrap items-center justify-between gap-5 p-7`}>
-          <div>
-            <p className={TIPOGRAFIA.subtitulo}>Geração do relatório final</p>
-            <p className={`mt-1 ${TIPOGRAFIA.textoAuxiliar}`}>Disponível em uma próxima etapa deste projeto.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Badge variante="neutro">Em breve</Badge>
-            <Botao variante="primaria" tamanho="grande" disabled>
-              Gerar Relatório
-            </Botao>
-          </div>
+        <div className={`${SUPERFICIE_BASE} p-7`}>
+          <BlocoGeracao parametrosFontes={parametrosFontes} caminhoConfiguracaoTemplate={caminhoConfiguracaoTemplate} />
         </div>
 
         <div className="mt-5">

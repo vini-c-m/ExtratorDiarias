@@ -2,6 +2,7 @@
 Transparência. Dados 100% sintéticos (identificadores fictícios, sem
 nenhuma base real)."""
 
+import os
 from datetime import date
 
 from fastapi.testclient import TestClient
@@ -437,18 +438,38 @@ def test_ponta_a_ponta_preparar_decidir_reaproveitar_invalidar(tmp_path):
 # --- Micro-sprint 3F: POST /gerar — endpoint aditivo, não conectado ao frontend
 
 
-def test_post_gerar_produz_arquivo(tmp_path):
+def _configurar_template(tmp_path, nome_arquivo="template.xlsx"):
+    """Micro-sprint 3H — `POST /template` configura o Template Oficial uma
+    vez (via a própria API, não um atalho direto ao módulo de config) e
+    devolve `caminho_configuracao_template`, pronto para reuso em qualquer
+    chamada de `/gerar` do teste."""
     from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
 
+    caminho_template = tmp_path / nome_arquivo
+    construir_template_sintetico(str(caminho_template))
+    caminho_configuracao_template = str(tmp_path / "template_configuracao.json")
+
+    resposta = client.post(
+        f"{_BASE_URL}/template",
+        json={
+            "caminho_configuracao_template": caminho_configuracao_template,
+            "caminho_template": str(caminho_template),
+        },
+    )
+    assert resposta.status_code == 200
+
+    return caminho_configuracao_template
+
+
+def test_post_gerar_produz_arquivo(tmp_path):
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
-    caminho_template = tmp_path / "template.xlsx"
-    construir_template_sintetico(str(caminho_template))
+    caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = tmp_path / "saida.xlsx"
 
     payload = dict(
         _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
-        caminho_template=str(caminho_template),
+        caminho_configuracao_template=caminho_configuracao_template,
         caminho_destino=str(caminho_destino),
     )
     resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
@@ -458,22 +479,29 @@ def test_post_gerar_produz_arquivo(tmp_path):
     assert corpo["total_ocorrencias"] == 1
     assert caminho_destino.exists()
 
+    # Item 16 (teste ponta a ponta) — confirma que o arquivo tem a
+    # estrutura mínima esperada: mesma aba do template, cabeçalho
+    # preservado, e a linha de dados escrita de fato.
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(str(caminho_destino))
+    assert "Controle de Diárias" in workbook.sheetnames
+    ws = workbook["Controle de Diárias"]
+    assert ws["A7"].value == "2026OB000001"
+
 
 def test_post_gerar_bloqueia_com_revisao_pendente_409(tmp_path):
-    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
-
     linhas = [
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
         _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
     ]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
-    caminho_template = tmp_path / "template.xlsx"
-    construir_template_sintetico(str(caminho_template))
+    caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = tmp_path / "saida.xlsx"
 
     payload = dict(
         _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
-        caminho_template=str(caminho_template),
+        caminho_configuracao_template=caminho_configuracao_template,
         caminho_destino=str(caminho_destino),
     )
     resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
@@ -483,21 +511,117 @@ def test_post_gerar_bloqueia_com_revisao_pendente_409(tmp_path):
 
 
 def test_post_gerar_nao_sobrescreve_destino_existente_409(tmp_path):
-    from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico
-
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
-    caminho_template = tmp_path / "template.xlsx"
-    construir_template_sintetico(str(caminho_template))
+    caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = tmp_path / "saida.xlsx"
     caminho_destino.write_bytes(b"conteudo previo")
 
     payload = dict(
         _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
-        caminho_template=str(caminho_template),
+        caminho_configuracao_template=caminho_configuracao_template,
         caminho_destino=str(caminho_destino),
     )
     resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
 
     assert resposta.status_code == 409
     assert caminho_destino.read_bytes() == b"conteudo previo"
+
+
+def test_post_gerar_sem_template_configurado_404(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = str(tmp_path / "template_configuracao_nunca_criado.json")
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 404
+    assert not caminho_destino.exists()
+    # Nunca expõe caminho interno na mensagem (item 12/privacidade).
+    assert str(tmp_path) not in resposta.json()["detail"]
+
+
+def test_post_gerar_template_configurado_mas_arquivo_sumiu_404(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+
+    caminho_template_removido = tmp_path / "template.xlsx"
+    assert caminho_template_removido.exists()
+    caminho_template_removido.unlink()
+
+    caminho_destino = tmp_path / "saida.xlsx"
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 404
+    assert not caminho_destino.exists()
+
+
+# --- Micro-sprint 3H: GET/POST /template — configuração do Template Oficial
+
+
+def test_get_template_nao_configurado(tmp_path):
+    caminho_configuracao_template = str(tmp_path / "nunca_configurado.json")
+
+    resposta = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": caminho_configuracao_template}
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo == {"configurado": False, "disponivel": False, "caminho_template": None}
+
+
+def test_post_template_configura_e_get_reflete(tmp_path):
+    caminho_configuracao_template = _configurar_template(tmp_path)
+
+    resposta = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": caminho_configuracao_template}
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["configurado"] is True
+    assert corpo["disponivel"] is True
+    assert corpo["caminho_template"] == str(tmp_path / "template.xlsx")
+
+
+def test_post_template_arquivo_invalido_422(tmp_path):
+    caminho_configuracao_template = str(tmp_path / "template_configuracao.json")
+    caminho_invalido = tmp_path / "nao_existe.xlsx"
+
+    resposta = client.post(
+        f"{_BASE_URL}/template",
+        json={
+            "caminho_configuracao_template": caminho_configuracao_template,
+            "caminho_template": str(caminho_invalido),
+        },
+    )
+
+    assert resposta.status_code == 422
+    # Nada persistido quando a validação falha.
+    assert not os.path.exists(caminho_configuracao_template)
+
+
+def test_get_template_configurado_mas_arquivo_sumiu(tmp_path):
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    (tmp_path / "template.xlsx").unlink()
+
+    resposta = client.get(
+        f"{_BASE_URL}/template", params={"caminho_configuracao_template": caminho_configuracao_template}
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo == {"configurado": True, "disponivel": False, "caminho_template": None}

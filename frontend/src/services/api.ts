@@ -18,7 +18,11 @@ import type {
   RelatorioGeradoResposta,
   ResultadoPesquisaResposta,
 } from "../types/analitica";
-import type { ConfiguracaoAtiva, EstadoConfiguracao } from "../types/configuracao";
+import type {
+  ConfiguracaoAtiva,
+  EstadoConfiguracao,
+  PastasOperacionais,
+} from "../types/configuracao";
 import type {
   CandidatoDiariaOriginal,
   ModoConferencia,
@@ -47,8 +51,12 @@ import type {
 import type {
   ListaRevisoesRelatorioTransparencia,
   ParametrosFontesRelatorioTransparencia,
+  RelatorioGeradoRelatorioTransparencia,
+  RequisicaoConfigurarTemplateRelatorioTransparencia,
   RequisicaoDecisaoRelatorioTransparencia,
+  RequisicaoGerarRelatorioTransparencia,
   ResumoRelatorioTransparencia,
+  StatusTemplateRelatorioTransparencia,
 } from "../types/relatorioTransparencia";
 
 export const BACKEND_URL = "http://127.0.0.1:8756";
@@ -173,14 +181,26 @@ export async function processarLoteComProgresso(
 // destino deixou de ser escolhido a cada execução. O backend resolve
 // sozinho, a partir da configuração já validada — esta função não recebe
 // (nem envia) mais nenhum caminho de planilha.
+// Organização Automática de PDFs — `caminhosAbsolutos` mapeia
+// `arquivo_origem` (nome-base, a mesma chave já usada por `Processo`) ->
+// caminho absoluto do PDF selecionado, para o backend conseguir mover o
+// arquivo depois de gravado com sucesso. Opcional: ausente, o corpo da
+// requisição fica idêntico ao de antes desta melhoria.
 export async function preencherPlanilha(
   processos: Processo[],
   tempoProcessamentoMs?: number | null,
   modo: ModoProcessamento = "PADRAO",
+  caminhosAbsolutos?: Record<string, string>,
 ): Promise<ResultadoPreenchimento> {
   const itens = processos
     .filter((processo) => processo.status === "sucesso" && processo.diaria)
-    .map((processo) => ({ arquivo_origem: processo.arquivo_origem, diaria: processo.diaria }));
+    .map((processo) => ({
+      arquivo_origem: processo.arquivo_origem,
+      diaria: processo.diaria,
+      ...(caminhosAbsolutos?.[processo.arquivo_origem]
+        ? { caminho_absoluto: caminhosAbsolutos[processo.arquivo_origem] }
+        : {}),
+    }));
 
   const erros = processos
     .filter((processo) => processo.status === "erro" && processo.erro)
@@ -281,12 +301,19 @@ export async function conferir(
   return resposta.json();
 }
 
+/** Histórico e-Fisco de Membro — `quantidadeDiariaIntegralMembro`/
+ * `quantidadeDiariaParcialMembro` são opcionais; omitidos (nenhum chamador
+ * de Servidor os informa), o corpo da requisição fica idêntico ao de antes
+ * desta melhoria. Só enviados quando a categoria funcional consultada é
+ * MEMBRO (ver `pages/Conferencia.tsx`). */
 export async function gerarHistorico(
   cpf: string,
   periodoInicial: string,
   periodoFinal: string,
   sei: string,
   destino: string,
+  quantidadeDiariaIntegralMembro?: number,
+  quantidadeDiariaParcialMembro?: number,
 ): Promise<string> {
   const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/historico`, {
     method: "POST",
@@ -297,6 +324,12 @@ export async function gerarHistorico(
       periodo_final: periodoFinal,
       sei,
       destino,
+      ...(quantidadeDiariaIntegralMembro !== undefined
+        ? { quantidade_diaria_integral_membro: quantidadeDiariaIntegralMembro }
+        : {}),
+      ...(quantidadeDiariaParcialMembro !== undefined
+        ? { quantidade_diaria_parcial_membro: quantidadeDiariaParcialMembro }
+        : {}),
     }),
   });
 
@@ -321,7 +354,14 @@ export async function gerarHistorico(
  * omitido (equivalente a não enviar o campo) preserva 100% o comportamento
  * atual (padrão institucional 0 aplicado no backend). Só é enviado quando o
  * usuário marca explicitamente que a simulação representa uma parcial
- * isolada (ver `pages/Conferencia.tsx`). */
+ * isolada (ver `pages/Conferencia.tsx`).
+ *
+ * `quantidadeDiariaIntegralMembro`/`quantidadeDiariaParcialMembro`
+ * (Histórico e-Fisco de Membro) — mesmo contrato de `gerarHistorico`: só
+ * enviados quando a categoria funcional é MEMBRO; substituem, só neste
+ * Complemento, tanto o cálculo automático de integrais quanto
+ * `quantidadeDiariaParcial` acima (que continua funcionando normalmente
+ * para Servidor). */
 export async function gerarHistoricoComplemento(
   cpf: string,
   periodoInicial: string,
@@ -329,6 +369,8 @@ export async function gerarHistoricoComplemento(
   sei: string,
   destino: string,
   quantidadeDiariaParcial?: number,
+  quantidadeDiariaIntegralMembro?: number,
+  quantidadeDiariaParcialMembro?: number,
 ): Promise<string> {
   const resposta = await fetch(`${BACKEND_URL}/api/v1/conferencia/historico-complemento`, {
     method: "POST",
@@ -341,6 +383,12 @@ export async function gerarHistoricoComplemento(
       destino,
       ...(quantidadeDiariaParcial !== undefined
         ? { quantidade_diaria_parcial: quantidadeDiariaParcial }
+        : {}),
+      ...(quantidadeDiariaIntegralMembro !== undefined
+        ? { quantidade_diaria_integral_membro: quantidadeDiariaIntegralMembro }
+        : {}),
+      ...(quantidadeDiariaParcialMembro !== undefined
+        ? { quantidade_diaria_parcial_membro: quantidadeDiariaParcialMembro }
         : {}),
     }),
   });
@@ -551,6 +599,29 @@ export async function definirConfiguracao(caminhoPlanilhaOficial: string): Promi
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ caminho_planilha_oficial: caminhoPlanilhaOficial }),
+  });
+
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Organização Automática de PDFs — `POST /api/v1/configuracao/pastas`.
+ * `pastas` normalmente traz só um campo por chamada (um "Selecionar pasta"
+ * de cada vez em `SecaoPastasOperacionais`); os demais, já configurados
+ * antes, são preservados pelo backend. Devolve o `EstadoConfiguracao`
+ * completo (mesmo contrato de `buscarConfiguracao`), já que a planilha
+ * oficial pode estar acessível ou não independente das pastas. */
+export async function definirPastasOperacionais(
+  pastas: Partial<PastasOperacionais>,
+): Promise<EstadoConfiguracao> {
+  const resposta = await fetch(`${BACKEND_URL}/api/v1/configuracao/pastas`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pastas),
   });
 
   if (!resposta.ok) {
@@ -929,7 +1000,47 @@ function mensagemFonteOuRevisaoNaoEncontrada(detail: string): string {
   if (detail.startsWith("Controle DIMCAC não encontrado")) {
     return "Não encontramos o arquivo do Controle DIMCAC selecionado. Verifique se ele ainda existe no local indicado e selecione novamente.";
   }
+  // Micro-sprint 3H — `TemplateOficialIndisponivel` (não configurado, ou
+  // configurado mas o arquivo sumiu): as duas mensagens já vêm prontas do
+  // backend, sem caminho embutido (`configuracao_template_relatorio_
+  // transparencia.py`) — passam direto, mesmo critério de "mensagem já
+  // curada" do topo de `lib/mensagens.ts`.
+  if (
+    detail.startsWith("Nenhum template oficial configurado") ||
+    detail.startsWith("O template oficial configurado não foi encontrado")
+  ) {
+    return detail;
+  }
   return "Este caso não foi encontrado — ele pode já ter sido resolvido em outra revisão. Atualize a tela e tente novamente.";
+}
+
+/** Micro-sprint 3H — `POST /gerar` 409: duas causas distintas
+ * (`RelatorioBloqueadoPorPendencias`/G05 e `DestinoJaExiste`). A primeira já
+ * vem amigável do backend (sem caminho); a segunda embute o caminho de
+ * destino que o próprio usuário acabou de escolher no diálogo nativo —
+ * reescrita aqui por polish de UX (item 10: "mensagem compreensível"), não
+ * por privacidade (é o próprio caminho que o usuário selecionou segundos
+ * antes). */
+function mensagemGerarBloqueado(detail: string): string {
+  if (detail.startsWith("Já existe um arquivo no destino")) {
+    return "Já existe um arquivo com esse nome no local selecionado. Escolha outro nome ou local e tente novamente.";
+  }
+  return detail || "Não é possível gerar o relatório no momento.";
+}
+
+/** Micro-sprint 3H — `POST /gerar` 422: o único caso com caminho embutido
+ * (`TemplateEstruturalmenteInvalido` quando o arquivo configurado
+ * desaparece entre a resolução e a geração, uma corrida de baixa
+ * probabilidade — o caminho é interno, resolvido pelo backend, nunca algo
+ * que o usuário escolheu nesta ação). Os demais casos de
+ * `TemplateEstruturalmenteInvalido` (aba ausente, mesclagem inesperada)
+ * já vêm sem caminho e passam por `mensagemDoErro422` sem alteração. */
+function mensagem422Gerar(corpo: unknown, status: number): string {
+  const detail = (corpo as { detail?: unknown } | null)?.detail;
+  if (typeof detail === "string" && detail.startsWith("Template não encontrado")) {
+    return "O modelo do relatório está indisponível no momento. Selecione o template novamente e tente de novo.";
+  }
+  return mensagemDoErro422(corpo, status);
 }
 
 const CAMINHO_BASE_RELATORIO_TRANSPARENCIA = `${BACKEND_URL}/api/v1/relatorio-transparencia`;
@@ -1014,6 +1125,84 @@ export async function registrarDecisaoRevisaoRelatorioTransparencia(
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
     throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint 3H — `GET /template`: status do Template Oficial
+ * (configuração exclusiva do módulo, item 11 da especificação). Nunca
+ * expõe o caminho na tela — quem chama só usa `configurado`/`disponivel`
+ * para decidir o que mostrar; `caminho_template` (quando presente) serve
+ * só para extrair o NOME do arquivo, mesmo critério de `SeletorArquivoFonte`. */
+export async function obterStatusTemplateRelatorioTransparencia(
+  caminhoConfiguracaoTemplate: string,
+): Promise<StatusTemplateRelatorioTransparencia> {
+  const resposta = await fetch(
+    `${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/template${construirQueryString({
+      caminho_configuracao_template: caminhoConfiguracaoTemplate,
+    })}`,
+  );
+
+  if (resposta.status === 503) {
+    throw new ErroRelatorioTransparenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint 3H — `POST /template`: seleciona o Template Oficial uma
+ * vez; o caminho passa a ser reaproveitado em toda geração futura (nunca
+ * pedido de novo). */
+export async function configurarTemplateRelatorioTransparencia(
+  requisicao: RequisicaoConfigurarTemplateRelatorioTransparencia,
+): Promise<StatusTemplateRelatorioTransparencia> {
+  const resposta = await fetch(`${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/template`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requisicao),
+  });
+
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint 3H — `POST /gerar`: único ponto que produz o XLSX final.
+ * Nunca envia lista de OBs publicáveis nem qualquer conteúdo montado pelo
+ * frontend — só os 5 parâmetros de fonte (iguais aos das demais operações),
+ * o ponteiro da configuração do template e o destino escolhido pelo
+ * usuário no diálogo nativo. */
+export async function gerarRelatorioTransparencia(
+  requisicao: RequisicaoGerarRelatorioTransparencia,
+): Promise<RelatorioGeradoRelatorioTransparencia> {
+  const resposta = await fetch(`${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/gerar`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requisicao),
+  });
+
+  if (resposta.status === 404) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemFonteOuRevisaoNaoEncontrada((corpo as { detail?: string })?.detail ?? ""));
+  }
+  if (resposta.status === 409) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemGerarBloqueado((corpo as { detail?: string })?.detail ?? ""));
+  }
+  if (resposta.status === 503) {
+    throw new ErroRelatorioTransparenciaIndisponivel();
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagem422Gerar(corpo, resposta.status));
   }
 
   return resposta.json();

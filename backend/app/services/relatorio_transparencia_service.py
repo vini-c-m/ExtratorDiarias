@@ -25,6 +25,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
+from app.consulta.configuracao_template_relatorio_transparencia import (
+    TemplateOficialIndisponivel,
+    resolver_caminho_template,
+)
 from app.consulta.persistencia_decisoes import (
     PersistenciaDecisoesCorrompida,
     VersaoEsquemaIncompativel,
@@ -75,6 +79,7 @@ __all__ = [
     "RelatorioBloqueadoPorPendencias",
     "DestinoJaExiste",
     "TemplateEstruturalmenteInvalido",
+    "TemplateOficialIndisponivel",
     "OcorrenciaResumo",
     "RevisaoResumo",
     "ResumoRelatorio",
@@ -404,11 +409,11 @@ def gerar_relatorio_xlsx(
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
-    caminho_template: str,
+    caminho_configuracao_template: str,
     caminho_destino: str,
     hoje: date | None = None,
 ) -> RelatorioGeradoResultado:
-    """Micro-sprint 3F — único ponto de entrada real para gerar o XLSX
+    """Micro-sprint 3F/3H — único ponto de entrada real para gerar o XLSX
     final. Nunca recebe do chamador uma lista de OBs a publicar ou
     qualquer outro dado de conteúdo: o frontend (ou qualquer outro
     chamador) só pode pedir "gerar o relatório desta competência" — todo
@@ -417,7 +422,14 @@ def gerar_relatorio_xlsx(
     `registrar_decisao_revisao`, fontes brutas + RN01-RN07 + decisões já
     persistidas). `pode_gerar_relatorio` (G05) é verificado dentro de
     `gerar_xlsx_relatorio_transparencia` mesmo que este service seja
-    contornado — a garantia real não depende desta camada."""
+    contornado — a garantia real não depende desta camada.
+
+    Micro-sprint 3H — `caminho_configuracao_template` é só o ponteiro para
+    a configuração do Template Oficial (mesmo padrão de `caminho_decisoes`);
+    o caminho real do template é resolvido aqui, nunca recebido diretamente
+    do chamador (o template é infraestrutura fixa do módulo, configurada
+    uma vez, não um parâmetro de cada geração)."""
+    caminho_template = resolver_caminho_template(caminho_configuracao_template)
     revisado = _montar_resultado_revisado(
         caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
         caminho_controle_dimcac=caminho_controle_dimcac,

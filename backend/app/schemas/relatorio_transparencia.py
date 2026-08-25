@@ -104,12 +104,20 @@ class RequisicaoRegistrarDecisao(ParametrosRelatorioBase):
 
 
 class RequisicaoGerarRelatorio(ParametrosRelatorioBase):
-    """`POST /gerar` — Micro-sprint 3F. Só pede "gerar o relatório desta
+    """`POST /gerar` — Micro-sprint 3F/3H. Só pede "gerar o relatório desta
     competência" — nunca envia conteúdo (lista de OBs, valores etc.): o
     conteúdo é sempre reconstruído no backend a partir das fontes e das
-    decisões já persistidas, igual às demais operações deste módulo."""
+    decisões já persistidas, igual às demais operações deste módulo.
 
-    caminho_template: str
+    Micro-sprint 3H — `caminho_template` (caminho real do modelo XLSX) saiu
+    daqui: o template é infraestrutura fixa do módulo, configurada uma vez
+    via `POST /template` e resolvida internamente pelo service
+    (`configuracao_template_relatorio_transparencia.resolver_caminho_template`).
+    `caminho_configuracao_template` é só o ponteiro técnico (resolvido pelo
+    Electron via IPC, mesmo padrão de `caminho_decisoes`) para ONDE está
+    essa configuração — nunca o caminho do template em si."""
+
+    caminho_configuracao_template: str
     caminho_destino: str
 
 
@@ -120,3 +128,23 @@ class RelatorioGeradoResposta(BaseModel):
     primeira_linha_dados: int
     ultima_linha_dados: int
     linha_total: int
+
+
+class ParametrosConfiguracaoTemplateQuery(BaseModel):
+    """`GET /template` — Micro-sprint 3H."""
+
+    caminho_configuracao_template: str
+
+
+class RequisicaoConfigurarTemplate(BaseModel):
+    """`POST /template` — Micro-sprint 3H. Seleção do Template Oficial,
+    feita uma vez por instalação; reaproveitada em toda geração futura."""
+
+    caminho_configuracao_template: str
+    caminho_template: str
+
+
+class StatusTemplateResposta(BaseModel):
+    configurado: bool
+    disponivel: bool
+    caminho_template: str | None = None

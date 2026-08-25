@@ -49,6 +49,12 @@ export interface EstadoUseRelatorioTransparencia {
   estado: FaseRelatorioTransparencia;
   preparando: boolean;
   enviandoDecisao: boolean;
+  /** Micro-sprint 3H — os 5 parâmetros de fonte da preparação em curso,
+   * para a geração final do XLSX reenviar sem duplicar estado próprio na
+   * página (mesma fonte que `parametrosFontesRef` já guarda internamente).
+   * `null` antes de qualquer "Preparar Relatório" bem-sucedido, ou depois
+   * de "Selecionar outra competência ou fontes". */
+  parametrosFontesAtuais: ParametrosFontesRelatorioTransparencia | null;
   preparar: (parametros: ParametrosFontesRelatorioTransparencia) => Promise<void>;
   iniciarRevisao: () => void;
   confirmarDecisao: (
@@ -69,6 +75,8 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
   // `useRef`: nunca deve causar re-render por si só, é só "lembrar o que o
   // usuário escolheu na Tela 1" para reusar depois.
   const parametrosFontesRef = useRef<ParametrosFontesRelatorioTransparencia | null>(null);
+  const [parametrosFontesAtuais, setParametrosFontesAtuais] =
+    useState<ParametrosFontesRelatorioTransparencia | null>(null);
 
   // Trava síncrona contra reentrância (mesmo padrão de `processandoRef`/
   // `carregandoPreVisualizacaoRef` já homologado no app) — necessária
@@ -86,6 +94,7 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
     try {
       const resumo = await prepararRelatorioTransparencia(parametros);
       parametrosFontesRef.current = parametros;
+      setParametrosFontesAtuais(parametros);
       setEstado({ fase: "resumo", resumo });
     } catch (erroCaptura) {
       setEstado({
@@ -153,6 +162,7 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
 
   const voltarParaEntrada = useCallback(() => {
     parametrosFontesRef.current = null;
+    setParametrosFontesAtuais(null);
     setEstado({ fase: "entrada", erro: null });
   }, []);
 
@@ -160,6 +170,7 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
     estado,
     preparando,
     enviandoDecisao,
+    parametrosFontesAtuais,
     preparar,
     iniciarRevisao,
     confirmarDecisao,

@@ -46,10 +46,43 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("app:solicitar-fechamento", ouvinte);
   },
   confirmarFechamento: (): Promise<void> => ipcRenderer.invoke("app:confirmar-fechamento"),
+  // Organização Automática de PDFs — seletor nativo de pasta (mesmo padrão
+  // de `selecionarPlanilhaOficial`), usado pelas quatro Pastas
+  // Operacionais. Decisão confirmada: a seleção de PDFs continua via
+  // `<input type="file">` + `getPathForFile` acima — nunca trocada por
+  // este seletor nativo.
+  selecionarPastaOperacional: (): Promise<string | null> =>
+    ipcRenderer.invoke("configuracao:selecionar-pasta"),
+  // Guarda Windows-safe (path.resolve + path.relative — nunca prefixo de
+  // string ingênuo) para bloquear, antes do processamento, um PDF
+  // selecionado fora da pasta operacional configurada para aquele fluxo.
+  // Correção pós-regressão: o preload roda em processo sandboxado (padrão
+  // do Electron desde a v20, nunca desabilitado neste app) — `require("path")`
+  // e `require("node:path")` falham aí ("module not found"), derrubando a
+  // execução do script inteiro ANTES de `contextBridge.exposeInMainWorld`
+  // rodar (por isso a regressão derrubou também APIs antigas sem nenhuma
+  // relação com esta). Mesmo padrão de todas as outras APIs deste arquivo:
+  // só `ipcRenderer.invoke`, o `path` de verdade fica no processo main
+  // (`ipc/configuracao.ts`, nunca sandboxado).
+  caminhoDentroDaPasta: (caminhoArquivo: string, pasta: string): Promise<boolean> =>
+    ipcRenderer.invoke("configuracao:caminho-dentro-da-pasta", caminhoArquivo, pasta),
   // Micro-sprint 3E.1 — Relatório do Portal da Transparência: `caminho_decisoes`
   // é infraestrutura interna da API (nunca um campo escolhido pelo
   // servidor). Este único caminho resolve para dentro da mesma pasta de
   // dados do usuário já usada pelo resto do app (ver `ipc/relatorioTransparencia.ts`).
   obterCaminhoDecisoesRelatorioTransparencia: (): Promise<string> =>
     ipcRenderer.invoke("relatorio-transparencia:obter-caminho-decisoes"),
+  // Micro-sprint 3H — mesmo critério de `obterCaminhoDecisoesRelatorioTransparencia`
+  // acima, mas para a configuração isolada do Template Oficial (arquivo
+  // próprio, nunca o mesmo de decisões nem de `configuracao.json` da
+  // Central de Conferência).
+  obterCaminhoConfiguracaoTemplateRelatorioTransparencia: (): Promise<string> =>
+    ipcRenderer.invoke("relatorio-transparencia:obter-caminho-configuracao-template"),
+  // Micro-sprint 3H — diálogo nativo "Salvar como" para o XLSX final do
+  // Relatório do Portal da Transparência. Diferente de `salvarRelatorio`
+  // (que copia um arquivo já gerado pelo backend): aqui o backend ainda não
+  // gerou nada — só o caminho escolhido é devolvido (`POST /gerar` escreve
+  // diretamente nele), ou `null` se o usuário cancelar o diálogo.
+  escolherDestinoRelatorioTransparencia: (nomeSugerido: string): Promise<string | null> =>
+    ipcRenderer.invoke("relatorio-transparencia:escolher-destino", nomeSugerido),
 });

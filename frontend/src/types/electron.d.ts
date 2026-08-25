@@ -30,10 +30,20 @@ declare global {
       // acima. Abre um link no navegador padrão do sistema
       // (`shell.openExternal`, processo main), nunca dentro do app.
       abrirLinkExterno?: (url: string) => Promise<void>;
+      // Organização Automática de PDFs — mesmo critério de opcionalidade
+      // acima. `selecionarPastaOperacional` abre o seletor nativo de pasta
+      // (nunca usado para selecionar PDFs — isso continua via
+      // `getPathForFile`). `caminhoDentroDaPasta` é a guarda Windows-safe
+      // (path.resolve + path.relative) usada antes do processamento.
+      selecionarPastaOperacional?: () => Promise<string | null>;
+      caminhoDentroDaPasta?: (caminhoArquivo: string, pasta: string) => Promise<boolean>;
       // Micro-sprint 3E.1 — Relatório do Portal da Transparência. Mesmo
       // critério de opcionalidade acima (não quebra testes/mocks parciais
       // de `window.api` já homologados).
       obterCaminhoDecisoesRelatorioTransparencia?: () => Promise<string>;
+      // Micro-sprint 3H — mesmo critério de opcionalidade acima.
+      obterCaminhoConfiguracaoTemplateRelatorioTransparencia?: () => Promise<string>;
+      escolherDestinoRelatorioTransparencia?: (nomeSugerido: string) => Promise<string | null>;
     };
   }
 }

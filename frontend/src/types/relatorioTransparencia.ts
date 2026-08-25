@@ -65,3 +65,34 @@ export interface RequisicaoDecisaoRelatorioTransparencia {
   autor: string;
   observacao?: string | null;
 }
+
+// Micro-sprint 3H — Template Oficial (configuração exclusiva do módulo,
+// selecionada uma vez) e geração final do XLSX.
+
+export interface StatusTemplateRelatorioTransparencia {
+  configurado: boolean;
+  disponivel: boolean;
+  caminho_template: string | null;
+}
+
+export interface RequisicaoConfigurarTemplateRelatorioTransparencia {
+  caminho_configuracao_template: string;
+  caminho_template: string;
+}
+
+export interface RequisicaoGerarRelatorioTransparencia extends ParametrosFontesRelatorioTransparencia {
+  // Infraestrutura interna (nunca escolhida pelo usuário) — o template real
+  // é resolvido pelo backend a partir desta configuração, mesmo padrão de
+  // `caminho_decisoes`.
+  caminho_configuracao_template: string;
+  caminho_destino: string;
+}
+
+export interface RelatorioGeradoRelatorioTransparencia {
+  caminho_arquivo: string;
+  total_ocorrencias: number;
+  total_valor_diarias: number;
+  primeira_linha_dados: number;
+  ultima_linha_dados: number;
+  linha_total: number;
+}

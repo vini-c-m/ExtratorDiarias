@@ -64,6 +64,37 @@ describe("preload", () => {
     );
   });
 
+  // Organização Automática de PDFs.
+  it("selecionarPastaOperacional invoca ipcRenderer.invoke no canal 'configuracao:selecionar-pasta'", async () => {
+    const api = await importarApiExposta();
+
+    api.selecionarPastaOperacional();
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith("configuracao:selecionar-pasta");
+  });
+
+  // Correção pós-regressão (P0): o cálculo de path.resolve/path.relative
+  // NUNCA pode rodar dentro do preload — este processo roda sandboxado
+  // neste app (padrão do Electron desde a v20, nunca desabilitado) e
+  // `require("path")`/`require("node:path")` falham aí com "module not
+  // found", derrubando a execução do preload inteiro ANTES de
+  // `contextBridge.exposeInMainWorld` rodar (foi exatamente essa a causa
+  // da regressão P0 encontrada na validação manual). Por isso
+  // `caminhoDentroDaPasta` só invoca IPC — a lógica real (e os testes da
+  // guarda Windows-safe em si) vivem em `ipc/configuracao.ts` /
+  // `ipc/configuracao.test.ts`, no processo main (nunca sandboxado).
+  it("caminhoDentroDaPasta invoca ipcRenderer.invoke no canal 'configuracao:caminho-dentro-da-pasta', nunca usa o módulo path direto no preload", async () => {
+    const api = await importarApiExposta();
+
+    api.caminhoDentroDaPasta("C:\\PDFs\\a processar\\arquivo.pdf", "C:\\PDFs\\a processar");
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(
+      "configuracao:caminho-dentro-da-pasta",
+      "C:\\PDFs\\a processar\\arquivo.pdf",
+      "C:\\PDFs\\a processar",
+    );
+  });
+
   // Micro-sprint 3E.1 — Relatório do Portal da Transparência.
   it("obterCaminhoDecisoesRelatorioTransparencia invoca ipcRenderer.invoke no canal 'relatorio-transparencia:obter-caminho-decisoes'", async () => {
     const api = await importarApiExposta();
@@ -71,5 +102,27 @@ describe("preload", () => {
     api.obterCaminhoDecisoesRelatorioTransparencia();
 
     expect(ipcRendererMock.invoke).toHaveBeenCalledWith("relatorio-transparencia:obter-caminho-decisoes");
+  });
+
+  // Micro-sprint 3H — Template Oficial / geração do XLSX final.
+  it("obterCaminhoConfiguracaoTemplateRelatorioTransparencia invoca ipcRenderer.invoke no canal 'relatorio-transparencia:obter-caminho-configuracao-template'", async () => {
+    const api = await importarApiExposta();
+
+    api.obterCaminhoConfiguracaoTemplateRelatorioTransparencia();
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(
+      "relatorio-transparencia:obter-caminho-configuracao-template",
+    );
+  });
+
+  it("escolherDestinoRelatorioTransparencia invoca ipcRenderer.invoke no canal 'relatorio-transparencia:escolher-destino' com o nome sugerido", async () => {
+    const api = await importarApiExposta();
+
+    api.escolherDestinoRelatorioTransparencia("Relatório de Diárias - Portal da Transparência - Agosto 2026.xlsx");
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(
+      "relatorio-transparencia:escolher-destino",
+      "Relatório de Diárias - Portal da Transparência - Agosto 2026.xlsx",
+    );
   });
 });

@@ -12,16 +12,22 @@ vi.mock("../services/api", async (importarOriginal) => {
     ...real,
     prepararRelatorioTransparencia: vi.fn(),
     registrarDecisaoRevisaoRelatorioTransparencia: vi.fn(),
+    obterStatusTemplateRelatorioTransparencia: vi.fn(),
+    gerarRelatorioTransparencia: vi.fn(),
   };
 });
 
 import {
+  gerarRelatorioTransparencia,
+  obterStatusTemplateRelatorioTransparencia,
   prepararRelatorioTransparencia,
   registrarDecisaoRevisaoRelatorioTransparencia,
 } from "../services/api";
 
 const prepararMock = vi.mocked(prepararRelatorioTransparencia);
 const decidirMock = vi.mocked(registrarDecisaoRevisaoRelatorioTransparencia);
+const statusTemplateMock = vi.mocked(obterStatusTemplateRelatorioTransparencia);
+const gerarMock = vi.mocked(gerarRelatorioTransparencia);
 
 function criarXlsx(nome: string): File {
   return new File(["conteúdo fictício"], nome, {
@@ -60,7 +66,17 @@ beforeEach(() => {
     ...window.api,
     getPathForFile: (arquivo: File) => `C:\\fake\\${arquivo.name}`,
     obterCaminhoDecisoesRelatorioTransparencia: vi.fn().mockResolvedValue("C:\\fake\\AppData\\decisoes.json"),
+    obterCaminhoConfiguracaoTemplateRelatorioTransparencia: vi
+      .fn()
+      .mockResolvedValue("C:\\fake\\AppData\\template_configuracao.json"),
+    escolherDestinoRelatorioTransparencia: vi.fn(),
+    abrirArquivo: vi.fn().mockResolvedValue(undefined),
   };
+  statusTemplateMock.mockResolvedValue({
+    configurado: true,
+    disponivel: true,
+    caminho_template: "C:\\fake\\Modelo_Oficial.xlsx",
+  });
 });
 
 afterEach(() => {
@@ -262,6 +278,56 @@ describe("RelatorioPortalTransparencia", () => {
     await usuario.click(screen.getByRole("button", { name: "Confirmar Decisão" }));
 
     await waitFor(() => expect(screen.getByText("Todas as revisões foram concluídas.")).toBeInTheDocument());
+  });
+
+  it("Micro-sprint 3H — ponta a ponta sintético: preparar sem pendências → template pronto → Gerar Relatório → sucesso → Abrir relatório/pasta", async () => {
+    const usuario = userEvent.setup();
+    render(<RelatorioPortalTransparencia backendOnline />);
+
+    await prepararComSucesso(usuario, {
+      total_candidatos_normais: 1799,
+      total_revisoes: 0,
+      total_pendentes: 0,
+      total_decididas: 0,
+      total_adiadas: 0,
+      total_desatualizadas: 0,
+      total_ocorrencias_nao_publicaveis: 0,
+      pode_gerar_relatorio: true,
+      revisoes: [],
+    });
+
+    expect(screen.getByText("Todas as revisões foram concluídas.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeEnabled());
+
+    (window.api.escolherDestinoRelatorioTransparencia as ReturnType<typeof vi.fn>).mockResolvedValue(
+      "C:\\fake\\pasta\\Relatorio.xlsx",
+    );
+    gerarMock.mockResolvedValue({
+      caminho_arquivo: "C:\\fake\\pasta\\Relatorio.xlsx",
+      total_ocorrencias: 1799,
+      total_valor_diarias: 250000,
+      primeira_linha_dados: 7,
+      ultima_linha_dados: 1805,
+      linha_total: 1806,
+    });
+
+    await usuario.click(screen.getByRole("button", { name: "Gerar Relatório" }));
+
+    await waitFor(() => expect(screen.getByText("Relatório gerado com sucesso.")).toBeInTheDocument());
+    expect(gerarMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ano_exercicio: expect.any(Number),
+        mes_referencia: expect.any(Number),
+        caminho_configuracao_template: "C:\\fake\\AppData\\template_configuracao.json",
+        caminho_destino: "C:\\fake\\pasta\\Relatorio.xlsx",
+      }),
+    );
+
+    await usuario.click(screen.getByRole("button", { name: "Abrir relatório" }));
+    expect(window.api.abrirArquivo).toHaveBeenCalledWith("C:\\fake\\pasta\\Relatorio.xlsx");
+
+    await usuario.click(screen.getByRole("button", { name: /Abrir pasta/ }));
+    expect(window.api.abrirArquivo).toHaveBeenCalledWith("C:\\fake\\pasta");
   });
 
   it("'Selecionar outra competência ou fontes' volta para a tela de entrada", async () => {

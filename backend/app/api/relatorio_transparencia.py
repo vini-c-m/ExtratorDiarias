@@ -1,19 +1,28 @@
+import os
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.consulta.configuracao_template_relatorio_transparencia import (
+    TemplateOficialInvalido,
+    carregar_configuracao_template,
+    persistir_configuracao_template,
+)
 from app.consulta.persistencia_decisoes import PersistenciaDecisoesCorrompida, VersaoEsquemaIncompativel
 from app.domain.relatorio_transparencia.decisao import AcaoDecisao
 from app.schemas.relatorio_transparencia import (
     ListaRevisoesResposta,
     OcorrenciaResposta,
+    ParametrosConfiguracaoTemplateQuery,
     ParametrosRelatorioQuery,
     RelatorioGeradoResposta,
+    RequisicaoConfigurarTemplate,
     RequisicaoGerarRelatorio,
     RequisicaoPrepararRelatorio,
     RequisicaoRegistrarDecisao,
     ResumoRelatorioResposta,
     RevisaoResposta,
+    StatusTemplateResposta,
 )
 from app.services.relatorio_transparencia_service import (
     BaseOBNaoEncontrada,
@@ -28,6 +37,7 @@ from app.services.relatorio_transparencia_service import (
     RevisaoNaoEncontrada,
     RevisaoResumo,
     TemplateEstruturalmenteInvalido,
+    TemplateOficialIndisponivel,
     gerar_relatorio_xlsx,
     listar_revisoes,
     preparar_relatorio,
@@ -97,6 +107,8 @@ def _levantar_erro_de_fontes(erro: Exception) -> None:
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     if isinstance(erro, PersistenciaDecisoesCorrompida):
         raise HTTPException(status_code=503, detail=str(erro)) from erro
+    if isinstance(erro, TemplateOficialIndisponivel):
+        raise HTTPException(status_code=404, detail=str(erro)) from erro
     raise erro
 
 
@@ -125,10 +137,9 @@ def preparar(requisicao: RequisicaoPrepararRelatorio) -> ResumoRelatorioResposta
 
 @router.post("/gerar", response_model=RelatorioGeradoResposta)
 def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
-    """Micro-sprint 3F — endpoint aditivo, NÃO conectado ao frontend nesta
-    sprint (contrato para a futura 3G). Só aceita "gerar esta competência";
-    todo o conteúdo é reconstruído no backend (`gerar_relatorio_xlsx`),
-    nunca confiado ao corpo da requisição."""
+    """Micro-sprint 3F, conectado ao frontend na 3H. Só aceita "gerar esta
+    competência"; todo o conteúdo é reconstruído no backend
+    (`gerar_relatorio_xlsx`), nunca confiado ao corpo da requisição."""
     try:
         resultado = gerar_relatorio_xlsx(
             caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
@@ -136,7 +147,7 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
             ano_exercicio=requisicao.ano_exercicio,
             mes_referencia=requisicao.mes_referencia,
             caminho_decisoes=requisicao.caminho_decisoes,
-            caminho_template=requisicao.caminho_template,
+            caminho_configuracao_template=requisicao.caminho_configuracao_template,
             caminho_destino=requisicao.caminho_destino,
         )
     except RelatorioBloqueadoPorPendencias as erro:
@@ -152,6 +163,7 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
         EstruturaControleInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
+        TemplateOficialIndisponivel,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -218,3 +230,41 @@ def decidir(identidade: str, requisicao: RequisicaoRegistrarDecisao) -> ResumoRe
         _levantar_erro_de_fontes(erro)
 
     return _resumo_resposta(resumo)
+
+
+# --- Micro-sprint 3H: Template Oficial — configuração exclusiva do módulo,
+# uma vez por instalação (ver `app/consulta/
+# configuracao_template_relatorio_transparencia.py`). `caminho_configuracao_
+# template` é infraestrutura interna (resolvida pelo Electron via IPC,
+# mesmo padrão de `caminho_decisoes`) — nunca um campo que o usuário digita.
+
+
+def _status_template_resposta(configuracao) -> StatusTemplateResposta:
+    if configuracao is None:
+        return StatusTemplateResposta(configurado=False, disponivel=False, caminho_template=None)
+    disponivel = os.path.isfile(configuracao.caminho_template)
+    return StatusTemplateResposta(
+        configurado=True,
+        disponivel=disponivel,
+        caminho_template=configuracao.caminho_template if disponivel else None,
+    )
+
+
+@router.get("/template", response_model=StatusTemplateResposta)
+def obter_status_template(
+    parametros: Annotated[ParametrosConfiguracaoTemplateQuery, Query()],
+) -> StatusTemplateResposta:
+    configuracao = carregar_configuracao_template(parametros.caminho_configuracao_template)
+    return _status_template_resposta(configuracao)
+
+
+@router.post("/template", response_model=StatusTemplateResposta)
+def configurar_template(requisicao: RequisicaoConfigurarTemplate) -> StatusTemplateResposta:
+    try:
+        configuracao = persistir_configuracao_template(
+            requisicao.caminho_configuracao_template, requisicao.caminho_template
+        )
+    except TemplateOficialInvalido as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+    return _status_template_resposta(configuracao)
