@@ -50,12 +50,14 @@ from app.domain.relatorio_transparencia.competencia import intervalo_acumulado
 from app.domain.relatorio_transparencia.decisao import (
     AcaoDecisao,
     ContextoRevisaoParaExibicao,
+    DecisaoHumana,
     EstadoRevisao,
     ResultadoRevisado,
     RevisaoComEstado,
     aplicar_decisoes,
     contexto_para_exibicao,
     identidade_grupo as calcular_identidade_grupo,
+    identidades_ocorrencias,
     registrar_decisao,
 )
 from app.domain.relatorio_transparencia.motor_decisao import OcorrenciaFinanceira, classificar
@@ -145,6 +147,12 @@ class OcorrenciaResumo:
     valor: float | None
     motivo: str | None
     restituicao: float | None
+    identidade: str
+    """Identidade por ocorrência (HOMO-RT-02) — igual a `ob` quando a OB
+    não se repete fisicamente no grupo (todo RN07); `"{ob}#{N}"` quando se
+    repete (RN04, I11). É essa identidade, nunca `ob` isolada, que a UI
+    deve usar como React key e como chave de seleção dos checkboxes —
+    `ob` sozinha não distingue duas ocorrências físicas da mesma OB."""
 
 
 @dataclass(frozen=True)
@@ -156,6 +164,15 @@ class RevisaoResumo:
     campos_iguais: list[str]
     campos_diferentes: list[str]
     ocorrencias: list[OcorrenciaResumo]
+    autor: str | None = None
+    decidido_em: datetime | None = None
+    observacao: str | None = None
+    obs_publicaveis: list[str] | None = None
+    """Histórico da última decisão registrada para este grupo (HOMO-RT-02
+    / histórico de decisões) — `None` quando o grupo nunca teve decisão
+    (PENDENTE). `obs_publicaveis` é exposto exatamente como persistido
+    (pode estar no formato antigo, por OB, para decisões anteriores a esta
+    correção — nunca reinterpretado aqui, só exibido)."""
 
 
 @dataclass(frozen=True)
@@ -169,6 +186,7 @@ class ResumoRelatorio:
     total_ocorrencias_nao_publicaveis: int
     pode_gerar_relatorio: bool
     revisoes: list[RevisaoResumo] = field(default_factory=list)
+    total_requer_nova_decisao: int = 0
 
 
 def _abrir_base_ob(caminho: str):
@@ -216,7 +234,7 @@ def _montar_resultado_revisado(
     return aplicar_decisoes(resultado_classificado, decisoes)
 
 
-def _ocorrencia_resumo(oc: OcorrenciaFinanceira) -> OcorrenciaResumo:
+def _ocorrencia_resumo(oc: OcorrenciaFinanceira, identidade: str) -> OcorrenciaResumo:
     ordem = oc.ordem_bancaria
     return OcorrenciaResumo(
         ob=ordem.ob,
@@ -230,10 +248,16 @@ def _ocorrencia_resumo(oc: OcorrenciaFinanceira) -> OcorrenciaResumo:
         valor=ordem.valor,
         motivo=ordem.motivo,
         restituicao=ordem.restituicao,
+        identidade=identidade,
     )
 
 
-def _revisao_resumo(contexto: ContextoRevisaoParaExibicao, estado: EstadoRevisao) -> RevisaoResumo:
+def _revisao_resumo(
+    contexto: ContextoRevisaoParaExibicao,
+    estado: EstadoRevisao,
+    decisao: DecisaoHumana | None = None,
+) -> RevisaoResumo:
+    identidades = identidades_ocorrencias(contexto.ocorrencias)
     return RevisaoResumo(
         identidade_grupo=contexto.identidade_grupo,
         regra=contexto.regra,
@@ -241,13 +265,19 @@ def _revisao_resumo(contexto: ContextoRevisaoParaExibicao, estado: EstadoRevisao
         explicacao=contexto.explicacao,
         campos_iguais=contexto.campos_iguais,
         campos_diferentes=contexto.campos_diferentes,
-        ocorrencias=[_ocorrencia_resumo(oc) for oc in contexto.ocorrencias],
+        ocorrencias=[
+            _ocorrencia_resumo(oc, identidade) for oc, identidade in zip(contexto.ocorrencias, identidades)
+        ],
+        autor=decisao.autor if decisao else None,
+        decidido_em=decisao.decidido_em if decisao else None,
+        observacao=decisao.observacao if decisao else None,
+        obs_publicaveis=sorted(decisao.obs_publicaveis) if decisao else None,
     )
 
 
 def _resumo(revisado: ResultadoRevisado) -> ResumoRelatorio:
     por_estado = Counter(r.estado for r in revisado.revisoes)
-    revisoes = [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado) for r in revisado.revisoes]
+    revisoes = [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado, r.decisao) for r in revisado.revisoes]
     return ResumoRelatorio(
         total_candidatos_normais=len(revisado.candidatos_publicaveis),
         total_revisoes=len(revisado.revisoes),
@@ -258,6 +288,7 @@ def _resumo(revisado: ResultadoRevisado) -> ResumoRelatorio:
         total_ocorrencias_nao_publicaveis=len(revisado.ocorrencias_nao_publicaveis),
         pode_gerar_relatorio=revisado.pode_gerar_relatorio,
         revisoes=revisoes,
+        total_requer_nova_decisao=por_estado[EstadoRevisao.REQUER_NOVA_DECISAO],
     )
 
 
@@ -310,7 +341,7 @@ def listar_revisoes(
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
     )
-    return [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado) for r in revisado.revisoes]
+    return [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado, r.decisao) for r in revisado.revisoes]
 
 
 def registrar_decisao_revisao(
@@ -369,10 +400,16 @@ def registrar_decisao_revisao(
     if revisao_alvo is None:
         raise RevisaoNaoEncontrada(f"Nenhuma revisão pendente encontrada para o grupo {identidade_grupo!r}.")
 
-    obs_do_grupo = {oc.ordem_bancaria.ob for oc in revisao_alvo.revisao.ocorrencias}
-    obs_fora_do_grupo = obs_selecionadas_set - obs_do_grupo
-    if obs_fora_do_grupo:
-        raise DecisaoInvalida(f"OB(s) fora do grupo desta revisão: {sorted(obs_fora_do_grupo)}")
+    # HOMO-RT-02: identidade por ocorrência, não mais por OB isolada — um
+    # grupo RN04 com repetição física (I11) tem duas ocorrências com a
+    # MESMA OB, e o frontend agora seleciona por ocorrência (`"{ob}#{N}"`),
+    # nunca por OB pura, para poder publicar só uma delas. Grupos sem
+    # repetição física (todo RN07) têm identidade == ob — validação
+    # equivalente à anterior, zero mudança de comportamento.
+    identidades_do_grupo = set(identidades_ocorrencias(revisao_alvo.revisao.ocorrencias))
+    identidades_fora_do_grupo = obs_selecionadas_set - identidades_do_grupo
+    if identidades_fora_do_grupo:
+        raise DecisaoInvalida(f"OB(s) fora do grupo desta revisão: {sorted(identidades_fora_do_grupo)}")
 
     decisao = registrar_decisao(
         revisao_alvo.revisao,

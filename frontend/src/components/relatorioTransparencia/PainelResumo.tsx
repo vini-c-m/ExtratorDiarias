@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, FolderOpen, History } from "lucide-react";
-import type { ChangeEvent } from "react";
+import { type ChangeEvent, useState } from "react";
 import { SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import { useGerarRelatorioTransparencia } from "../../hooks/useGerarRelatorioTransparencia";
@@ -7,6 +7,7 @@ import Alerta from "../ui/Alerta";
 import BotaoArquivo from "../ui/BotaoArquivo";
 import Botao from "../ui/Botao";
 import Cartao from "../ui/Cartao";
+import HistoricoDecisoes from "./HistoricoDecisoes";
 import type { ParametrosFontesRelatorioTransparencia, ResumoRelatorioTransparencia } from "../../types/relatorioTransparencia";
 
 interface Props {
@@ -170,6 +171,11 @@ export default function PainelResumo({
   // para o texto da tela ("N Casos"). O resultado (`pode_gerar_relatorio`)
   // continua vindo do backend, nunca recalculado.
   const casosPendentes = resumo.revisoes.filter((revisao) => revisao.estado !== "decidida").length;
+  // Micro-sprint corretiva HOMO-RT-02 — histórico de decisões: reaproveita
+  // `resumo.revisoes` (já veio do backend com autor/decidido_em/observacao
+  // por grupo), sem chamada nova. Fechado por padrão — só ocupa espaço na
+  // tela quando alguém pede para ver.
+  const [mostrarHistorico, setMostrarHistorico] = useState(false);
 
   if (resumo.pode_gerar_relatorio) {
     return (
@@ -197,11 +203,20 @@ export default function PainelResumo({
           <BlocoGeracao parametrosFontes={parametrosFontes} caminhoConfiguracaoTemplate={caminhoConfiguracaoTemplate} />
         </div>
 
-        <div className="mt-5">
+        <div className="mt-5 flex flex-wrap items-center gap-4">
           <Botao variante="link" onClick={onVoltarParaEntrada}>
             Selecionar outra competência ou fontes
           </Botao>
+          <Botao variante="link" onClick={() => setMostrarHistorico((atual) => !atual)}>
+            {mostrarHistorico ? "Ocultar histórico de decisões" : "Ver histórico de decisões"}
+          </Botao>
         </div>
+
+        {mostrarHistorico && (
+          <div className="mt-5">
+            <HistoricoDecisoes revisoes={resumo.revisoes} />
+          </div>
+        )}
       </div>
     );
   }
@@ -240,7 +255,16 @@ export default function PainelResumo({
         <Botao variante="link" onClick={onVoltarParaEntrada}>
           Selecionar outra competência ou fontes
         </Botao>
+        <Botao variante="link" onClick={() => setMostrarHistorico((atual) => !atual)}>
+          {mostrarHistorico ? "Ocultar histórico de decisões" : "Ver histórico de decisões"}
+        </Botao>
       </div>
+
+      {mostrarHistorico && (
+        <div className="mt-5">
+          <HistoricoDecisoes revisoes={resumo.revisoes} />
+        </div>
+      )}
     </div>
   );
 }

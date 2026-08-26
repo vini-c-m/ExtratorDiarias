@@ -42,7 +42,10 @@ function criarXlsx(nome: string): File {
   });
 }
 
-function revisao(estado: "pendente" | "decidida" | "adiada" | "desatualizada") {
+function revisao(
+  estado: "pendente" | "decidida" | "adiada" | "desatualizada" | "requer_nova_decisao",
+  sobrescritas: Partial<ResumoRelatorioTransparencia["revisoes"][number]> = {},
+) {
   return {
     identidade_grupo: `grupo-${estado}`,
     regra: "RN07",
@@ -51,6 +54,11 @@ function revisao(estado: "pendente" | "decidida" | "adiada" | "desatualizada") {
     campos_iguais: [],
     campos_diferentes: [],
     ocorrencias: [],
+    autor: null,
+    decidido_em: null,
+    observacao: null,
+    obs_publicaveis: null,
+    ...sobrescritas,
   };
 }
 
@@ -61,6 +69,7 @@ const RESUMO_COM_PENDENCIAS: ResumoRelatorioTransparencia = {
   total_decididas: 6,
   total_adiadas: 1,
   total_desatualizadas: 1,
+  total_requer_nova_decisao: 0,
   total_ocorrencias_nao_publicaveis: 0,
   pode_gerar_relatorio: false,
   revisoes: [
@@ -68,8 +77,8 @@ const RESUMO_COM_PENDENCIAS: ResumoRelatorioTransparencia = {
     revisao("pendente"),
     revisao("adiada"),
     revisao("desatualizada"),
-    revisao("decidida"),
-    revisao("decidida"),
+    revisao("decidida", { autor: "servidor.teste", decidido_em: "2026-08-20T10:00:00Z", obs_publicaveis: ["2026OB000001"] }),
+    revisao("decidida", { autor: "servidor.teste", decidido_em: "2026-08-21T10:00:00Z", obs_publicaveis: ["2026OB000002"] }),
   ],
 };
 
@@ -80,6 +89,7 @@ const RESUMO_SEM_PENDENCIAS: ResumoRelatorioTransparencia = {
   total_decididas: 8,
   total_adiadas: 0,
   total_desatualizadas: 0,
+  total_requer_nova_decisao: 0,
   total_ocorrencias_nao_publicaveis: 3,
   pode_gerar_relatorio: true,
   revisoes: [revisao("decidida"), revisao("decidida")],
@@ -465,6 +475,58 @@ describe("PainelResumo — template pronto: geração final", () => {
     expect(payload).not.toHaveProperty("obs_selecionadas");
     expect(payload).not.toHaveProperty("revisoes");
     expect(payload).not.toHaveProperty("candidatos_publicaveis");
+  });
+});
+
+describe("PainelResumo — histórico de decisões (micro-sprint corretiva HOMO-RT-02)", () => {
+  it("fica oculto por padrão e aparece ao clicar em 'Ver histórico de decisões' (tela com pendências)", async () => {
+    const usuario = userEvent.setup();
+    render(
+      <PainelResumo
+        resumo={RESUMO_COM_PENDENCIAS}
+        parametrosFontes={null}
+        caminhoConfiguracaoTemplate={null}
+        onRevisarCasos={vi.fn()}
+        onVoltarParaEntrada={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("servidor.teste")).not.toBeInTheDocument();
+
+    await usuario.click(screen.getByRole("button", { name: "Ver histórico de decisões" }));
+
+    expect(screen.getAllByText("servidor.teste")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Ocultar histórico de decisões" })).toBeInTheDocument();
+  });
+
+  it("mostra responsável e decisão (OB publicável) de cada revisão já decidida", async () => {
+    const usuario = userEvent.setup();
+    render(
+      <PainelResumo
+        resumo={RESUMO_COM_PENDENCIAS}
+        parametrosFontes={null}
+        caminhoConfiguracaoTemplate={null}
+        onRevisarCasos={vi.fn()}
+        onVoltarParaEntrada={vi.fn()}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: "Ver histórico de decisões" }));
+
+    expect(screen.getByText("2026OB000001")).toBeInTheDocument();
+    expect(screen.getByText("2026OB000002")).toBeInTheDocument();
+    // revisão pendente nunca decidida: responsável aparece como "—", nunca inventado
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
+  it("disponível também na tela sem pendências (Tela 5)", async () => {
+    const usuario = userEvent.setup();
+    statusMock.mockResolvedValue({ configurado: false, disponivel: false, caminho_template: null });
+    renderComGeracao(RESUMO_SEM_PENDENCIAS);
+
+    await usuario.click(screen.getByRole("button", { name: "Ver histórico de decisões" }));
+
+    expect(screen.getAllByText("Decidida").length).toBeGreaterThan(0);
   });
 });
 

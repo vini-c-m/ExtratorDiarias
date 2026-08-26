@@ -45,16 +45,30 @@ class OcorrenciaResposta(BaseModel):
     valor: float | None
     motivo: str | None
     restituicao: float | None
+    # HOMO-RT-02 — identidade por ocorrência: igual a `ob` quando a OB não
+    # se repete fisicamente no grupo (todo RN07); "{ob}#{N}" quando se
+    # repete (RN04, I11). O frontend deve usar este campo, nunca `ob`
+    # isolada, como React key e como chave de seleção dos checkboxes.
+    identidade: str
 
 
 class RevisaoResposta(BaseModel):
     identidade_grupo: str
     regra: str
-    estado: Literal["pendente", "decidida", "adiada", "desatualizada"]
+    estado: Literal["pendente", "decidida", "adiada", "desatualizada", "requer_nova_decisao"]
     explicacao: str
     campos_iguais: list[str]
     campos_diferentes: list[str]
     ocorrencias: list[OcorrenciaResposta]
+    # Histórico da última decisão registrada para este grupo — `None`
+    # quando nunca houve decisão (PENDENTE). Sempre a decisão exatamente
+    # como persistida, nunca reinterpretada (inclui decisões antigas em
+    # formato pré-HOMO-RT-02, que podem ter deixado o grupo em
+    # "requer_nova_decisao").
+    autor: str | None = None
+    decidido_em: datetime | None = None
+    observacao: str | None = None
+    obs_publicaveis: list[str] | None = None
 
 
 class ResumoRelatorioResposta(BaseModel):
@@ -64,6 +78,7 @@ class ResumoRelatorioResposta(BaseModel):
     total_decididas: int
     total_adiadas: int
     total_desatualizadas: int
+    total_requer_nova_decisao: int = 0
     total_ocorrencias_nao_publicaveis: int
     pode_gerar_relatorio: bool
     revisoes: list[RevisaoResposta]

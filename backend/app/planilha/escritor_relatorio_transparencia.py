@@ -29,7 +29,10 @@ confirmado célula a célula — ver relatório da Micro-sprint 3F):
                                   CREDOR preserva o nome completo nesses
                                   casos; nunca uma troca por tamanho nem por
                                   simples divergência de grafia — ver
-                                  `_nome_publicado` abaixo)
+                                  `nome_publicado` em `app/domain/
+                                  relatorio_transparencia/linha_publicavel.py`,
+                                  reaproveitada também por `decisao.py`
+                                  desde a correção HOMO-RT-05)
     D Cargo                   <- RegistroControle.cargo (Controle DIMCAC
                                   coluna G, matriz de origem confirmada pelo
                                   negócio, Micro-sprint 3G.1), com fallback
@@ -76,6 +79,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.relatorio_transparencia.decisao import ResultadoRevisado
+from app.domain.relatorio_transparencia.linha_publicavel import nome_publicado, valor_do_controle_com_fallback
 from app.domain.relatorio_transparencia.motor_decisao import CandidatoNormal
 from app.domain.relatorio_transparencia.quantidade_diarias import resolver_quantidade_diarias
 
@@ -266,54 +270,6 @@ def _data_pagamento_como_texto(valor: datetime | None) -> str | None:
     return valor.strftime("%d/%m/%Y %H:%M:%S")
 
 
-def _valor_do_controle_com_fallback(
-    registros_controle,
-    atributo: str,
-    valor_base_ob: str | None,
-) -> str | None:
-    """Micro-sprint 3G.1 — precedência confirmada pelo negócio (matriz de
-    origem): Cargo e Transporte vêm PRIMEIRO do Controle DIMCAC
-    (`registros_controle`); a Base OB (`OrdemBancaria`) é só fallback
-    quando o Controle não tiver o dado. Mesma filosofia de conflito de
-    `resolver_quantidade_diarias`: quando há mais de um `RegistroControle`
-    (repetição física do DH) e eles DIVERGEM entre si nesse atributo, não
-    há um valor único e confiável do Controle — trata como "ausente no
-    Controle" e cai no fallback, nunca escolhe um dos dois à toa. Nunca
-    inventa um valor quando as duas fontes estão vazias."""
-    valores_controle = {getattr(r, atributo) for r in registros_controle if getattr(r, atributo)}
-    if len(valores_controle) == 1:
-        return valores_controle.pop()
-    return valor_base_ob
-
-
-def _nome_publicado(ordem: OrdemBancaria) -> str | None:
-    """Micro-sprint corretiva NOME×CREDOR — decisão de negócio aprovada
-    após investigação read-only dedicada (ver relatório da investigação):
-    `nome` (Base OB.NOME) continua a fonte PRIMÁRIA; só cai para
-    `credor` (Base OB.CREDOR) quando houver relação de truncamento/prefixo
-    COMPROVADA — nunca por `nome` ter 30 caracteres, nunca só por serem
-    diferentes. Detecção deliberadamente conservadora: só remove espaços
-    externos (necessário para reconhecer continuação com segurança sem
-    depender de como a fonte formatou o campo); NENHUMA normalização de
-    acento/caixa, NENHUM fuzzy matching, NENHUMA tentativa de decidir qual
-    grafia é "correta" — isso trataria uma simples divergência de nome
-    (ex.: "LUIS"/"LUIZ", acento diferente) como se fosse truncamento, o
-    que a investigação explicitamente definiu como fora do escopo desta
-    regra. Na dúvida (relação de prefixo não comprovada), mantém `nome` —
-    o mesmo comportamento de sempre."""
-    nome = ordem.nome
-    credor = ordem.credor
-    if not isinstance(nome, str) or not isinstance(credor, str):
-        return nome
-    nome_stripped = nome.strip()
-    credor_stripped = credor.strip()
-    if not nome_stripped:
-        return nome
-    if len(credor_stripped) > len(nome_stripped) and credor_stripped.startswith(nome_stripped):
-        return credor_stripped
-    return nome
-
-
 def _escrever_linha_ocorrencia(
     ws: Worksheet,
     linha: int,
@@ -321,12 +277,12 @@ def _escrever_linha_ocorrencia(
     registros_controle,
 ) -> float:
     quantidade = resolver_quantidade_diarias(registros_controle)
-    cargo = _valor_do_controle_com_fallback(registros_controle, "cargo", ordem.cargo)
-    transporte = _valor_do_controle_com_fallback(registros_controle, "transporte", ordem.transporte)
+    cargo = valor_do_controle_com_fallback(registros_controle, "cargo", ordem.cargo)
+    transporte = valor_do_controle_com_fallback(registros_controle, "transporte", ordem.transporte)
 
     ws[f"A{linha}"] = ordem.ob
     ws[f"B{linha}"] = _data_pagamento_como_texto(ordem.data_pagamento)
-    ws[f"C{linha}"] = _nome_publicado(ordem)
+    ws[f"C{linha}"] = nome_publicado(ordem)
     ws[f"D{linha}"] = cargo
     ws[f"E{linha}"] = _valor_data(ordem.periodo_inicial)
     ws[f"F{linha}"] = _valor_data(ordem.periodo_final)

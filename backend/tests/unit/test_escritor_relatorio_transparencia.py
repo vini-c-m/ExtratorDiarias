@@ -22,6 +22,7 @@ from app.domain.relatorio_transparencia.decisao import (
     ResultadoRevisado,
     RevisaoComEstado,
 )
+from app.domain.relatorio_transparencia.linha_publicavel import nome_publicado as _nome_publicado
 from app.domain.relatorio_transparencia.motor_decisao import (
     CandidatoNormal,
     OcorrenciaFinanceira,
@@ -35,7 +36,6 @@ from app.planilha.escritor_relatorio_transparencia import (
     _NOME_ABA_DADOS,
     _PRIMEIRA_LINHA_DADOS,
     _caminho_trava,
-    _nome_publicado,
     gerar_xlsx_relatorio_transparencia,
 )
 from tests.fixtures.template_relatorio_transparencia_sintetico import construir_template_sintetico

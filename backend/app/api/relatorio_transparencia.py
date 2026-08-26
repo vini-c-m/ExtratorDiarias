@@ -67,6 +67,7 @@ def _ocorrencia_resposta(oc: OcorrenciaResumo) -> OcorrenciaResposta:
         valor=oc.valor,
         motivo=oc.motivo,
         restituicao=oc.restituicao,
+        identidade=oc.identidade,
     )
 
 
@@ -79,6 +80,10 @@ def _revisao_resposta(r: RevisaoResumo) -> RevisaoResposta:
         campos_iguais=r.campos_iguais,
         campos_diferentes=r.campos_diferentes,
         ocorrencias=[_ocorrencia_resposta(oc) for oc in r.ocorrencias],
+        autor=r.autor,
+        decidido_em=r.decidido_em,
+        observacao=r.observacao,
+        obs_publicaveis=r.obs_publicaveis,
     )
 
 
@@ -90,6 +95,7 @@ def _resumo_resposta(resumo: ResumoRelatorio) -> ResumoRelatorioResposta:
         total_decididas=resumo.total_decididas,
         total_adiadas=resumo.total_adiadas,
         total_desatualizadas=resumo.total_desatualizadas,
+        total_requer_nova_decisao=resumo.total_requer_nova_decisao,
         total_ocorrencias_nao_publicaveis=resumo.total_ocorrencias_nao_publicaveis,
         pode_gerar_relatorio=resumo.pode_gerar_relatorio,
         revisoes=[_revisao_resposta(r) for r in resumo.revisoes],

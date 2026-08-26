@@ -80,7 +80,12 @@ export default function PainelEntrada({ erro, preparando, caminhoDecisoesResolvi
         caminho_base_ordens_bancarias: caminhoBaseOB,
         caminho_controle_dimcac: caminhoControleDimcac,
       },
-      autor.trim(),
+      // Normalização mínima e só para decisões NOVAS (histórico de decisões
+      // já persistidas nunca é reescrito): remove espaços nas pontas e
+      // colapsa espaços internos repetidos. Nunca infere identidade nem
+      // unifica variações de um mesmo nome entre registros diferentes — só
+      // evita que espaçamento acidental crie uma variação nova.
+      autor.trim().replace(/\s+/g, " "),
     );
   }
 

@@ -47,12 +47,17 @@ export default function PainelRevisaoCaso({
 
   const percentual = totalCasos > 0 ? Math.round((indiceAtual / totalCasos) * 100) : 0;
   const desatualizada = revisao.estado === "desatualizada";
+  // HOMO-RT-02 — grupo com decisão anterior ao suporte de seleção por
+  // ocorrência (repetição física de OB, RN04/I11): a decisão antiga não
+  // distinguia qual das ocorrências físicas devia ser publicada, então
+  // nunca é reaplicada sozinha — volta a pedir decisão humana explícita.
+  const requerNovaDecisao = revisao.estado === "requer_nova_decisao";
 
-  function alternarSelecao(ob: string) {
+  function alternarSelecao(identidade: string) {
     setSelecionadas((atual) => {
       const proximo = new Set(atual);
-      if (proximo.has(ob)) proximo.delete(ob);
-      else proximo.add(ob);
+      if (proximo.has(identidade)) proximo.delete(identidade);
+      else proximo.add(identidade);
       return proximo;
     });
   }
@@ -106,6 +111,8 @@ export default function PainelRevisaoCaso({
       <div className="mb-4 flex flex-wrap items-center gap-2.5">
         {desatualizada ? (
           <Badge variante="critico">Decisão desatualizada</Badge>
+        ) : requerNovaDecisao ? (
+          <Badge variante="critico">Decisão anterior ambígua</Badge>
         ) : (
           <Badge variante="aviso">Requer decisão humana</Badge>
         )}
@@ -120,6 +127,21 @@ export default function PainelRevisaoCaso({
           <Alerta variante="aviso">
             <span className="block font-bold">Os dados deste caso mudaram desde a última análise.</span>
             <span className="mt-1 block">Revise novamente antes de gerar o relatório.</span>
+          </Alerta>
+        </div>
+      )}
+
+      {requerNovaDecisao && (
+        <div className="mb-4">
+          <Alerta variante="aviso">
+            <span className="block font-bold">
+              Este caso tem duas ocorrências físicas da mesma OB e uma decisão anterior que não
+              distinguia qual delas publicar.
+            </span>
+            <span className="mt-1 block">
+              Selecione novamente, agora ocorrência por ocorrência, quais pagamentos devem constar no
+              relatório.
+            </span>
           </Alerta>
         </div>
       )}

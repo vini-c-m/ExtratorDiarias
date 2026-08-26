@@ -80,6 +80,46 @@ def _criar_controle_vazio(caminho):
     wb.save(caminho)
 
 
+# HOMO-RT-05 — layout de colunas do Controle DIMCAC real (fixo por posição,
+# nunca por busca de cabeçalho — `app/consulta/repositorio_controle_dimcac.py`
+# lê por letra de coluna: A=DH, B=SEI, C=DOC ORIGEM, D=CPF, G=CARGO,
+# H=PERÍODO INICIAL, I=PERÍODO FINAL, J=TRECHO, K=TRANSPORTE, L=MOTIVO,
+# N=QUANT. DIÁRIA INTEGRAL, O=QUANT. DIÁRIA PARCIAL, P=VALOR DA DIÁRIA).
+def _criar_controle_com_linha(
+    caminho,
+    *,
+    dh,
+    cargo=None,
+    transporte="CARRO",
+    quantidade_integral=None,
+    quantidade_parcial=None,
+    cpf=11111111111,
+    periodo_inicial=date(2026, 5, 10),
+    periodo_final=date(2026, 5, 10),
+    trecho="RECIFE - GARANHUNS",
+    motivo="Motivo de teste",
+    valor=154.09,
+):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Controle de Diárias"
+    ws.append(
+        [
+            "DH", "SEI", "DOC ORIGEM", "CPF", "", "", "CARGO", "PERÍODO INICIAL",
+            "PERÍODO FINAL", "TRECHO", "TRANSPORTE", "MOTIVO", "",
+            "QUANT. DIÁRIA INTEGRAL", "QUANT. DIÁRIA PARCIAL", "VALOR DA DIÁRIA",
+        ]
+    )
+    ws.append(
+        [
+            dh, "19.20.0001.0000001/2026-01", "PJTESTE", cpf, None, None, cargo,
+            periodo_inicial, periodo_final, trecho, transporte, motivo, None,
+            quantidade_integral, quantidade_parcial, valor,
+        ]
+    )
+    wb.save(caminho)
+
+
 def _preparar(tmp_path, linhas_ob, *, mes_referencia=5, caminho_decisoes=None):
     caminho_base_ob = tmp_path / "base_ob.xlsx"
     caminho_controle = tmp_path / "controle.xlsx"
@@ -1054,3 +1094,859 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
     wb = openpyxl.load_workbook(caminho_destino)
     ws = wb["Controle de Diárias"]
     assert ws["A7"].value == "2026OB000002"
+
+
+# --- HOMO-RT-02: identidade por ocorrência (repetição física de OB) --------
+# Duas linhas FÍSICAS com a MESMA OB na Base OB (I11), divergindo em
+# `motivo` — a forma real como `_resolver_repeticao_fisica` produz um RN04
+# (linhas idênticas colapsam antes de virar revisão; só divergência real
+# gera RN04). Testa ponta a ponta, via fontes reais em disco, a correção do
+# acoplamento de checkboxes: cada ocorrência física precisa ser
+# selecionável (publicável) de forma independente.
+
+
+def _linhas_rn04_repeticao_fisica(motivo_a="Motivo da ocorrência A", motivo_b="Motivo da ocorrência B"):
+    return [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo=motivo_a),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo=motivo_b),
+    ]
+
+
+def test_rn04_repeticao_fisica_expoe_identidade_distinta_por_ocorrencia(tmp_path):
+    resumo, *_ = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+
+    assert resumo.total_revisoes == 1
+    revisao = resumo.revisoes[0]
+    assert revisao.regra == "RN04"
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    assert len(identidades) == 2
+    assert len(set(identidades)) == 2  # nunca duas ocorrências com a mesma identidade
+    assert all(identidade.startswith("2026OB000001#") for identidade in identidades)
+    # `ob` continua igual para as duas — só `identidade` as distingue.
+    assert {oc.ob for oc in revisao.ocorrencias} == {"2026OB000001"}
+
+
+def test_publicar_somente_ocorrencia_a_de_grupo_rn04(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+    revisao = resumo.revisoes[0]
+    identidade_grupo = revisao.identidade_grupo
+    identidade_a = revisao.ocorrencias[0].identidade
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_a],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.total_candidatos_normais == 1
+    assert atualizado.total_ocorrencias_nao_publicaveis == 1
+    assert atualizado.pode_gerar_relatorio is True
+    assert atualizado.revisoes[0].estado == "decidida"
+
+
+def test_publicar_somente_ocorrencia_b_de_grupo_rn04(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+    revisao = resumo.revisoes[0]
+    identidade_grupo = revisao.identidade_grupo
+    identidade_b = revisao.ocorrencias[1].identidade
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_b],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.total_candidatos_normais == 1
+    assert atualizado.total_ocorrencias_nao_publicaveis == 1
+    assert atualizado.pode_gerar_relatorio is True
+
+
+def test_publicar_ambas_ocorrencias_fisicas_de_grupo_rn04(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+    revisao = resumo.revisoes[0]
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=identidades,
+        autor="servidor.teste",
+    )
+
+    assert atualizado.total_candidatos_normais == 2
+    assert atualizado.total_ocorrencias_nao_publicaveis == 0
+    assert atualizado.pode_gerar_relatorio is True
+
+
+def test_ob_pura_e_rejeitada_para_grupo_rn04_com_repeticao_fisica(tmp_path):
+    """Uma decisão NOVA sobre um grupo com repetição física precisa
+    identificar a ocorrência (`ob#N`) — `ob` pura não pertence mais a este
+    grupo (não distingue qual das duas linhas físicas), então é rejeitada
+    exatamente como qualquer outro valor fora do grupo."""
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+    revisao = resumo.revisoes[0]
+
+    with pytest.raises(service.DecisaoInvalida):
+        service.registrar_decisao_revisao(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            identidade_grupo=revisao.identidade_grupo,
+            acao=AcaoDecisao.PUBLICAR,
+            obs_selecionadas=["2026OB000001"],
+            autor="servidor.teste",
+        )
+
+
+def test_resumo_de_revisao_expoe_historico_da_decisao(tmp_path):
+    """Histórico de decisões (micro-sprint corretiva HOMO-RT-02): depois de
+    decidir, `RevisaoResumo` expõe autor/decidido_em/observacao/
+    obs_publicaveis exatamente como persistido — sem endpoint novo, sem
+    sistema de auditoria novo."""
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+    revisao = resumo.revisoes[0]
+    identidade_a = revisao.ocorrencias[0].identidade
+    assert resumo.revisoes[0].autor is None  # PENDENTE — nenhuma decisão ainda
+    assert resumo.revisoes[0].decidido_em is None
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_a],
+        autor="servidor.teste",
+        observacao="Só a primeira ocorrência corresponde ao pagamento real.",
+    )
+
+    revisao_atualizada = atualizado.revisoes[0]
+    assert revisao_atualizada.autor == "servidor.teste"
+    assert revisao_atualizada.decidido_em is not None
+    assert revisao_atualizada.observacao == "Só a primeira ocorrência corresponde ao pagamento real."
+    assert revisao_atualizada.obs_publicaveis == [identidade_a]
+
+
+def test_decisao_antiga_ambigua_de_grupo_rn04_migra_para_requer_nova_decisao(tmp_path):
+    """Migração (HOMO-RT-02): simula uma decisão gravada ANTES desta
+    correção (formato "ob pura", sem distinguir ocorrência) — registra uma
+    decisão válida hoje (garante fingerprint/identidade_grupo corretos) e
+    depois REESCREVE só `obs_publicaveis` no arquivo persistido para o
+    formato antigo, reproduzindo exatamente o que uma instalação existente
+    teria em disco. `preparar_relatorio` de novo deve reconhecer a
+    ambiguidade, bloquear a geração, e preservar autor/data/observação da
+    decisão antiga no histórico (nunca apagar silenciosamente)."""
+    import json
+
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, _linhas_rn04_repeticao_fisica())
+    revisao = resumo.revisoes[0]
+    identidade_a = revisao.ocorrencias[0].identidade
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_a],
+        autor="servidor.antigo",
+    )
+
+    # Simula o formato pré-HOMO-RT-02: `obs_publicaveis` gravado por OB
+    # pura (sem "#N"), a própria ambiguidade que motivou esta correção.
+    with open(caminho_decisoes, encoding="utf-8") as arquivo:
+        dados = json.load(arquivo)
+    (entrada,) = dados["decisoes"].values()
+    assert entrada["autor"] == "servidor.antigo"
+    entrada["obs_publicaveis"] = ["2026OB000001"]
+    with open(caminho_decisoes, "w", encoding="utf-8") as arquivo:
+        json.dump(dados, arquivo)
+
+    resumo_remontado = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+
+    revisao_remontada = resumo_remontado.revisoes[0]
+    assert revisao_remontada.estado == "requer_nova_decisao"
+    assert resumo_remontado.pode_gerar_relatorio is False
+    # histórico da decisão antiga preservado, nunca descartado silenciosamente
+    assert revisao_remontada.autor == "servidor.antigo"
+    assert revisao_remontada.decidido_em is not None
+    assert revisao_remontada.obs_publicaveis == ["2026OB000001"]
+
+
+def test_gerar_relatorio_xlsx_publica_exatamente_a_ocorrencia_fisica_escolhida(tmp_path):
+    """Fim a fim: publicar só a ocorrência B (pelo `motivo`, já que a OB é
+    igual nas duas linhas) — o XLSX final deve conter exatamente UMA linha
+    para esta OB, com o `motivo` da ocorrência escolhida, nunca da outra."""
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_rn04_repeticao_fisica(motivo_a="Motivo da ocorrência A", motivo_b="Motivo da ocorrência B")
+    )
+    revisao = resumo.revisoes[0]
+    identidade_b = revisao.ocorrencias[1].identidade
+    assert revisao.ocorrencias[1].motivo == "Motivo da ocorrência B"
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_b],
+        autor="servidor.teste",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.total_ocorrencias == 1
+    import openpyxl
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["A7"].value == "2026OB000001"
+    assert ws["I7"].value == "Motivo da ocorrência B"
+
+
+# --- HOMO-RT-03: identidade estável ponta a ponta, à prova de reordenação -
+# Reprodução end-to-end (fontes reais em disco, não só objetos de domínio)
+# do achado do Codex: decisão publica só a ocorrência A; a Base OB é
+# REESCRITA com as duas linhas físicas trocadas de posição (mesmo conteúdo,
+# ordem física invertida — o equivalente real a "reexportação com linhas
+# deslocadas"); a decisão reaplicada nunca pode publicar B no lugar de A.
+
+
+def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_reexportar_linhas_trocadas(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path,
+        _linhas_rn04_repeticao_fisica(motivo_a="Motivo da ocorrência A", motivo_b="Motivo da ocorrência B"),
+    )
+    revisao = resumo.revisoes[0]
+    # localiza a ocorrência pelo MOTIVO (conteúdo), nunca pela posição na lista
+    ocorrencia_a = next(oc for oc in revisao.ocorrencias if oc.motivo == "Motivo da ocorrência A")
+    identidade_a = ocorrencia_a.identidade
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_a],
+        autor="servidor.teste",
+    )
+
+    # "Reexportação com linhas físicas trocadas": mesmo conteúdo lógico,
+    # ordem física das duas linhas invertida no arquivo.
+    _criar_base_ob(
+        caminho_ob,
+        [
+            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo da ocorrência B"),
+            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo da ocorrência A"),
+        ],
+    )
+
+    resumo_reordenado = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+
+    revisao_reordenada = resumo_reordenado.revisoes[0]
+    assert revisao_reordenada.estado == "decidida"
+    assert resumo_reordenado.pode_gerar_relatorio is True
+    assert resumo_reordenado.total_candidatos_normais == 1
+
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida_reordenada.xlsx")
+    resultado_xlsx = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+    assert resultado_xlsx.total_ocorrencias == 1
+    import openpyxl
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["I7"].value == "Motivo da ocorrência A"  # NUNCA "Motivo da ocorrência B"
+
+
+# --- HOMO-RT-04: canonicalização estrutural, fim a fim via arquivo real ---
+# `\x1f`/`\x1e` (o contraexemplo exato do Codex) são bytes de controle
+# ILEGAIS em XML — openpyxl rejeita ao gravar (`IllegalCharacterError`),
+# então uma planilha real nunca poderia carregá-los. Mas outros
+# caracteres "perigosos" para um formato ingênuo por separador — vírgula,
+# dois-pontos, aspas, barra invertida, quebra de linha — são texto válido
+# em qualquer célula (MOTIVO/SITUAÇÃO são campos livres). Este teste prova
+# a correção com um desses casos realistas, através do pipeline real de
+# leitura/gravação, não só em objetos de domínio construídos à mão.
+
+
+def test_canonicalizacao_nunca_colide_com_quebra_de_linha_em_motivo_via_planilha_real(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path,
+        [
+            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Primeira linha\nSegunda parte", situacao="Paga"),
+            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Primeira linha", situacao="Segunda parte\nPaga"),
+        ],
+    )
+
+    revisao = resumo.revisoes[0]
+    assert revisao.regra == "RN04"
+    identidades = {oc.identidade for oc in revisao.ocorrencias}
+    assert len(identidades) == 2  # nunca colidem, mesmo com o texto "redistribuído" entre os campos
+
+    identidade_primeira = next(
+        oc.identidade for oc in revisao.ocorrencias if oc.motivo == "Primeira linha\nSegunda parte"
+    )
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_primeira],
+        autor="servidor.teste",
+    )
+
+    resumo_apos = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+    assert resumo_apos.revisoes[0].estado == "decidida"
+    assert resumo_apos.total_candidatos_normais == 1
+    assert resumo_apos.total_ocorrencias_nao_publicaveis == 1
+
+
+# --- Micro-sprint "Duplicatas idênticas" — fim a fim via fontes reais -----
+# Achado ao desenhar estes testes: duas linhas físicas TOTALMENTE idênticas
+# (mesma OB, nenhum campo divergente) nunca chegam a virar uma revisão
+# RN04 de verdade — `motor_decisao._resolver_repeticao_fisica` já as
+# colapsa automaticamente em UM representante (I11b), sem pedir decisão
+# humana, ANTES desta micro-sprint sequer existir. O cenário real que
+# precisa de decisão humana é um grupo de 3+ linhas onde PARTE delas é
+# idêntica entre si e outra parte diverge — só a divergência real (não a
+# duplicata em si) é o que dispara RN04 para o grupo inteiro. Por isso os
+# testes fim-a-fim abaixo usam esse formato (A, A idêntica, B divergente);
+# os testes de par PURAMENTE idêntico ([A,A] sem nenhum terceiro
+# divergente) já estão cobertos no nível de domínio (`test_decisao.py`,
+# construindo a `RevisaoNecessaria` diretamente — o mesmo padrão já usado
+# por todo o resto desta suíte para casos que não nascem do motor real).
+
+
+def _linhas_duplicata_identica_mais_divergente(motivo_divergente="Motivo B — divergente"):
+    return [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001"),  # A
+        _linha_ob(dh="2026DH000001", ob="2026OB000001"),  # A — idêntica à primeira em todo campo material
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo=motivo_divergente),  # B — diverge só em motivo
+    ]
+
+
+def test_grupo_misto_a_a_b_expoe_identidade_igual_para_as_duas_copias_de_a(tmp_path):
+    resumo, *_ = _preparar(tmp_path, _linhas_duplicata_identica_mais_divergente())
+
+    assert resumo.total_revisoes == 1
+    revisao = resumo.revisoes[0]
+    assert revisao.regra == "RN04"
+    assert len(revisao.ocorrencias) == 3
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    assert len(set(identidades)) == 2  # 2 classes: [A, A] idênticas + B distinta
+    contagem = {identidade: identidades.count(identidade) for identidade in set(identidades)}
+    assert sorted(contagem.values()) == [1, 2]  # uma classe com 1 (B), outra com 2 (A, A)
+
+
+def test_publicar_classe_identica_e_a_divergente_no_grupo_misto(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
+    identidade_b = next(i for i in identidades if identidades.count(i) == 1)
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_classe_a, identidade_b],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.revisoes[0].estado == "decidida"
+    assert atualizado.total_candidatos_normais == 2  # 1 representante de A + B — NUNCA 3
+    assert atualizado.total_ocorrencias_nao_publicaveis == 1  # a segunda cópia de A
+
+
+def test_publicar_somente_a_classe_identica_no_grupo_misto(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_classe_a],
+        autor="servidor.teste",
+    )
+
+    assert atualizado.total_candidatos_normais == 1
+    assert atualizado.total_ocorrencias_nao_publicaveis == 2  # a outra cópia de A + B
+
+
+def test_nao_publicar_nenhuma_no_grupo_misto(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    identidade_grupo_alvo = resumo.revisoes[0].identidade_grupo
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade_grupo_alvo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],
+        autor="servidor.teste",
+        observacao="Grupo todo suspeito — nenhuma ocorrência deve ser publicada.",
+    )
+
+    assert atualizado.revisoes[0].estado == "decidida"
+    assert atualizado.pode_gerar_relatorio is True
+    assert atualizado.total_candidatos_normais == 0
+    assert atualizado.total_ocorrencias_nao_publicaveis == 3
+
+
+def test_adiar_grupo_misto_bloqueia(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+
+    atualizado = service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.ADIAR,
+        autor="servidor.teste",
+    )
+
+    assert atualizado.revisoes[0].estado == "adiada"
+    assert atualizado.pode_gerar_relatorio is False
+
+
+def test_publicar_1_de_n_identicas_sobrevive_a_reload(tmp_path):
+    """Persistência: salvar/recarregar "publicar 1 de N idênticas"."""
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_classe_a],
+        autor="servidor.teste",
+    )
+
+    resumo_recarregado = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+
+    assert resumo_recarregado.revisoes[0].estado == "decidida"
+    assert resumo_recarregado.total_candidatos_normais == 1
+    assert resumo_recarregado.total_ocorrencias_nao_publicaveis == 2
+
+
+def test_publicar_zero_sobrevive_a_reload(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],
+        autor="servidor.teste",
+        observacao="Nenhuma ocorrência deve ser publicada.",
+    )
+
+    resumo_recarregado = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+
+    assert resumo_recarregado.revisoes[0].estado == "decidida"
+    assert resumo_recarregado.total_candidatos_normais == 0
+    assert resumo_recarregado.pode_gerar_relatorio is True
+
+
+def test_decisao_antiga_com_chave_de_grupo_legada_e_selecao_especifica_exige_nova_decisao(tmp_path):
+    """Migração de `identidade_grupo` (corrigida nesta micro-sprint):
+    simula uma decisão gravada por uma instalação existente com a chave de
+    grupo ANTIGA (formato pré-correção) — registra uma decisão válida hoje
+    e depois reescreve só a CHAVE do dicionário `decisoes` no arquivo
+    persistido para o formato legado, preservando os demais campos
+    intactos, reproduzindo exatamente o que uma instalação existente teria
+    em disco."""
+    import json
+
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_classe_a],
+        autor="servidor.antigo",
+    )
+
+    with open(caminho_decisoes, encoding="utf-8") as arquivo:
+        dados = json.load(arquivo)
+    (_chave_antiga, entrada), = list(dados["decisoes"].items())
+    from app.domain.relatorio_transparencia.decisao import _identidade_grupo_legado
+
+    obs_do_grupo = sorted({oc.ob for oc in revisao.ocorrencias})
+    nova_chave = _identidade_grupo_legado(revisao.regra, obs_do_grupo)
+    entrada["identidade_grupo"] = nova_chave
+    dados["decisoes"] = {nova_chave: entrada}
+    with open(caminho_decisoes, "w", encoding="utf-8") as arquivo:
+        json.dump(dados, arquivo)
+
+    resumo_remontado = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+
+    revisao_remontada = resumo_remontado.revisoes[0]
+    assert revisao_remontada.estado == "requer_nova_decisao"
+    assert resumo_remontado.pode_gerar_relatorio is False
+    assert revisao_remontada.autor == "servidor.antigo"  # histórico preservado, nunca descartado
+
+
+def test_decisao_antiga_com_chave_de_grupo_legada_e_zero_continua_valida(tmp_path):
+    """Contraparte segura do teste acima: uma decisão antiga "publicar
+    zero" (inequívoca, sem risco material mesmo sob colisão hipotética da
+    chave legada) permanece válida sem exigir nova decisão."""
+    import json
+
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],
+        autor="servidor.antigo",
+        observacao="Grupo todo suspeito.",
+    )
+
+    with open(caminho_decisoes, encoding="utf-8") as arquivo:
+        dados = json.load(arquivo)
+    (_chave_antiga, entrada), = list(dados["decisoes"].items())
+    from app.domain.relatorio_transparencia.decisao import _identidade_grupo_legado
+
+    obs_do_grupo = sorted({oc.ob for oc in revisao.ocorrencias})
+    nova_chave = _identidade_grupo_legado(revisao.regra, obs_do_grupo)
+    entrada["identidade_grupo"] = nova_chave
+    dados["decisoes"] = {nova_chave: entrada}
+    with open(caminho_decisoes, "w", encoding="utf-8") as arquivo:
+        json.dump(dados, arquivo)
+
+    resumo_remontado = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+    )
+
+    revisao_remontada = resumo_remontado.revisoes[0]
+    assert revisao_remontada.estado == "decidida"
+    assert resumo_remontado.pode_gerar_relatorio is True
+    assert revisao_remontada.autor == "servidor.antigo"
+
+
+def test_xlsx_publica_exatamente_uma_linha_para_classe_identica(tmp_path):
+    """XLSX fim a fim: publicar a classe idêntica + B gera exatamente 2
+    linhas no relatório final — nunca 3, mesmo havendo 3 ocorrências
+    físicas no grupo."""
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente(motivo_divergente="Motivo B — divergente")
+    )
+    revisao = resumo.revisoes[0]
+    identidades = [oc.identidade for oc in revisao.ocorrencias]
+    identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
+    identidade_b = next(i for i in identidades if identidades.count(i) == 1)
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_classe_a, identidade_b],
+        autor="servidor.teste",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.total_ocorrencias == 2  # 1 representante de A + B — NUNCA 3
+    import openpyxl
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    valores_publicados = {ws["I7"].value, ws["I8"].value}
+    assert valores_publicados == {"Motivo de teste", "Motivo B — divergente"}
+    assert ws["I9"].value is None  # nunca uma 3ª linha
+
+
+def test_xlsx_nenhuma_selecionada_gera_zero_linhas(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_duplicata_identica_mais_divergente()
+    )
+    revisao = resumo.revisoes[0]
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],
+        autor="servidor.teste",
+        observacao="Grupo todo suspeito.",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.total_ocorrencias == 0
+    import openpyxl
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["A7"].value.startswith("Total")  # linha de total logo após o cabeçalho — zero linhas de dados
+
+
+# --- Micro-sprint corretiva HOMO-RT-05: identidade da LINHA PUBLICÁVEL ----
+# Fim a fim, via arquivos reais (Base OB + Controle DIMCAC sintéticos):
+# publica uma decisão específica; o Controle DIMCAC é alterado (só o Cargo
+# efetivamente publicável muda, a Base OB permanece IDÊNTICA); a decisão
+# precisa exigir nova decisão humana (`DESATUALIZADA`) — nunca continuar
+# `DECIDIDA` publicando um Cargo diferente do que foi visto. O XLSX final
+# só reflete o Cargo novo depois de uma decisão nova.
+
+
+def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp_path):
+    linhas_ob = _linhas_rn04_repeticao_fisica(motivo_a="Motivo A", motivo_b="Motivo B")
+    caminho_ob = tmp_path / "base_ob.xlsx"
+    caminho_controle = tmp_path / "controle.xlsx"
+    caminho_decisoes = tmp_path / "decisoes.json"
+    _criar_base_ob(caminho_ob, linhas_ob)
+    _criar_controle_com_linha(caminho_controle, dh="2026DH000001", cargo="ANALISTA JUDICIÁRIO")
+
+    resumo = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_controle_dimcac=str(caminho_controle),
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=str(caminho_decisoes),
+    )
+    revisao = resumo.revisoes[0]
+    assert revisao.regra == "RN04"
+    identidade_a = next(oc.identidade for oc in revisao.ocorrencias if oc.motivo == "Motivo A")
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_controle_dimcac=str(caminho_controle),
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=str(caminho_decisoes),
+        identidade_grupo=revisao.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_a],
+        autor="servidor.teste",
+    )
+
+    # Controle DIMCAC "corrigido" — MESMO DH, só o Cargo muda; Base OB
+    # permanece intocada.
+    _criar_controle_com_linha(caminho_controle, dh="2026DH000001", cargo="TÉCNICO JUDICIÁRIO")
+
+    resumo_apos_mudanca_no_controle = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_controle_dimcac=str(caminho_controle),
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=str(caminho_decisoes),
+    )
+
+    assert resumo_apos_mudanca_no_controle.revisoes[0].estado == "desatualizada"
+    assert resumo_apos_mudanca_no_controle.pode_gerar_relatorio is False
+    assert resumo_apos_mudanca_no_controle.total_candidatos_normais == 0
+
+    # Nova decisão humana (identidades recalculadas — o conteúdo mudou,
+    # então a identidade por ocorrência também muda) libera a geração, e o
+    # XLSX final só então reflete o Cargo NOVO.
+    revisao_reatualizada = resumo_apos_mudanca_no_controle.revisoes[0]
+    nova_identidade_a = next(oc.identidade for oc in revisao_reatualizada.ocorrencias if oc.motivo == "Motivo A")
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_controle_dimcac=str(caminho_controle),
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=str(caminho_decisoes),
+        identidade_grupo=revisao_reatualizada.identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[nova_identidade_a],
+        autor="servidor.teste",
+    )
+
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_controle_dimcac=str(caminho_controle),
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=str(caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.total_ocorrencias == 1
+    import openpyxl
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["D7"].value == "TÉCNICO JUDICIÁRIO"  # NUNCA "ANALISTA JUDICIÁRIO" (o que foi visto na decisão antiga)

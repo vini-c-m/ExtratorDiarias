@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CAMPO_COM_DROPDOWN, FOCO_ANEL, PAINEL_DROPDOWN } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import OpcaoDropdown from "./OpcaoDropdown";
@@ -34,7 +35,26 @@ interface Props {
  *
  * Teclado: seta para baixo/cima abre o dropdown (se fechado) ou navega
  * entre as opções, Enter confirma a opção destacada (ou só abre, se
- * fechado), Escape fecha sem alterar o valor. Clique fora fecha. */
+ * fechado), Escape fecha sem alterar o valor. Clique fora fecha.
+ *
+ * HOMO-RT-02/UX — investigação visual confirmou (reprodução real via
+ * Chromium/Playwright, `elementFromPoint` no meio do painel aberto) que o
+ * painel de opções ficava coberto pelo PRÓXIMO cartão da tela, mesmo tendo
+ * `z-index` maior: `SUPERFICIE_BASE` (todo cartão do app) usa
+ * `backdrop-blur-sm`, e `backdrop-filter` cria um novo *stacking context*
+ * por CSS spec — isso torna o cartão inteiro (com tudo dentro, inclusive
+ * este painel `position: absolute; z-index: 10`) uma unidade atômica na
+ * pilha de empilhamento do cartão PAI; o `z-index` do painel só vale
+ * DENTRO do próprio cartão, nunca escapa dele. O cartão seguinte, pintado
+ * depois no DOM, cobre o cartão anterior inteiro (painel aberto incluído).
+ * Corrigido renderizando o painel num portal para `document.body`
+ * (`position: fixed`, coordenadas calculadas a partir do próprio campo) —
+ * sai fisicamente da árvore do cartão, não fica mais sujeito ao
+ * *stacking context* dele. Reposicionamento não é recalculado a cada
+ * re-render enquanto aberto (só ao abrir/redimensionar/rolar, quando então
+ * fecha) — suficiente para o bug comprovado; uma mudança de layout de um
+ * elemento não relacionado enquanto o dropdown está aberto é um caso
+ * residual não coberto (ver relatório da micro-sprint). */
 export default function Selecao({
   rotulo,
   valor,
@@ -48,9 +68,12 @@ export default function Selecao({
   const campoId = id ?? idGerado;
   const listboxId = `${campoId}-listbox`;
   const containerRef = useRef<HTMLDivElement>(null);
+  const campoRef = useRef<HTMLDivElement>(null);
+  const listboxRef = useRef<HTMLUListElement>(null);
 
   const [aberto, setAberto] = useState(false);
   const [indiceAtivo, setIndiceAtivo] = useState(-1);
+  const [posicao, setPosicao] = useState<{ top: number; left: number; width: number } | null>(null);
 
   // Item em branco sempre presente (equivalente ao "Todos"/"Selecione" do
   // antigo `<option value="">`) — permite limpar a seleção de um campo
@@ -64,12 +87,35 @@ export default function Selecao({
   useEffect(() => {
     if (!aberto) return;
     function aoClicarFora(evento: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(evento.target as Node)) {
-        setAberto(false);
-      }
+      const alvo = evento.target as Node;
+      // `listboxRef` porque o painel agora vive num portal em
+      // `document.body` — fora de `containerRef` — então um clique numa
+      // opção conta como "fora" do container e fecharia o dropdown antes
+      // de `OpcaoDropdown.onMouseDown` selecionar a opção, sem este check.
+      if (containerRef.current?.contains(alvo)) return;
+      if (listboxRef.current?.contains(alvo)) return;
+      setAberto(false);
     }
     document.addEventListener("mousedown", aoClicarFora);
     return () => document.removeEventListener("mousedown", aoClicarFora);
+  }, [aberto]);
+
+  // Painel no portal não reflui com o resto da página: rolar ou
+  // redimensionar deixaria as coordenadas calculadas na abertura
+  // desatualizadas (não há como "seguir" o campo sem recalcular a cada
+  // frame) — mais simples e previsível fechar, igual a um clique fora.
+  useEffect(() => {
+    if (!aberto) return;
+    function fechar() {
+      setAberto(false);
+      setIndiceAtivo(-1);
+    }
+    window.addEventListener("resize", fechar);
+    window.addEventListener("scroll", fechar, true);
+    return () => {
+      window.removeEventListener("resize", fechar);
+      window.removeEventListener("scroll", fechar, true);
+    };
   }, [aberto]);
 
   function selecionar(chaveEscolhida: string) {
@@ -80,6 +126,10 @@ export default function Selecao({
 
   function abrir() {
     if (disabled) return;
+    const retangulo = campoRef.current?.getBoundingClientRect();
+    if (retangulo) {
+      setPosicao({ top: retangulo.bottom + 4, left: retangulo.left, width: retangulo.width });
+    }
     setIndiceAtivo(indiceValorAtual >= 0 ? indiceValorAtual : 0);
     setAberto(true);
   }
@@ -123,7 +173,7 @@ export default function Selecao({
       <label htmlFor={campoId} className={`mb-1.5 block ${TIPOGRAFIA.legenda}`}>
         {rotulo}
       </label>
-      <div className="relative">
+      <div ref={campoRef} className="relative">
         <button
           id={campoId}
           type="button"
@@ -145,20 +195,30 @@ export default function Selecao({
           }`}
         />
       </div>
-      {aberto && !disabled && (
-        <ul id={listboxId} role="listbox" className={PAINEL_DROPDOWN}>
-          {itens.map((item, indice) => (
-            <OpcaoDropdown
-              key={item.chave || "__vazio__"}
-              rotulo={item.rotulo}
-              ativo={indice === indiceAtivo}
-              selecionado={item.chave === valor}
-              onEscolher={() => selecionar(item.chave)}
-              onRealcar={() => setIndiceAtivo(indice)}
-            />
-          ))}
-        </ul>
-      )}
+      {aberto &&
+        !disabled &&
+        posicao &&
+        createPortal(
+          <ul
+            ref={listboxRef}
+            id={listboxId}
+            role="listbox"
+            className={PAINEL_DROPDOWN}
+            style={{ position: "fixed", top: posicao.top, left: posicao.left, width: posicao.width, margin: 0 }}
+          >
+            {itens.map((item, indice) => (
+              <OpcaoDropdown
+                key={item.chave || "__vazio__"}
+                rotulo={item.rotulo}
+                ativo={indice === indiceAtivo}
+                selecionado={item.chave === valor}
+                onEscolher={() => selecionar(item.chave)}
+                onRealcar={() => setIndiceAtivo(indice)}
+              />
+            ))}
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }

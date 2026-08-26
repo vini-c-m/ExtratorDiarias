@@ -26,9 +26,19 @@ export interface OcorrenciaRelatorioTransparencia {
   valor: number | null;
   motivo: string | null;
   restituicao: number | null;
+  // HOMO-RT-02 — identidade por ocorrência: igual a `ob` quando a OB não se
+  // repete fisicamente no grupo (todo RN07); "{ob}#{N}" quando se repete
+  // (RN04, I11). Usar SEMPRE este campo — nunca `ob` isolada — como React
+  // key e como chave de seleção dos checkboxes de revisão.
+  identidade: string;
 }
 
-export type EstadoRevisaoRelatorioTransparencia = "pendente" | "decidida" | "adiada" | "desatualizada";
+export type EstadoRevisaoRelatorioTransparencia =
+  | "pendente"
+  | "decidida"
+  | "adiada"
+  | "desatualizada"
+  | "requer_nova_decisao";
 
 export interface RevisaoRelatorioTransparencia {
   identidade_grupo: string;
@@ -38,6 +48,12 @@ export interface RevisaoRelatorioTransparencia {
   campos_iguais: string[];
   campos_diferentes: string[];
   ocorrencias: OcorrenciaRelatorioTransparencia[];
+  // Histórico da última decisão registrada para este grupo — `null` quando
+  // nunca houve decisão (PENDENTE).
+  autor: string | null;
+  decidido_em: string | null;
+  observacao: string | null;
+  obs_publicaveis: string[] | null;
 }
 
 export interface ResumoRelatorioTransparencia {
@@ -47,6 +63,7 @@ export interface ResumoRelatorioTransparencia {
   total_decididas: number;
   total_adiadas: number;
   total_desatualizadas: number;
+  total_requer_nova_decisao: number;
   total_ocorrencias_nao_publicaveis: number;
   pode_gerar_relatorio: boolean;
   revisoes: RevisaoRelatorioTransparencia[];

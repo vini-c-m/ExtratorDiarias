@@ -32,6 +32,7 @@ const REVISAO_PENDENTE: RevisaoRelatorioTransparencia = {
       valor: 1850,
       motivo: "Participação em reunião técnica",
       restituicao: null,
+      identidade: "2026OB000241",
     },
     {
       ob: "2026OB000389",
@@ -45,14 +46,28 @@ const REVISAO_PENDENTE: RevisaoRelatorioTransparencia = {
       valor: 1850,
       motivo: "Participação em reunião técnica",
       restituicao: null,
+      identidade: "2026OB000389",
     },
   ],
+  autor: null,
+  decidido_em: null,
+  observacao: null,
+  obs_publicaveis: null,
 };
 
 const REVISAO_DESATUALIZADA: RevisaoRelatorioTransparencia = {
   ...REVISAO_PENDENTE,
   identidade_grupo: "grupo-fake-2",
   estado: "desatualizada",
+};
+
+const REVISAO_REQUER_NOVA_DECISAO: RevisaoRelatorioTransparencia = {
+  ...REVISAO_PENDENTE,
+  identidade_grupo: "grupo-fake-3",
+  estado: "requer_nova_decisao",
+  autor: "servidor.antigo",
+  decidido_em: "2026-01-10T09:00:00Z",
+  obs_publicaveis: ["2026OB000241"],
 };
 
 function propsBase(sobrescritas: Partial<ComponentProps<typeof PainelRevisaoCaso>> = {}) {
@@ -95,6 +110,18 @@ describe("PainelRevisaoCaso", () => {
     expect(screen.getByText("Decisão desatualizada")).toBeInTheDocument();
     expect(screen.getByText("Os dados deste caso mudaram desde a última análise.")).toBeInTheDocument();
     expect(screen.getByText("Revise novamente antes de gerar o relatório.")).toBeInTheDocument();
+    expect(screen.queryByText(/fingerprint/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/hash/i)).not.toBeInTheDocument();
+  });
+
+  it("caso 'requer nova decisão' (HOMO-RT-02, migração): mostra selo e explicação próprios, sem mencionar fingerprint/hash", () => {
+    render(<PainelRevisaoCaso {...propsBase({ revisao: REVISAO_REQUER_NOVA_DECISAO })} />);
+
+    expect(screen.getByText("Decisão anterior ambígua")).toBeInTheDocument();
+    expect(
+      screen.getByText(/duas ocorrências físicas da mesma OB e uma decisão anterior/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Os dados deste caso mudaram desde a última análise.")).not.toBeInTheDocument();
     expect(screen.queryByText(/fingerprint/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/hash/i)).not.toBeInTheDocument();
   });

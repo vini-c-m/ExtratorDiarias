@@ -28,7 +28,10 @@ const PARAMETROS_FONTES = {
   caminho_decisoes: "C:\\fake\\decisoes.json",
 };
 
-function revisao(identidade: string, estado: "pendente" | "decidida" | "adiada" | "desatualizada") {
+function revisao(
+  identidade: string,
+  estado: "pendente" | "decidida" | "adiada" | "desatualizada" | "requer_nova_decisao",
+) {
   return {
     identidade_grupo: identidade,
     regra: "RN07",
@@ -37,6 +40,10 @@ function revisao(identidade: string, estado: "pendente" | "decidida" | "adiada" 
     campos_iguais: ["beneficiario"],
     campos_diferentes: ["ob"],
     ocorrencias: [],
+    autor: null,
+    decidido_em: null,
+    observacao: null,
+    obs_publicaveis: null,
   };
 }
 
@@ -60,6 +67,7 @@ describe("useRelatorioTransparencia", () => {
       total_decididas: 0,
       total_adiadas: 0,
       total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("grupo-1", "pendente"), revisao("grupo-2", "pendente")],
@@ -109,6 +117,7 @@ describe("useRelatorioTransparencia", () => {
         total_decididas: 0,
         total_adiadas: 0,
         total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
         total_ocorrencias_nao_publicaveis: 0,
         pode_gerar_relatorio: true,
         revisoes: [],
@@ -128,6 +137,7 @@ describe("useRelatorioTransparencia", () => {
       total_decididas: 0,
       total_adiadas: 0,
       total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("grupo-1", "pendente"), revisao("grupo-2", "pendente")],
@@ -158,6 +168,7 @@ describe("useRelatorioTransparencia", () => {
       total_decididas: 1,
       total_adiadas: 0,
       total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("grupo-1", "decidida"), revisao("grupo-2", "pendente")],
@@ -185,6 +196,7 @@ describe("useRelatorioTransparencia", () => {
       total_decididas: 2,
       total_adiadas: 0,
       total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: true,
       revisoes: [revisao("grupo-1", "decidida"), revisao("grupo-2", "decidida")],
@@ -207,6 +219,7 @@ describe("useRelatorioTransparencia", () => {
       total_decididas: 1,
       total_adiadas: 0,
       total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
       total_ocorrencias_nao_publicaveis: 1,
       pode_gerar_relatorio: false,
       revisoes: [revisao("grupo-1", "decidida"), revisao("grupo-2", "pendente")],
@@ -238,6 +251,7 @@ describe("useRelatorioTransparencia", () => {
       total_decididas: 0,
       total_adiadas: 1,
       total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("grupo-1", "adiada"), revisao("grupo-2", "pendente")],
@@ -291,6 +305,7 @@ describe("useRelatorioTransparencia", () => {
         total_decididas: 1,
         total_adiadas: 0,
         total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
         total_ocorrencias_nao_publicaveis: 0,
         pode_gerar_relatorio: false,
         revisoes: [revisao("grupo-1", "decidida"), revisao("grupo-2", "pendente")],
