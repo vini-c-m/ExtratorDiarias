@@ -28,6 +28,7 @@
 6. [Workflow/UX aprovado — Micro-Sprint 3C (não implementado)](#6-workflowux-aprovado--micro-sprint-3c-não-implementado)
 7. [Evidências e limitações conhecidas](#7-evidências-e-limitações-conhecidas)
 8. [Arquitetura implementada](#8-arquitetura-implementada)
+9. [Homologação — Fevereiro a Julho/2026](#9-homologação--fevereiro-a-julho2026)
 
 ---
 
@@ -356,3 +357,148 @@ continua bloqueado (G05).
   `normalizar_trecho` (RN07, Micro-Sprint 3B).
 - `app/domain/relatorio_transparencia/motor_decisao.py` — `classificar`,
   RN01–RN07, I11a/I11b (Micro-Sprint 3B).
+
+## 9. Homologação — Fevereiro a Julho/2026
+
+> **STATUS: HOMOLOGADO COM RESSALVA DOCUMENTADA.** Cobre as gerações de
+> Fevereiro a Julho/2026 do gerador de XLSX
+> (`app/planilha/escritor_relatorio_transparencia.py` +
+> `app/services/relatorio_transparencia_service.py`). Nenhum código,
+> planilha ou decisão persistida foi alterado por esta homologação — é um
+> registro do resultado de duas rodadas de auditoria já concluídas
+> (comparativa e de causa raiz), não uma nova investigação.
+>
+> **Nota de privacidade:** a homologação foi executada sobre dados
+> operacionais reais. Nesta versão do documento foram removidos todos os
+> identificadores (OBs, documentos hábeis, processos SEI), nomes, valores,
+> contagens e decisões individuais. O registro detalhado permanece apenas
+> em arquivo local, fora do repositório. Os identificadores que aparecem
+> abaixo são **sintéticos** e servem só para ilustrar o formato.
+
+### 9.1 Escopo
+
+Comparação entre cada relatório mensal gerado pelo sistema e o recorte
+correspondente do relatório oficial acumulado, para os meses de Fevereiro
+a Julho/2026. Fora de escopo: qualquer recálculo financeiro e qualquer
+alteração de dados persistidos.
+
+### 9.2 Fontes utilizadas
+
+- Bases de Ordens Bancárias e de Controle DIMCAC efetivamente usadas nas
+  gerações auditadas (caminhos configurados localmente).
+- Decisões humanas persistidas e relatório oficial acumulado, ambos
+  mantidos fora do repositório.
+- Nenhum desses arquivos é versionado nem reproduzido neste documento.
+
+### 9.3 Metodologia
+
+1. Comparação campo a campo (data, trecho, motivo, quantidade de diárias,
+   valor total) entre cada relatório mensal e o recorte do oficial
+   acumulado correspondente, por Ordem Bancária + assinatura de conteúdo.
+   O campo "Valor da Passagem" foi excluído da comparação (decisão
+   institucional então vigente).
+2. Reexecução das funções puras do domínio (`classificar`,
+   `identidade_grupo`, `aplicar_decisoes`) contra os mesmos dados, para
+   confirmar que o XLSX reflete o domínio.
+3. Execução estritamente somente-leitura: nenhuma fonte, planilha ou
+   decisão persistida foi modificada.
+
+### 9.4 Resultado — RN07 (supressões deliberadas, não bugs)
+
+As ocorrências ausentes dos relatórios mensais por suspeita de pagamento
+em duplicidade (RN07) correspondem a supressões deliberadas, cada uma com
+decisão humana persistida e rastreável por `identidade_grupo`/fingerprint.
+Não são defeitos do sistema. Os identificadores foram omitidos.
+
+### 9.5 Resultado — Períodos (divergências materiais investigadas individualmente)
+
+Todas as divergências materiais de período foram investigadas caso a
+caso. Cada uma foi explicada por erro do relatório oficial, decisão humana
+deliberada e rastreável, ou dado ruim já presente nas fontes. Detalhes
+individuais omitidos.
+
+### 9.6 Resultado — Outras divergências materiais (fontes sustentam o sistema)
+
+Nas demais divergências materiais, as fontes de origem sustentam o valor
+produzido pelo sistema, e não o do relatório oficial. Detalhes individuais
+omitidos.
+
+### 9.7 Resultado — Nomes
+
+As divergências de grafia de nome foram classificadas; parte decorre do
+fallback deliberado Nome→Credor e parte permanece sem causa-raiz
+verificada individualmente (ver §9.11). Nenhum nome é reproduzido aqui.
+
+### 9.8 Resultado — Dados ruins já presentes nas fontes
+
+Foram identificados registros inconsistentes já existentes nas próprias
+fontes (Base de Ordens Bancárias e Controle DIMCAC). O sistema os trata
+conforme as regras aprovadas; a correção cabe à origem do dado.
+
+### 9.9 Ressalva material aberta — 2026OB700001
+
+Um caso permanece indeterminado: sua verificação depende de um artefato
+externo (o processo SEI 19.20.0001.0000901/2026-01, identificador
+sintético) que não está disponível localmente. Está registrado como a
+única pendência material aberta desta homologação.
+
+### 9.10 Conclusão de homologação
+
+**HOMOLOGADO COM RESSALVA DOCUMENTADA.** Nenhum bug do sistema foi
+confirmado nas duas rodadas de auditoria. As divergências materiais
+investigadas foram explicadas, em cada caso individual, por: (a)
+divergência/erro do relatório oficial; (b) decisão humana deliberada e
+rastreável (RN07); (c) dado ruim já existente nas próprias fontes; ou (d)
+fallback deliberado já aprovado. Não foi encontrada evidência de falha
+sistêmica de matching, geração, persistência de decisão ou composição da
+linha publicável. A única pendência material aberta é 2026OB700001
+(§9.9), que requer um artefato externo (o processo SEI) que não está
+disponível localmente.
+
+**Critério metodológico**: esta homologação não usa aderência bruta ao
+relatório oficial como métrica de precisão — o oficial tem divergências e
+erros próprios (§9.5, §9.6, §9.9) e pode conter pagamentos em duplicidade
+que o sistema deliberadamente reduz por regra aprovada (§9.4). Nenhum
+percentual de precisão é declarado aqui: as evidências reunidas nas duas
+rodadas de auditoria não permitem calcular um percentual metodologicamente
+defensável (elas misturam divergências cosméticas, deliberadas e casos em
+que as próprias fontes sustentam o sistema). O critério de avaliação
+adotado é **acurácia material validada contra fontes de origem + regras
+de negócio (RN01-RN07) + decisões humanas persistidas e rastreáveis** —
+não similaridade textual com o relatório oficial.
+
+### 9.11 Critérios para reabertura desta homologação
+
+Esta homologação deve ser reaberta (nunca silenciosamente ignorada) se:
+
+- O processo SEI 19.20.0001.0000901/2026-01 (§9.9) for consultado e
+  revelar que a Base de Ordens Bancárias/Controle DIMCAC estão
+  incorretos para 2026OB700001 (nesse caso, o achado passa de
+  "indeterminado" para "dado ruim na fonte" ou "bug", conforme o caso).
+- Novas gerações (Agosto/2026 em diante, ou Janeiro/2026 quando auditado)
+  revelarem um padrão de divergência material **não** enquadrável em
+  nenhuma das categorias 9.4–9.8 (ou seja, sem decisão RN07 rastreável,
+  sem sustentação de Base OB/Controle, e sem erro identificável do
+  oficial).
+- Qualquer alteração futura em `motor_decisao.py`, `decisao.py`,
+  `escritor_relatorio_transparencia.py` ou nos repositórios de leitura
+  (`repositorio_ordens_bancarias.py`/`repositorio_controle_dimcac.py`)
+  tocar em qualquer regra citada nesta seção (RN04, RN07, fallback
+  Nome→Credor, `intervalo_acumulado`) sem uma nova rodada de auditoria
+  equivalente.
+- As divergências de grafia não root-causadas (§9.7) ou os padrões
+  ainda não verificados individualmente forem, em algum momento,
+  investigados e revelarem um bug — a homologação vale para o que foi
+  efetivamente verificado, não para o que ficou pendente de verificação.
+
+**Condição já exercida (Sprint 3, HOMO-RT-06)**: a integração de Valor da
+Passagem à linha publicável tocou deliberadamente `motor_decisao.py`
+(campo inerte `OcorrenciaFinanceira.passagem`, `CAMPOS_EVIDENCIA_MATERIAL`
+intocado), `decisao.py` (`_campos_linha_publicavel`, identidade v3→v4) e
+`escritor_relatorio_transparencia.py` (coluna J) — o terceiro gatilho
+acima. RN01-RN07, fallback Nome→Credor e `intervalo_acumulado` permanecem
+semanticamente idênticos (verificado por regressão completa da suíte
+homologada + reexecução do pipeline real, RN01-RN07 idêntico antes/depois
+de anexar a Planilha de Passagens). Esta nota registra a reabertura; uma
+nova rodada de auditoria formal nos moldes de §9.1–9.10, específica para
+Valor da Passagem, é recomendada antes do uso em produção.
