@@ -118,6 +118,20 @@ _NOME_ABA_DADOS = "Controle de Diárias"
 _PRIMEIRA_LINHA_DADOS = 7
 _ROTULO_LINHA_TOTAL_PREFIXO = "Total"
 
+# Auditoria real (confronto Setembro/2026, 29 de 60 valores de passagem
+# exibidos como data) — achado: a coluna J nunca tinha um `number_format`
+# monetário afirmado em código; toda linha nova herdava o formato de
+# QUALQUER QUE FOSSE o estado da linha-modelo (`_PRIMEIRA_LINHA_DADOS`, via
+# `_copiar_estilo_linha`) no momento da inserção, e linhas já existentes
+# nunca eram corrigidas (`_escrever_linha_ocorrencia` só reescreve
+# `.value`). Quando a linha-modelo esteve com `dd/mm/yyyy` na coluna J
+# (comprovado para OBs pagas entre abril e julho/2026), o valor numérico
+# correto passou a ser exibido como data — sem nenhuma perda do valor em
+# si (sempre recuperável a partir do float bruto), mas incorreto para
+# publicação. Corrigido com um formato monetário fixo, aplicado
+# explicitamente a cada geração, nunca dependente de estilo herdado.
+_NUMBER_FORMAT_VALOR_PASSAGEM = '"R$ "#,##0.00'
+
 _MESES_EXTENSO = [
     "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
     "JULHO", "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO",
@@ -320,7 +334,19 @@ def _escrever_linha_ocorrencia(
     # aqui e produz célula vazia (`.valor is None`), igual a B/C/E —
     # fechamento HOMO-RT-06: D nunca bloqueia a geração, só nunca vira um
     # valor numérico por acidente.
-    ws[f"J{linha}"] = valor_passagem_publicavel(passagem).valor
+    valor_passagem = valor_passagem_publicavel(passagem).valor
+    ws[f"J{linha}"] = valor_passagem
+    # Correção do bug de formatação (auditoria Setembro/2026, ver
+    # `_NUMBER_FORMAT_VALOR_PASSAGEM` acima) — o formato monetário é
+    # afirmado aqui explicitamente sempre que a célula recebe um valor real,
+    # nunca herdado de `_copiar_estilo_linha`/da linha-modelo. Só quando
+    # `valor_passagem` não é `None` (B/C/D/E continuam produzindo célula
+    # vazia, sem nenhum `number_format` forçado sobre um valor ausente).
+    # Como esta função roda para TODAS as linhas — novas e já existentes —
+    # a cada geração mensal, isto também normaliza retroativamente qualquer
+    # linha antiga já gravada com o formato errado no passado.
+    if valor_passagem is not None:
+        ws[f"J{linha}"].number_format = _NUMBER_FORMAT_VALOR_PASSAGEM
     ws[f"K{linha}"] = quantidade.integral if quantidade else None
     ws[f"L{linha}"] = quantidade.parcial if quantidade else None
     ws[f"M{linha}"] = ordem.valor  # RN02 — sempre o valor bruto da Base OB, zero incluso

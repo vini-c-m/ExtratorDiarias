@@ -36,6 +36,7 @@ from app.planilha.escritor_relatorio_transparencia import (
     RelatorioBloqueadoPorPendencias,
     TemplateEstruturalmenteInvalido,
     _NOME_ABA_DADOS,
+    _NUMBER_FORMAT_VALOR_PASSAGEM,
     _PRIMEIRA_LINHA_DADOS,
     _caminho_trava,
     gerar_xlsx_relatorio_transparencia,
@@ -532,6 +533,156 @@ def test_coluna_j_valor_monetario_sem_perda_de_precisao(tmp_path, template):
     wb = openpyxl.load_workbook(destino)
     ws = wb[_NOME_ABA_DADOS]
     assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value == 4964.32
+
+
+# --- Correção do bug de formatação (auditoria Setembro/2026: 29 de 60
+# valores de passagem exibidos como data em vez de moeda) — ver
+# `_NUMBER_FORMAT_VALOR_PASSAGEM` e a correção em `_escrever_linha_
+# ocorrencia`. Os 5 testes abaixo reproduzem exatamente os cenários da
+# auditoria, sem depender de nenhum dado real.
+
+
+def test_coluna_j_corrige_formatacao_de_data_herdada_para_a_propria_linha(tmp_path, template):
+    """Cenário 1 — a célula que vai receber o valor já está, no template,
+    com `number_format` de DATA (reprodução literal do bug real). O valor
+    tem que sair como número monetário de verdade, nunca uma data."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{_PRIMEIRA_LINHA_DADOS}"].number_format = "dd/mm/yyyy"
+    wb.save(template)
+
+    passagem = _linha_passagem(ob="2026OB000042", estado=EstadoPassagem.NUMERICO, valor=2200.16)
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    celula = wb_g[_NOME_ABA_DADOS][f"J{_PRIMEIRA_LINHA_DADOS}"]
+    assert celula.value == 2200.16
+    assert celula.data_type == "n"
+    assert celula.number_format == _NUMBER_FORMAT_VALOR_PASSAGEM
+
+
+def test_coluna_j_linha_nova_nao_depende_do_formato_da_linha_modelo(tmp_path, template):
+    """Cenário 2 — a linha-modelo (linha 7, fonte de `_copiar_estilo_
+    linha` para toda linha inserida além do tamanho original do template)
+    está com `number_format` de DATA na coluna J. Uma linha NOVA (além das
+    3 originais) tem que sair com formato monetário mesmo assim — a
+    correção nunca pode depender do estilo herdado da linha-modelo."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{_PRIMEIRA_LINHA_DADOS}"].number_format = "dd/mm/yyyy"
+    wb.save(template)
+
+    passagem = _linha_passagem(ob="2026OB000099", estado=EstadoPassagem.NUMERICO, valor=1888.24)
+    candidatos = [_candidato(ob=f"2026OB{i:06d}", dh=f"2026DH{i:06d}") for i in range(1, 5)]
+    candidatos.append(_candidato(ob="2026OB000099", dh="2026DH000099", passagem=passagem))
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    ws_g = wb_g[_NOME_ABA_DADOS]
+    linha_nova = _PRIMEIRA_LINHA_DADOS + 4  # 5ª linha de dados, além do template original
+    assert ws_g[f"A{linha_nova}"].value == "2026OB000099"
+    celula = ws_g[f"J{linha_nova}"]
+    assert celula.value == 1888.24
+    assert celula.number_format == _NUMBER_FORMAT_VALOR_PASSAGEM
+
+
+def test_coluna_j_linha_preexistente_com_formato_quebrado_e_autocorrigida_na_regeracao(tmp_path, template):
+    """Cenário 3 — uma linha DENTRO do tamanho original do template (nunca
+    passa por `_copiar_estilo_linha`, que só age em linhas além do
+    tamanho original) já chega com valor numérico e `number_format` de
+    data — exatamente como uma linha gravada por uma geração de mês
+    anterior, antes desta correção. Como `_escrever_linha_ocorrencia`
+    reescreve TODAS as linhas a cada chamada (novas e preexistentes), a
+    regeração tem que normalizar o formato mesmo sem nenhuma linha ser
+    inserida/removida (3 candidatos == 3 linhas do template)."""
+    linha_preexistente = _PRIMEIRA_LINHA_DADOS + 1  # linha 8, dentro do template original (7-9)
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{linha_preexistente}"] = 1307.84
+    ws[f"J{linha_preexistente}"].number_format = "dd/mm/yyyy"
+    wb.save(template)
+
+    # `candidatos_ordenados` é ordenado por DATA OB e, em empate, por número
+    # da OB (item 14) — todos com a mesma data de pagamento aqui, então
+    # "...0002" cai deterministicamente na 2ª posição (linha 8).
+    passagem = _linha_passagem(ob="2026OB000002", estado=EstadoPassagem.NUMERICO, valor=1307.84)
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001"),
+        _candidato(ob="2026OB000002", dh="2026DH000002", passagem=passagem),
+        _candidato(ob="2026OB000003", dh="2026DH000003"),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    ws_g = wb_g[_NOME_ABA_DADOS]
+    assert ws_g[f"A{linha_preexistente}"].value == "2026OB000002"
+    celula = ws_g[f"J{linha_preexistente}"]
+    assert celula.value == 1307.84
+    assert celula.number_format == _NUMBER_FORMAT_VALOR_PASSAGEM
+
+
+def test_coluna_j_valor_ja_corretamente_formatado_permanece_inalterado(tmp_path, template):
+    """Cenário 4 — uma linha cujo valor e formato já estavam corretos no
+    template continua com o MESMO valor e o MESMO formato monetário
+    depois da geração — a correção nunca reformata por acidente um caso
+    que já estava certo."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{_PRIMEIRA_LINHA_DADOS}"].number_format = _NUMBER_FORMAT_VALOR_PASSAGEM
+    wb.save(template)
+
+    passagem = _linha_passagem(ob="2026OB000042", estado=EstadoPassagem.NUMERICO, valor=4964.32)
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    celula = wb_g[_NOME_ABA_DADOS][f"J{_PRIMEIRA_LINHA_DADOS}"]
+    assert celula.value == 4964.32
+    assert celula.number_format == _NUMBER_FORMAT_VALOR_PASSAGEM
+
+
+@pytest.mark.parametrize(
+    "estado",
+    [EstadoPassagem.AUSENTE, EstadoPassagem.NAO_SE_APLICA, EstadoPassagem.INVALIDO],
+)
+def test_coluna_j_estados_vazios_permanecem_vazios_mesmo_com_linha_modelo_corrompida(tmp_path, template, estado):
+    """Cenário 5 (B/C/D) — mesmo com a linha-modelo corrompida com
+    `number_format` de data, os estados sem valor numérico nunca ganham
+    um valor nem viram monetários por acidente: a correção só age quando
+    há um valor real a escrever (`if valor_passagem is not None`)."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{_PRIMEIRA_LINHA_DADOS}"].number_format = "dd/mm/yyyy"
+    wb.save(template)
+
+    passagem = _linha_passagem(ob="2026OB000042", estado=estado, bruto="qualquer coisa")
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    assert wb_g[_NOME_ABA_DADOS][f"J{_PRIMEIRA_LINHA_DADOS}"].value is None
+
+
+def test_coluna_j_estado_e_permanece_vazio_mesmo_com_linha_modelo_corrompida(tmp_path, template):
+    """Cenário 5 (E) — mesma garantia do teste acima, para OB sem
+    correspondência na Planilha de Passagens (`passagem=None`)."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{_PRIMEIRA_LINHA_DADOS}"].number_format = "dd/mm/yyyy"
+    wb.save(template)
+
+    candidato = _candidato(ob="2026OB000042", passagem=None)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    assert wb_g[_NOME_ABA_DADOS][f"J{_PRIMEIRA_LINHA_DADOS}"].value is None
 
 
 @pytest.mark.parametrize(
