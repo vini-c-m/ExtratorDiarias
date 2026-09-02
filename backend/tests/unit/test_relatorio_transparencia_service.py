@@ -1,3 +1,4 @@
+import threading
 from datetime import date
 
 import openpyxl
@@ -2379,10 +2380,14 @@ def test_gerar_relatorio_xlsx_falha_no_operacional_retorna_estado_parcial(tmp_pa
     assert "disco cheio" in resultado.erro_nao_publicadas
 
 
-def test_gerar_relatorio_xlsx_operacional_ja_existe_retorna_estado_parcial_no_clobber(tmp_path):
-    """No-clobber já homologado do escritor operacional (Sprint 4) — um
-    arquivo pré-existente no destino derivado nunca é sobrescrito às
-    cegas; o oficial, gerado antes, continua promovido normalmente."""
+def test_gerar_relatorio_xlsx_operacional_preexistente_avanca_versao_automaticamente(tmp_path):
+    """QA Codex (complemento — versionamento automático do PAR) — um
+    arquivo operacional pré-existente no destino da versão 1 NÃO bloqueia
+    mais a geração (comportamento antigo, já superado): o par inteiro
+    avança automaticamente para a versão 2, sem nenhuma ação manual do
+    usuário nem estado parcial. A garantia de nunca sobrescrever um
+    arquivo existente continua — só deixou de exigir intervenção humana
+    para se manter."""
     linhas = [
         _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
@@ -2404,6 +2409,7 @@ def test_gerar_relatorio_xlsx_operacional_ja_existe_retorna_estado_parcial_no_cl
     caminho_destino = str(tmp_path / "saida.xlsx")
     caminho_operacional_preexistente = str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx")
     Workbook().save(caminho_operacional_preexistente)
+    conteudo_operacional_preexistente = open(caminho_operacional_preexistente, "rb").read()
 
     resultado = service.gerar_relatorio_xlsx(
         caminho_base_ordens_bancarias=caminho_ob,
@@ -2417,12 +2423,15 @@ def test_gerar_relatorio_xlsx_operacional_ja_existe_retorna_estado_parcial_no_cl
 
     import os
 
-    assert os.path.exists(caminho_destino)
     assert resultado.oficial.total_ocorrencias == 1
-    assert resultado.nao_publicadas_gerado is False
-    assert resultado.caminho_arquivo_nao_publicadas is None
-    assert resultado.erro_nao_publicadas is not None
-    assert "destino" in resultado.erro_nao_publicadas.lower() or "existe" in resultado.erro_nao_publicadas.lower()
+    assert os.path.basename(resultado.oficial.caminho_arquivo) == "saida.2.xlsx"
+    assert not os.path.exists(caminho_destino)  # a v1 pedida foi pulada inteira (operacional v1 ocupado)
+    assert resultado.nao_publicadas_gerado is True
+    assert resultado.erro_nao_publicadas is None
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"
+    # o arquivo operacional pré-existente da v1 nunca foi tocado/sobrescrito
+    with open(caminho_operacional_preexistente, "rb") as arquivo:
+        assert arquivo.read() == conteudo_operacional_preexistente
 
 
 def test_gerar_relatorio_xlsx_bloqueado_nao_cria_nenhum_arquivo(tmp_path):
@@ -2522,3 +2531,549 @@ def test_derivar_caminho_nao_publicadas_mesmo_diretorio_nome_por_competencia(tmp
 
     assert os.path.dirname(caminho) == os.path.dirname(os.path.abspath(caminho_oficial))
     assert os.path.basename(caminho) == "Diarias_Nao_Publicadas_Dezembro_2026.xlsx"
+
+
+# ============================================================================
+# QA Codex (achado real, falha de geração) — o nome do operacional era fixo
+# por competência, nunca refletindo o nome REAL escolhido para o oficial:
+# numa segunda geração da mesma competência (oficial salvo com um nome novo
+# para não sobrescrever o anterior, ex. "...2026.2.xlsx"), o operacional
+# tentava sempre o MESMO caminho da primeira geração e colidia
+# (`DestinoJaExiste`) — mesmo com o oficial tendo sido gerado com sucesso.
+# Corrigido ecoando o sufixo de versão do nome REAL do oficial no nome do
+# operacional (`_sufixo_versao`/`_derivar_caminho_nao_publicadas`). Os
+# testes abaixo cobrem, nesta ordem, os cenários pedidos na correção:
+# 1) primeira geração, 2) segunda geração (.2), 3) terceira geração (.3),
+# 4) operacional antigo existente não bloqueia uma geração nova versionada,
+# 5) no-clobber continua protegido dentro da MESMA versão, 6) decisões já
+# persistidas (não desta sessão) alimentam a geração normalmente, 7) zero
+# não publicadas continua sem criar nem tentar derivar o operacional.
+# ============================================================================
+
+
+# --- Sufixo de versão — unitário, sem I/O -----------------------------------
+
+
+def test_sufixo_versao_primeira_geracao_sem_sufixo():
+    caminho = "C:\\fake\\Relatório de Diárias - Portal da Transparência - Setembro 2026.xlsx"
+    assert service._sufixo_versao(caminho) == ""
+
+
+def test_sufixo_versao_segunda_geracao_ponto_dois():
+    caminho = "C:\\fake\\Relatório de Diárias - Portal da Transparência - Setembro 2026.2.xlsx"
+    assert service._sufixo_versao(caminho) == ".2"
+
+
+def test_sufixo_versao_terceira_geracao_ponto_tres():
+    caminho = "C:\\fake\\Relatório de Diárias - Portal da Transparência - Setembro 2026.3.xlsx"
+    assert service._sufixo_versao(caminho) == ".3"
+
+
+def test_sufixo_versao_nao_confunde_ano_civil_com_sufixo():
+    """O ano ('2026') vem sempre precedido de ESPAÇO no nome sugerido,
+    nunca de ponto — nunca pode ser lido como um sufixo de versão."""
+    caminho = "C:\\fake\\Relatorio Dezembro 2026.xlsx"
+    assert service._sufixo_versao(caminho) == ""
+
+
+def test_sufixo_versao_nome_totalmente_livre_sem_padrao_numerico():
+    """Nome escolhido livremente pelo usuário no diálogo nativo, sem
+    seguir o padrão ".<dígitos>' — nenhum sufixo é inventado."""
+    caminho = "C:\\fake\\meu relatorio final revisado.xlsx"
+    assert service._sufixo_versao(caminho) == ""
+
+
+def test_derivar_caminho_nao_publicadas_segunda_geracao_leva_o_mesmo_sufixo(tmp_path):
+    caminho_oficial = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Setembro 2026.2.xlsx")
+    caminho = service._derivar_caminho_nao_publicadas(caminho_oficial, ano_exercicio=2026, mes_referencia=9)
+
+    import os
+
+    assert os.path.basename(caminho) == "Diarias_Nao_Publicadas_Setembro_2026.2.xlsx"
+
+
+def test_derivar_caminho_nao_publicadas_terceira_geracao_leva_o_mesmo_sufixo(tmp_path):
+    caminho_oficial = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Setembro 2026.3.xlsx")
+    caminho = service._derivar_caminho_nao_publicadas(caminho_oficial, ano_exercicio=2026, mes_referencia=9)
+
+    import os
+
+    assert os.path.basename(caminho) == "Diarias_Nao_Publicadas_Setembro_2026.3.xlsx"
+
+# ============================================================================
+# QA Codex (complemento — versionamento automático coordenado do PAR) — o
+# usuário ainda precisava escolher manualmente um nome novo para o oficial
+# toda vez que a competência já tinha sido gerada antes (senão o PRÓPRIO
+# oficial batia no no-clobber). Eliminado: `gerar_relatorio_xlsx` agora
+# escolhe automaticamente a PRIMEIRA versão (1, 2, 3, ...) em que NENHUM dos
+# dois artefatos já existe (`_proximo_par_de_versao_livre`), nunca dois
+# algoritmos de versionamento independentes — o candidato do operacional de
+# cada N sempre reaproveita `_derivar_caminho_nao_publicadas`, já homologada.
+# Os testes abaixo cobrem, nesta ordem: 1) primeira geração sem colisão,
+# 2) segunda geração automática (.2, sem o usuário renomear nada),
+# 3) terceira geração automática (.3), 4) somente oficial existente,
+# 5) somente operacional existente, 6) ambos existentes, 7) lacuna de
+# versões, 8) zero não-publicadas (oficial ainda versiona normalmente),
+# 9) concorrência — no-clobber continua a garantia real, o pré-checagem
+# otimista só reduz a quantidade de tentativas fracassadas.
+# ============================================================================
+
+
+def _preparar_grupo_publicar_zero(tmp_path, service_ref, *, cpf, valor, sufixo_ob):
+    """Uma única RN07 (duas OBs, mesmo CPF/período/trecho/valor) decidida
+    'publicar zero' — as DUAS ocorrências do grupo viram Categoria A na
+    operacional (mesmo padrão de `test_gerar_relatorio_xlsx_publicar_zero_
+    todas_na_operacional_categoria_a`)."""
+    return [
+        _linha_ob(dh=f"2026DH{sufixo_ob}1", ob=f"2026OB{sufixo_ob}1", cpf=cpf, valor=valor),
+        _linha_ob(dh=f"2026DH{sufixo_ob}2", ob=f"2026OB{sufixo_ob}2", cpf=cpf, valor=valor),
+    ]
+
+
+def _preparar_e_decidir_um_grupo_nao_publicado(tmp_path, *, mes_referencia=5):
+    """Duas OBs suspeitas de duplicidade (RN07) decididas 'publicar zero'
+    — forma mais simples de garantir 1+ ocorrência não-publicável
+    (Categoria A) para os testes de versionamento automático abaixo, sem
+    depender de nenhum detalhe de RN01-RN07 além do já homologado."""
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas, mes_referencia=mes_referencia)
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=mes_referencia,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=resumo.revisoes[0].identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],
+        autor="servidor.teste",
+        observacao="Nenhuma das ocorrências deste grupo será publicada nesta competência.",
+    )
+    return caminho_ob, caminho_controle, caminho_decisoes
+
+
+def test_versionamento_automatico_1_primeira_geracao_sem_colisao(tmp_path):
+    """Diretório vazio — a primeira geração usa exatamente o nome/
+    preferência que o chamador passou, para os dois artefatos (versão 1,
+    sem sufixo)."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    import os
+
+    assert resultado.oficial.caminho_arquivo == caminho_preferido
+    assert resultado.nao_publicadas_gerado is True
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.xlsx"
+
+
+def test_versionamento_automatico_2_segunda_geracao_ponto_dois_sem_renomear(tmp_path):
+    """O usuário pede o MESMO nome preferido nas duas gerações — nunca
+    precisa digitar '.2' manualmente; a segunda geração detecta a colisão
+    sozinha e promove os dois artefatos com sufixo '.2', sem falhar."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+
+    kwargs = dict(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,  # MESMO nome pedido nas duas chamadas
+    )
+    resultado_1 = service.gerar_relatorio_xlsx(**kwargs)
+    resultado_2 = service.gerar_relatorio_xlsx(**kwargs)
+
+    import os
+
+    assert resultado_1.oficial.caminho_arquivo == caminho_preferido
+    assert (
+        os.path.basename(resultado_2.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"
+    )
+    assert resultado_2.nao_publicadas_gerado is True
+    assert resultado_2.erro_nao_publicadas is None
+    assert os.path.basename(resultado_2.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"
+    assert resultado_2.caminho_arquivo_nao_publicadas != resultado_1.caminho_arquivo_nao_publicadas
+    assert os.path.exists(resultado_1.oficial.caminho_arquivo)  # 1ª geração preservada, nunca sobrescrita
+    assert os.path.exists(resultado_1.caminho_arquivo_nao_publicadas)
+    assert os.path.exists(resultado_2.oficial.caminho_arquivo)
+    assert os.path.exists(resultado_2.caminho_arquivo_nao_publicadas)
+
+
+def test_versionamento_automatico_3_terceira_geracao_ponto_tres(tmp_path):
+    """Três gerações seguidas com o MESMO nome pedido — a terceira usa
+    '.3' automaticamente para os dois artefatos."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+    kwargs = dict(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    for _ in range(3):
+        resultado = service.gerar_relatorio_xlsx(**kwargs)
+
+    import os
+
+    assert (
+        os.path.basename(resultado.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.3.xlsx"
+    )
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.3.xlsx"
+    assert resultado.erro_nao_publicadas is None
+
+
+def test_versionamento_automatico_4_somente_oficial_existente_pula_versao_inteira(tmp_path):
+    """Só o arquivo OFICIAL da versão 1 já existe — a versão inteira é
+    pulada para os DOIS artefatos, nunca um oficial na v2 pareado com um
+    operacional que ficaria na v1."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+    Workbook().save(caminho_preferido)
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    import os
+
+    assert (
+        os.path.basename(resultado.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"
+    )
+    assert resultado.nao_publicadas_gerado is True
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"
+
+
+def test_versionamento_automatico_5_somente_operacional_existente_pula_versao_inteira(tmp_path):
+    """Só o arquivo OPERACIONAL da versão 1 já existe — mesma regra: a
+    versão inteira é pulada para os dois artefatos."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+    Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    import os
+
+    assert (
+        os.path.basename(resultado.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"
+    )
+    assert not os.path.exists(caminho_preferido)  # v1 do oficial nunca chegou a ser criada
+    assert resultado.nao_publicadas_gerado is True
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"
+
+
+def test_versionamento_automatico_6_ambos_existentes_pula_versao_inteira(tmp_path):
+    """Os DOIS arquivos da versão 1 já existem — pula para a v2, igual
+    aos dois casos anteriores (parcial)."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+    Workbook().save(caminho_preferido)
+    Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    import os
+
+    assert (
+        os.path.basename(resultado.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"
+    )
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"
+
+
+def test_versionamento_automatico_7_lacuna_de_versoes_preenchida(tmp_path):
+    """v1 ocupada (os dois arquivos), v2 completamente livre, v3 ocupada
+    (os dois arquivos) — a busca é linear a partir de N=1 e para na
+    PRIMEIRA livre: tem que escolher a v2, nunca pular direto para a v4."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+
+    Workbook().save(caminho_preferido)
+    Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
+    Workbook().save(str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.3.xlsx"))
+    Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.3.xlsx"))
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    import os
+
+    assert (
+        os.path.basename(resultado.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"
+    )
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"
+
+
+def test_versionamento_automatico_8_zero_nao_publicadas_oficial_ainda_versiona(tmp_path):
+    """Zero não-publicadas continua sem criar o operacional — mas o
+    OFICIAL ainda passa pelo versionamento automático normalmente
+    (requisito explícito: 'considere que pode haver zero não-publicadas:
+    nesse caso o oficial ainda deve receber versão automática
+    normalmente')."""
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+    Workbook().save(caminho_preferido)  # v1 do oficial já existe (de uma geração anterior)
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_preferido,
+    )
+
+    import os
+
+    assert (
+        os.path.basename(resultado.oficial.caminho_arquivo)
+        == "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"
+    )
+    assert resultado.nao_publicadas_gerado is False
+    assert resultado.total_nao_publicadas == 0
+    assert resultado.caminho_arquivo_nao_publicadas is None
+    assert resultado.erro_nao_publicadas is None
+    assert not os.path.exists(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"))
+
+
+def test_versionamento_automatico_9_concorrencia_cada_chamada_recebe_uma_versao_distinta(tmp_path):
+    """Múltiplas gerações da MESMA competência disparadas ao mesmo tempo,
+    todas pedindo o MESMO nome preferido — a checagem otimista de
+    `_proximo_par_de_versao_livre` sozinha NÃO seria suficiente contra uma
+    corrida real entre threads/processos; a garantia final continua sendo
+    a trava+no-clobber já homologada de cada escritor, e esta correção
+    tenta a próxima versão automaticamente quando perde essa corrida —
+    nenhuma geração falha, nenhum arquivo é sobrescrito/corrompido, e cada
+    uma termina com uma versão distinta."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+
+    quantidade = 4
+    barreira = threading.Barrier(quantidade, timeout=30)
+    resultados: dict[int, object] = {}
+    erros: dict[int, Exception] = {}
+
+    def _gerar_concorrente(indice):
+        barreira.wait(timeout=15)
+        try:
+            resultados[indice] = service.gerar_relatorio_xlsx(
+                caminho_base_ordens_bancarias=caminho_ob,
+                caminho_controle_dimcac=caminho_controle,
+                ano_exercicio=2026,
+                mes_referencia=5,
+                caminho_decisoes=caminho_decisoes,
+                caminho_configuracao_template=caminho_configuracao_template,
+                caminho_destino=caminho_preferido,
+            )
+        except Exception as erro:  # noqa: BLE001 — capturado só para o assert abaixo
+            erros[indice] = erro
+
+    threads = [threading.Thread(target=_gerar_concorrente, args=(i,)) for i in range(quantidade)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert erros == {}, erros  # nenhuma geração falha por causa da corrida
+    assert len(resultados) == quantidade
+
+    import os
+
+    caminhos_oficiais = {os.path.basename(r.oficial.caminho_arquivo) for r in resultados.values()}
+    caminhos_operacionais = {os.path.basename(r.caminho_arquivo_nao_publicadas) for r in resultados.values()}
+    assert len(caminhos_oficiais) == quantidade  # cada thread termina com um nome distinto
+    assert len(caminhos_operacionais) == quantidade
+
+    for resultado in resultados.values():
+        assert resultado.nao_publicadas_gerado is True
+        assert os.path.exists(resultado.oficial.caminho_arquivo)
+        assert os.path.exists(resultado.caminho_arquivo_nao_publicadas)
+        # cada arquivo continua um XLSX válido — nunca corrompido por escrita concorrente
+        openpyxl.load_workbook(resultado.oficial.caminho_arquivo).close()
+        openpyxl.load_workbook(resultado.caminho_arquivo_nao_publicadas).close()
+
+
+def test_versionamento_automatico_oito_nao_publicadas_com_decisoes_ja_persistidas(tmp_path):
+    """Reproduz o cenário real relatado ('8 pendentes de investigação').
+    As decisões são registradas numa etapa TOTALMENTE separada da geração
+    — o service nunca guarda estado entre chamadas (reconstrução completa
+    a partir das fontes brutas + decisões persistidas, sempre, conforme o
+    docstring do módulo) — provando que decisões já persistidas de
+    qualquer chamada/sessão anterior alimentam a geração normalmente, sem
+    nenhuma dependência de 'decisão feita nesta mesma sessão', mesmo com o
+    versionamento automático."""
+    linhas = []
+    for indice in range(4):
+        linhas += _preparar_grupo_publicar_zero(
+            tmp_path, service, cpf=30000000000 + indice, valor=100.0 + indice, sufixo_ob=f"9{indice}"
+        )
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    assert len(resumo.revisoes) == 4
+
+    for revisao in resumo.revisoes:
+        service.registrar_decisao_revisao(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            identidade_grupo=revisao.identidade_grupo,
+            acao=AcaoDecisao.PUBLICAR,
+            obs_selecionadas=[],
+            autor="servidor.teste",
+            observacao="Nenhuma das ocorrências deste grupo será publicada nesta competência.",
+        )
+
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+
+    # Chamada de geração completamente independente da(s) chamada(s) de
+    # decisão acima — nenhum estado em memória é compartilhado entre elas.
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.nao_publicadas_gerado is True
+    assert resultado.total_nao_publicadas == 8
+    assert resultado.total_categoria_a == 8
+    assert resultado.total_categoria_b == 0
+    assert resultado.erro_nao_publicadas is None
+
+
+def test_proximo_par_de_versao_livre_versao_esgotada_levanta_erro_explicito(tmp_path, monkeypatch):
+    """Rede de segurança: se todas as tentativas até o limite estiverem
+    ocupadas, levanta um erro explícito — nunca um laço infinito
+    silencioso. Reduz o limite via monkeypatch para o teste ser rápido."""
+    monkeypatch.setattr(service, "_MAX_TENTATIVAS_VERSAO_PAR", 2)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+    Workbook().save(caminho_preferido)
+    Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
+    Workbook().save(str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx"))
+    Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.2.xlsx"))
+
+    with pytest.raises(service.VersaoDeGeracaoEsgotada):
+        service._proximo_par_de_versao_livre(caminho_preferido, ano_exercicio=2026, mes_referencia=5)
+
+
+def test_permission_error_persistente_nao_entra_em_loop_de_versionamento(tmp_path, monkeypatch):
+    """Revisão do tratamento de PermissionError — um problema de acesso
+    PERSISTENTE (pasta protegida, sem permissão, arquivo bloqueado por
+    antivírus/Excel/sincronização de nuvem: nunca resolve, não importa
+    quantas vezes se tente) tem que terminar RÁPIDO com uma exceção de
+    domínio útil (`DestinoInacessivel`) — nunca avançar por dezenas/
+    centenas de versões (`.2`, `.3`, `.4`, ...) achando, incorretamente,
+    que é uma colisão transitória entre gerações. `_proximo_par_de_versao_
+    livre` só pode ser chamado UMA vez: a falha acontece na PRIMEIRA
+    tentativa de escrita e nunca dispara o laço de avanço de versão."""
+    caminho_ob, caminho_controle, caminho_decisoes = _preparar_e_decidir_um_grupo_nao_publicado(tmp_path)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
+
+    chamadas_versao = {"vezes": 0}
+    proximo_par_original = service._proximo_par_de_versao_livre
+
+    def _espiar_proximo_par(*args, **kwargs):
+        chamadas_versao["vezes"] += 1
+        return proximo_par_original(*args, **kwargs)
+
+    monkeypatch.setattr(service, "_proximo_par_de_versao_livre", _espiar_proximo_par)
+
+    import os as os_real
+
+    # Só falha para o arquivo de TRAVA (`.gerando.lock`) — nunca intercepta
+    # outros usos de `os.open` no processo (ex. `tempfile.mkstemp`, usado
+    # internamente pelo escritor), mantendo o teste cirúrgico sobre o ponto
+    # exato da corrida já isolado por diagnóstico dedicado.
+    def _open_falha_persistente_so_para_trava(caminho, *args, **kwargs):
+        if str(caminho).endswith(".gerando.lock"):
+            raise PermissionError(13, "Acesso negado (simulado, persistente)")
+        return os_real.open(caminho, *args, **kwargs)
+
+    monkeypatch.setattr("os.open", _open_falha_persistente_so_para_trava)
+
+    with pytest.raises(service.DestinoInacessivel):
+        service.gerar_relatorio_xlsx(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            caminho_configuracao_template=caminho_configuracao_template,
+            caminho_destino=caminho_preferido,
+        )
+
+    assert chamadas_versao["vezes"] == 1  # nunca avançou para uma segunda versão
+    assert not os_real.path.exists(caminho_preferido)  # nada foi promovido
+    assert not os_real.path.exists(
+        str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.2.xlsx")
+    )  # nenhuma tentativa de versão .2 sequer chegou a existir

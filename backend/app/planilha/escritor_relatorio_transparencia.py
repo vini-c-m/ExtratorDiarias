@@ -86,6 +86,7 @@ confirmado célula a célula — ver relatório da Micro-sprint 3F):
 import os
 import shutil
 import tempfile
+import time
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -109,6 +110,7 @@ __all__ = [
     "RelatorioBloqueadoPorPendencias",
     "DestinoJaExiste",
     "GeracaoConcorrenteEmAndamento",
+    "DestinoInacessivel",
     "TemplateEstruturalmenteInvalido",
     "RelatorioGeradoResultado",
     "gerar_xlsx_relatorio_transparencia",
@@ -155,6 +157,17 @@ class GeracaoConcorrenteEmAndamento(Exception):
     Levantada quando outra geração para este destino específico já está em
     andamento (arquivo de lock, ver `_adquirir_trava_destino` abaixo);
     nunca uma condição sobre o conteúdo do relatório em si."""
+
+
+class DestinoInacessivel(Exception):
+    """QA Codex (achado real, versionamento automático) — a criação do
+    arquivo de trava (`_adquirir_trava_destino`) continuou falhando com
+    `PermissionError` mesmo depois de esgotadas as tentativas de retry
+    curto (a mesma corrida transitória documentada ali já foi absorvida) —
+    sinal de um problema PERSISTENTE no destino em si (pasta protegida,
+    sem permissão de escrita, sincronização de nuvem/antivírus retendo o
+    arquivo), nunca mais uma colisão passageira entre gerações. Mensagem
+    já adequada para exibição direta ao usuário."""
 
 
 class TemplateEstruturalmenteInvalido(Exception):
@@ -358,6 +371,13 @@ def _caminho_trava(caminho_destino: str) -> str:
     return f"{caminho_destino}.gerando.lock"
 
 
+# Mesmos valores já homologados em `app/consulta/persistencia_decisoes.py`/
+# `base_local_sqlite._substituir_com_retry` para a mesma classe de corrida
+# transitória — ver docstring de `_adquirir_trava_destino`.
+_TENTATIVAS_TRAVA_DESTINO = 3
+_INTERVALO_BASE_RETRY_TRAVA_DESTINO_S = 0.05
+
+
 def _adquirir_trava_destino(caminho_destino: str) -> str:
     """Confronto QA / homologação operacional — `os.path.exists(destino)`
     sozinho é só uma checagem, não uma reserva: duas requisições `/gerar`
@@ -384,16 +404,51 @@ def _adquirir_trava_destino(caminho_destino: str) -> str:
     aparenta ser o relatório — sufixo `.gerando.lock`, nunca `.xlsx`), então
     uma pasta sendo observada nunca mostra um `.xlsx` vazio/inválido
     aparecendo antes da hora (ver também `os.replace` atômico do
-    temporário, já existente, para o próprio conteúdo do arquivo)."""
+    temporário, já existente, para o próprio conteúdo do arquivo).
+
+    QA Codex (achado real, versionamento automático — `PermissionError`
+    reproduzido e isolado por diagnóstico dedicado, EXATAMENTE nesta
+    chamada de `os.open`) — sob concorrência real (múltiplas gerações da
+    MESMA competência disputando a mesma sequência de candidatos de
+    versão), o Windows por vezes devolve `PermissionError` em vez de
+    `FileExistsError` na criação exclusiva (`O_CREAT|O_EXCL`) quando o
+    MESMO nome de arquivo de trava está num estado transitório de exclusão
+    por outra thread/processo (ciclo completo criar→promover→remover se
+    sobrepondo) — sempre se resolve em poucos milissegundos, nunca a mesma
+    classe de erro de uma pasta genuinamente protegida (essa persiste
+    através das tentativas). Retry curto — MESMOS valores já homologados
+    de `app/consulta/persistencia_decisoes.py`/`base_local_sqlite.
+    _substituir_com_retry` — absorve o caso transitório; se ainda assim
+    persistir após as tentativas, `DestinoInacessivel` é levantada com uma
+    mensagem já adequada para o usuário — o chamador (`gerar_relatorio_
+    xlsx`) NUNCA deve tratar isso como "esta versão específica está
+    ocupada, tenta a próxima": um problema real de acesso à pasta afeta
+    IGUALMENTE qualquer candidato de versão, avançar centenas delas não
+    ajudaria e só mascararia o erro real."""
     caminho_lock = _caminho_trava(caminho_destino)
-    try:
-        descritor_lock = os.open(caminho_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-    except FileExistsError as erro:
-        raise GeracaoConcorrenteEmAndamento(
-            f"Já existe uma geração em andamento para este destino: {caminho_destino}"
-        ) from erro
-    os.close(descritor_lock)
-    return caminho_lock
+    ultimo_erro_transitorio: PermissionError | None = None
+    for tentativa in range(_TENTATIVAS_TRAVA_DESTINO):
+        try:
+            descritor_lock = os.open(caminho_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as erro:
+            raise GeracaoConcorrenteEmAndamento(
+                f"Já existe uma geração em andamento para este destino: {caminho_destino}"
+            ) from erro
+        except PermissionError as erro:
+            ultimo_erro_transitorio = erro
+            if tentativa < _TENTATIVAS_TRAVA_DESTINO - 1:
+                time.sleep(_INTERVALO_BASE_RETRY_TRAVA_DESTINO_S * (tentativa + 1))
+            continue
+        else:
+            os.close(descritor_lock)
+            return caminho_lock
+
+    assert ultimo_erro_transitorio is not None
+    raise DestinoInacessivel(
+        f"Não foi possível preparar a geração no destino {caminho_destino!r} — a pasta pode estar "
+        f"protegida, sem permissão de escrita, ou com um arquivo bloqueado por outro programa "
+        f"(antivírus, Excel, sincronização de nuvem). Verifique o destino e tente novamente."
+    ) from ultimo_erro_transitorio
 
 
 def _chave_ordenacao(candidato: CandidatoNormal):

@@ -31,6 +31,7 @@ from app.domain.relatorio_transparencia.motor_decisao import (
     RevisaoNecessaria,
 )
 from app.planilha.escritor_relatorio_transparencia import (
+    DestinoInacessivel,
     DestinoJaExiste,
     GeracaoConcorrenteEmAndamento,
     RelatorioBloqueadoPorPendencias,
@@ -38,6 +39,8 @@ from app.planilha.escritor_relatorio_transparencia import (
     _NOME_ABA_DADOS,
     _NUMBER_FORMAT_VALOR_PASSAGEM,
     _PRIMEIRA_LINHA_DADOS,
+    _TENTATIVAS_TRAVA_DESTINO,
+    _adquirir_trava_destino,
     _caminho_trava,
     gerar_xlsx_relatorio_transparencia,
 )
@@ -307,6 +310,65 @@ def test_trava_liberada_apos_erro_permite_nova_tentativa_no_mesmo_destino(tmp_pa
 
     assert os.path.exists(destino)
     assert resultado_gerado.total_ocorrencias == 1
+
+
+# --- `_adquirir_trava_destino` — PermissionError transitório vs. persistente
+#
+# QA Codex (achado real, versionamento automático — diagnóstico dedicado
+# isolou a origem EXATA) — sob concorrência real, o Windows por vezes
+# devolve `PermissionError` (em vez de `FileExistsError`) na criação
+# exclusiva (`O_CREAT|O_EXCL`) do arquivo de trava, quando o MESMO nome
+# está num estado transitório de exclusão por outra thread/processo
+# (ciclo criar→promover→remover se sobrepondo) — sempre se resolve em
+# poucos milissegundos. Os testes abaixo provam a distinção: transitório
+# (poucas falhas, depois sucesso) é absorvido; persistente (nunca
+# resolve, ex. pasta genuinamente protegida) termina rápido com
+# `DestinoInacessivel`, nunca um retry sem fim.
+
+
+def test_trava_absorve_permission_error_transiente(tmp_path, monkeypatch):
+    destino = str(tmp_path / "saida.xlsx")
+    chamadas = {"n": 0}
+    os_open_original = os.open
+
+    def _open_falha_duas_vezes(caminho, *args, **kwargs):
+        if caminho == _caminho_trava(destino):
+            chamadas["n"] += 1
+            if chamadas["n"] <= 2:
+                raise PermissionError(13, "Acesso negado (simulado, transiente)")
+        return os_open_original(caminho, *args, **kwargs)
+
+    monkeypatch.setattr("os.open", _open_falha_duas_vezes)
+
+    caminho_lock = _adquirir_trava_destino(destino)
+
+    assert chamadas["n"] == 3
+    assert os.path.exists(caminho_lock)
+    os.remove(caminho_lock)  # limpeza — este teste chama a função isolada, sem o `finally` do gerador
+
+
+def test_trava_propaga_destino_inacessivel_quando_permission_error_persiste(tmp_path, monkeypatch):
+    """PermissionError PERSISTENTE (nunca resolve, simulando pasta
+    genuinamente protegida/sem permissão) tem que terminar RÁPIDO — só
+    `_TENTATIVAS_TRAVA_DESTINO` tentativas, nunca um retry sem fim — com
+    `DestinoInacessivel`, uma exceção de domínio com mensagem útil ao
+    usuário, nunca o `PermissionError` técnico cru."""
+    destino = str(tmp_path / "saida.xlsx")
+    chamadas = {"n": 0}
+
+    def _open_sempre_falha(caminho, *args, **kwargs):
+        chamadas["n"] += 1
+        raise PermissionError(13, "Acesso negado (simulado, persistente)")
+
+    monkeypatch.setattr("os.open", _open_sempre_falha)
+
+    with pytest.raises(DestinoInacessivel) as excinfo:
+        _adquirir_trava_destino(destino)
+
+    assert chamadas["n"] == _TENTATIVAS_TRAVA_DESTINO
+    assert repr(destino) in str(excinfo.value)
+    assert "PermissionError" not in str(excinfo.value)  # nunca a exceção técnica crua
+    assert not os.path.exists(_caminho_trava(destino))  # nenhum arquivo de trava orfao
 
 
 def test_duas_geracoes_simultaneas_no_mesmo_destino_apenas_uma_conclui(tmp_path, template):

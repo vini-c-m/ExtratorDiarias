@@ -20,6 +20,7 @@ evidência obsoleta — preferido explicitamente a um cache frágil
 
 import logging
 import os
+import re
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -74,6 +75,7 @@ from app.planilha.escritor_relatorio_nao_publicadas import (
     gerar_xlsx_diarias_nao_publicadas,
 )
 from app.planilha.escritor_relatorio_transparencia import (
+    DestinoInacessivel,
     DestinoJaExiste,
     GeracaoConcorrenteEmAndamento,
     RelatorioBloqueadoPorPendencias,
@@ -96,6 +98,8 @@ __all__ = [
     "VersaoEsquemaIncompativel",
     "RelatorioBloqueadoPorPendencias",
     "DestinoJaExiste",
+    "DestinoInacessivel",
+    "VersaoDeGeracaoEsgotada",
     "GeracaoConcorrenteEmAndamento",
     "TemplateEstruturalmenteInvalido",
     "TemplateOficialIndisponivel",
@@ -235,16 +239,123 @@ class RelatorioCompletoGeradoResultado:
     erro_nao_publicadas: str | None = None
 
 
+_PADRAO_SUFIXO_VERSAO = re.compile(r"(\.\d+)$")
+
+
+def _sufixo_versao(caminho_destino_oficial: str) -> str:
+    """Achado real (auditoria de falha na geração do operacional) — o
+    caminho do oficial é escolhido livremente pelo usuário num diálogo
+    nativo do SO (`dialog.showSaveDialog`, sem nenhuma convenção de
+    versionamento própria do app); quando o destino sugerido já existe, o
+    próprio usuário tipicamente acrescenta ".2"/".3"/... ao nome antes de
+    salvar de novo. Esta função só LÊ esse sufixo do nome REAL que o
+    usuário efetivamente escolheu (nunca um segundo esquema independente
+    de versionamento, nunca um contador mantido por este módulo) — se o
+    nome termina em ".<dígitos>", ecoa o mesmo sufixo; caso contrário
+    (primeira geração, ou o usuário escolheu um nome sem esse padrão),
+    devolve string vazia. Deliberadamente não confunde o "2026" do ano
+    civil com um sufixo de versão: só casa um PONTO literal seguido de
+    dígitos no fim do nome (o ano vem sempre precedido de um espaço no
+    nome sugerido, nunca de um ponto)."""
+    raiz, _extensao = os.path.splitext(os.path.basename(caminho_destino_oficial))
+    correspondencia = _PADRAO_SUFIXO_VERSAO.search(raiz)
+    return correspondencia.group(1) if correspondencia else ""
+
+
 def _derivar_caminho_nao_publicadas(caminho_destino_oficial: str, *, ano_exercicio: int, mes_referencia: int) -> str:
     """Mesma pasta do XLSX oficial (item 1: "a partir do MESMO
     ResultadoRevisado", mesma operação, sem pedir um segundo diálogo ao
-    usuário — nenhuma seleção nova de destino). Nome fixo por competência,
-    mesma convenção já usada no nome sugerido do oficial (mês por extenso +
-    ano) — `_MESES_EXTENSO` é a MESMA lista já usada para o título dentro do
-    XLSX oficial, nunca uma segunda lista de nomes de mês."""
+    usuário — nenhuma seleção nova de destino). Nome por competência, mesma
+    convenção já usada no nome sugerido do oficial (mês por extenso + ano)
+    — `_MESES_EXTENSO` é a MESMA lista já usada para o título dentro do
+    XLSX oficial, nunca uma segunda lista de nomes de mês.
+
+    QA Codex (achado real, falha de geração) — o nome do operacional era
+    fixo por competência, nunca refletindo o nome REAL escolhido para o
+    oficial: numa segunda geração da mesma competência (oficial salvo com
+    um nome novo, ex. "...2026.2.xlsx", para não sobrescrever o anterior),
+    o operacional tentava sempre o MESMO caminho da primeira geração e
+    colidia com o arquivo que ela já tinha criado (`DestinoJaExiste`) —
+    mesmo com o oficial tendo sido gerado com sucesso. Corrigido ecoando o
+    sufixo de versão do nome REAL do oficial (`_sufixo_versao`) no nome do
+    operacional — os dois artefatos desta geração agora sempre compartilham
+    a mesma versão, sem precisar de um segundo diálogo nem de um segundo
+    esquema de versionamento."""
     diretorio = os.path.dirname(os.path.abspath(caminho_destino_oficial)) or "."
     mes_nome = _MESES_EXTENSO[mes_referencia - 1].capitalize()
-    return os.path.join(diretorio, f"Diarias_Nao_Publicadas_{mes_nome}_{ano_exercicio}.xlsx")
+    sufixo = _sufixo_versao(caminho_destino_oficial)
+    return os.path.join(diretorio, f"Diarias_Nao_Publicadas_{mes_nome}_{ano_exercicio}{sufixo}.xlsx")
+
+
+def _raiz_sem_sufixo_versao(caminho: str) -> str:
+    """Remove um sufixo de versão (`_sufixo_versao`) já presente no
+    caminho, se houver — devolve a raiz estável a partir da qual
+    `_proximo_par_de_versao_livre` sempre recomeça a busca em N=1, nunca
+    um segundo padrão de detecção: reaproveita literalmente `_sufixo_
+    versao`. Sem isso, um caminho que o chamador já tivesse passado com
+    ".2" faria a busca recomeçar em ".2.2"/".2.3"/... em vez de N=1,2,3."""
+    sufixo = _sufixo_versao(caminho)
+    if not sufixo:
+        return caminho
+    diretorio, nome = os.path.split(caminho)
+    raiz, extensao = os.path.splitext(nome)
+    return os.path.join(diretorio, raiz[: -len(sufixo)] + extensao)
+
+
+class VersaoDeGeracaoEsgotada(Exception):
+    """Nenhuma das primeiras `_MAX_TENTATIVAS_VERSAO_PAR` versões estava
+    livre para os DOIS artefatos — praticamente impossível em uso real
+    (exigiria milhares de gerações acumuladas da mesma competência no
+    mesmo diretório); existe só como rede de segurança explícita, nunca um
+    laço infinito silencioso."""
+
+
+_MAX_TENTATIVAS_VERSAO_PAR = 1000
+
+
+def _proximo_par_de_versao_livre(
+    caminho_destino_base: str, *, ano_exercicio: int, mes_referencia: int
+) -> tuple[str, str]:
+    """QA Codex (achado real, complemento) — mesmo depois de o operacional
+    passar a acompanhar a versão REAL do oficial (`_derivar_caminho_nao_
+    publicadas`), o usuário ainda precisava escolher manualmente um nome
+    novo para o oficial toda vez que a competência já tinha sido gerada
+    antes (senão o PRÓPRIO oficial batia no no-clobber). Esta função
+    elimina essa necessidade: devolve o par (oficial, operacional) da
+    PRIMEIRA versão (1, 2, 3, ...) em que NENHUM dos dois já existe —
+    nunca dois algoritmos de versionamento independentes, o candidato do
+    operacional de cada N é sempre obtido reaproveitando literalmente
+    `_derivar_caminho_nao_publicadas` (a MESMA função já homologada).
+
+    Requisito de produto: se QUALQUER um dos dois nomes da versão N já
+    existir, a versão N inteira é pulada para os DOIS artefatos — nunca um
+    oficial na versão 2 pareado com um operacional na versão 3. Preenche
+    lacunas naturalmente (é uma busca linear a partir de N=1, para na
+    PRIMEIRA livre) — uma versão 2 livre entre a 1 e a 3 já ocupadas é
+    escolhida, nunca pulada para a 4.
+
+    `os.path.exists` aqui é só uma checagem OTIMISTA — evita a imensa
+    maioria das tentativas fracassadas no uso normal (sequencial, um
+    processo por vez); não é, sozinha, a garantia contra corrida entre
+    processos (isso continua sendo a trava+no-clobber já homologada de
+    cada escritor). `gerar_relatorio_xlsx` trata explicitamente o caso de
+    a escrita real perder essa corrida, tentando a próxima versão
+    automaticamente — ver comentário no call site."""
+    raiz = _raiz_sem_sufixo_versao(caminho_destino_base)
+    diretorio, nome = os.path.split(raiz)
+    base, extensao = os.path.splitext(nome)
+    for versao in range(1, _MAX_TENTATIVAS_VERSAO_PAR + 1):
+        sufixo = "" if versao == 1 else f".{versao}"
+        candidato_oficial = os.path.join(diretorio, f"{base}{sufixo}{extensao}")
+        candidato_nao_publicadas = _derivar_caminho_nao_publicadas(
+            candidato_oficial, ano_exercicio=ano_exercicio, mes_referencia=mes_referencia
+        )
+        if not os.path.exists(candidato_oficial) and not os.path.exists(candidato_nao_publicadas):
+            return candidato_oficial, candidato_nao_publicadas
+    raise VersaoDeGeracaoEsgotada(
+        f"Não foi possível encontrar uma versão livre para esta geração depois de "
+        f"{_MAX_TENTATIVAS_VERSAO_PAR} tentativas — verifique o diretório de destino: {diretorio}"
+    )
 
 
 def _abrir_base_ob(caminho: str):
@@ -570,13 +681,37 @@ def gerar_relatorio_xlsx(
     homologados (destinos diferentes nunca colidem entre si — mesma
     garantia já testada para gerações simultâneas em destinos distintos).
     O oficial é gerado PRIMEIRO e sempre é o produto principal — se ele
-    falhar, nada mais acontece (comportamento já homologado, propagado sem
-    mudança). Se o oficial tiver sucesso mas o operacional falhar depois,
-    o oficial NUNCA é desfeito (não há como desfazer uma promoção atômica
-    já efetivada sem abrir uma nova janela TOCTOU, e o oficial já é
-    confiável) — o resultado volta com `nao_publicadas_gerado=False` e
+    falhar (por qualquer motivo que não seja a versão já ocupada — ver
+    abaixo), nada mais acontece (comportamento já homologado, propagado
+    sem mudança). Se o oficial tiver sucesso mas o operacional falhar
+    depois, o oficial NUNCA é desfeito (não há como desfazer uma promoção
+    atômica já efetivada sem abrir uma nova janela TOCTOU, e o oficial já
+    é confiável) — o resultado volta com `nao_publicadas_gerado=False` e
     `erro_nao_publicadas` preenchido, nunca um sucesso silencioso do tipo
-    "os dois foram gerados" quando só um foi."""
+    "os dois foram gerados" quando só um foi.
+
+    QA Codex (achado real, complemento) — `caminho_destino` deixou de ser
+    o caminho FINAL exato: é a raiz/preferência de nome (mesma que o
+    usuário confirma no diálogo nativo do SO, tipicamente sempre o nome
+    sugerido, sem precisar renomear nada). O par de artefatos desta
+    geração recebe automaticamente a PRIMEIRA versão livre a partir dela
+    (`_proximo_par_de_versao_livre`) — o usuário nunca mais precisa evitar
+    colisão manualmente. Se a escrita real do oficial perder uma corrida
+    contra outro processo para a mesma versão (checagem otimista de
+    `_proximo_par_de_versao_livre`, não uma trava — a trava real é a de
+    cada escritor), tenta automaticamente a próxima versão livre, até
+    `_MAX_TENTATIVAS_VERSAO_PAR` tentativas — nunca propaga essa colisão
+    ao usuário como falha; a garantia de não sobrescrita continua sendo
+    inteiramente a trava+no-clobber já homologada de cada escritor,
+    intocada. Só `DestinoJaExiste`/`GeracaoConcorrenteEmAndamento`
+    disparam esse avanço automático — são, por definição, sinais de que
+    ESTA versão específica está ocupada, nunca de um problema geral no
+    destino. `DestinoInacessivel` (pasta protegida/sem permissão/arquivo
+    bloqueado — ver `_adquirir_trava_destino`) nunca é capturada aqui de
+    propósito: um problema real de acesso afeta qualquer candidato de
+    versão igualmente, então propaga direto, rápido, com mensagem de
+    domínio útil — nunca mascarado atrás de centenas de tentativas
+    inúteis."""
     caminho_template = resolver_caminho_template(caminho_configuracao_template)
     revisado = _montar_resultado_revisado(
         caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
@@ -586,14 +721,52 @@ def gerar_relatorio_xlsx(
         caminho_decisoes=caminho_decisoes,
         caminho_planilha_passagens=caminho_planilha_passagens,
     )
-    resultado_oficial = gerar_xlsx_relatorio_transparencia(
-        revisado,
-        caminho_template=caminho_template,
-        caminho_destino=caminho_destino,
-        ano_exercicio=ano_exercicio,
-        mes_referencia=mes_referencia,
-        hoje=hoje,
-    )
+
+    tentativa = 0
+    while True:
+        tentativa += 1
+        caminho_oficial_candidato, caminho_nao_publicadas = _proximo_par_de_versao_livre(
+            caminho_destino, ano_exercicio=ano_exercicio, mes_referencia=mes_referencia
+        )
+        try:
+            resultado_oficial = gerar_xlsx_relatorio_transparencia(
+                revisado,
+                caminho_template=caminho_template,
+                caminho_destino=caminho_oficial_candidato,
+                ano_exercicio=ano_exercicio,
+                mes_referencia=mes_referencia,
+                hoje=hoje,
+            )
+            break
+        except (DestinoJaExiste, GeracaoConcorrenteEmAndamento):
+            if tentativa >= _MAX_TENTATIVAS_VERSAO_PAR:
+                raise
+            # Corrida real perdida para esta versão específica, entre a
+            # checagem otimista acima e esta escrita — nunca uma falha do
+            # usuário, tenta a próxima versão livre automaticamente (mesmo
+            # espírito de `_proximo_par_de_versao_livre`: nenhuma ação
+            # manual). Duas causas possíveis, mesmo tratamento para as
+            # duas: outro processo já concluiu esta versão (`DestinoJa
+            # Existe`), ou está ativamente escrevendo nela (`GeracaoConcor
+            # renteEmAndamento`, trava `.gerando.lock`).
+            #
+            # QA Codex (achado real, diagnóstico dedicado) — `PermissionError`
+            # NUNCA é capturado aqui de propósito: reproduzido e isolado por
+            # diagnóstico dirigido, a única origem real é a criação do
+            # arquivo de trava (`_adquirir_trava_destino`), que já absorve a
+            # corrida TRANSITÓRIA internamente (retry curto, mesmo padrão já
+            # homologado em `persistencia_decisoes.py`) e converte qualquer
+            # falha PERSISTENTE em `DestinoInacessivel` — nunca um
+            # `PermissionError` cru chega até aqui. Tratar `PermissionError`
+            # como "esta versão específica está ocupada, tenta a próxima"
+            # seria enganoso: um problema real de acesso à pasta (protegida,
+            # sem permissão, antivírus) afeta IGUALMENTE qualquer candidato
+            # de versão — avançar por até 1000 tentativas não ajudaria,
+            # mascararia o erro real atrás de uma demora artificial, e
+            # `DestinoInacessivel` (não capturada aqui, propaga direto) já
+            # entrega ao usuário uma mensagem de domínio útil rapidamente.
+            continue
+
     _logger.info(
         "Relatório XLSX oficial gerado: %s (%s ocorrências, valor total diárias %.2f)",
         resultado_oficial.caminho_arquivo,
@@ -620,21 +793,54 @@ def gerar_relatorio_xlsx(
             nao_publicadas_gerado=False,
         )
 
-    caminho_nao_publicadas = _derivar_caminho_nao_publicadas(
-        caminho_destino, ano_exercicio=ano_exercicio, mes_referencia=mes_referencia
-    )
+    # `caminho_nao_publicadas` já foi calculado junto com `caminho_oficial_
+    # candidato` acima (o par vencedor de `_proximo_par_de_versao_livre`) —
+    # nunca uma segunda derivação, que poderia (em tese) resolver para uma
+    # versão diferente se o filesystem mudasse entre as duas chamadas.
     try:
         resultado_operacional = gerar_xlsx_diarias_nao_publicadas(
             nao_publicaveis, caminho_destino=caminho_nao_publicadas
+        )
+    except DestinoJaExiste as erro:
+        # QA Codex (achado real, complemento) — com o PAR inteiro
+        # (`_proximo_par_de_versao_livre`) já verificado livre logo antes
+        # de o oficial ser escrito, esta colisão deixou de ser o caso
+        # rotineiro de "regerar a mesma competência" (isso agora recebe
+        # automaticamente uma versão nova, sem ação nenhuma do usuário) —
+        # só pode acontecer numa corrida real e estreita: outro processo
+        # criou exatamente este arquivo operacional no intervalo entre a
+        # checagem otimista e esta escrita. Mensagem explicitamente
+        # acionável para esse cenário específico, nunca um genérico "tente
+        # novamente" sem explicar o motivo.
+        mensagem = (
+            f"Já existe uma planilha de diárias não publicadas para esta mesma versão da geração "
+            f"({caminho_nao_publicadas}). Isso normalmente indica que outra geração desta "
+            f"competência ocorreu ao mesmo tempo. Gerar novamente deve resolver automaticamente, "
+            f"escolhendo uma nova versão para os dois arquivos."
+        )
+        _logger.error(
+            "Relatório oficial gerado com sucesso, mas o XLSX operacional já existe no destino "
+            "versionado (%s): %s",
+            caminho_nao_publicadas,
+            erro,
+        )
+        return RelatorioCompletoGeradoResultado(
+            oficial=resultado_oficial,
+            caminho_arquivo_nao_publicadas=None,
+            total_nao_publicadas=len(nao_publicaveis),
+            total_categoria_a=total_a,
+            total_categoria_b=total_b,
+            nao_publicadas_gerado=False,
+            erro_nao_publicadas=mensagem,
         )
     except Exception as erro:  # noqa: BLE001 — deliberado: o oficial JÁ foi
         # promovido com sucesso acima (arquivo real, seguro, no destino do
         # usuário) — uma falha aqui NUNCA pode derrubar essa informação nem
         # fingir sucesso; precisa virar estado PARCIAL explícito no
         # resultado, não uma exceção que esconderia do chamador que o
-        # oficial deu certo. Qualquer causa (no-clobber, geração
-        # concorrente, disco cheio, permissão) recebe o MESMO tratamento:
-        # reportar, nunca inventar um resultado melhor do que o real.
+        # oficial deu certo. Qualquer outra causa (geração concorrente,
+        # disco cheio, permissão) recebe o MESMO tratamento: reportar,
+        # nunca inventar um resultado melhor do que o real.
         _logger.error(
             "Relatório oficial gerado com sucesso, mas falhou a geração do XLSX operacional (%s): %s",
             caminho_nao_publicadas,

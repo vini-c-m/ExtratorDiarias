@@ -687,7 +687,12 @@ def test_post_gerar_bloqueia_com_revisao_pendente_409(tmp_path):
     assert not caminho_destino.exists()
 
 
-def test_post_gerar_nao_sobrescreve_destino_existente_409(tmp_path):
+def test_post_gerar_destino_existente_versiona_automaticamente_200(tmp_path):
+    """QA Codex (complemento — versionamento automático do PAR) — um
+    arquivo pré-existente no destino pedido não é mais 409: o backend
+    escolhe automaticamente a próxima versão livre (`.2`) para o oficial,
+    nunca sobrescrevendo o arquivo pré-existente nem exigindo que o
+    chamador escolha outro nome."""
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
     caminho_configuracao_template = _configurar_template(tmp_path)
@@ -701,17 +706,24 @@ def test_post_gerar_nao_sobrescreve_destino_existente_409(tmp_path):
     )
     resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
 
-    assert resposta.status_code == 409
-    assert caminho_destino.read_bytes() == b"conteudo previo"
+    assert resposta.status_code == 200
+    assert caminho_destino.read_bytes() == b"conteudo previo"  # nunca sobrescrito
+    caminho_gerado = resposta.json()["caminho_arquivo"]
+    assert caminho_gerado != str(caminho_destino)
+    assert os.path.basename(caminho_gerado) == "saida.2.xlsx"
+    assert os.path.exists(caminho_gerado)
 
 
-def test_post_gerar_duas_requisicoes_http_simultaneas_mesmo_destino_apenas_uma_200(tmp_path):
+def test_post_gerar_duas_requisicoes_http_simultaneas_mesmo_destino_ambas_200_versoes_distintas(tmp_path):
     """Confronto QA / homologação operacional — reproduz exatamente o
     cenário original (2 requisições `/gerar` simultâneas para o mesmo
     `caminho_destino`) na própria camada HTTP, não só na função interna do
-    escritor. Antes da correção: 200 + 200, a segunda sobrescrevendo a
-    primeira silenciosamente. Esperado agora: exatamente um 200, o outro
-    409 — nunca as duas concluindo."""
+    escritor. Antes da correção BUG-01/BUG-02: 200 + 200, a segunda
+    sobrescrevendo a primeira silenciosamente — corrigido então para
+    200 + 409 (só uma concluía). QA Codex (complemento — versionamento
+    automático do PAR): agora as DUAS concluem com 200, cada uma com uma
+    versão distinta (`.2`), sem exigir nenhuma ação manual do chamador —
+    nunca as duas escrevendo no MESMO arquivo final."""
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
     caminho_configuracao_template = _configurar_template(tmp_path)
@@ -738,8 +750,11 @@ def test_post_gerar_duas_requisicoes_http_simultaneas_mesmo_destino_apenas_uma_2
     t2.join(timeout=30)
 
     status = sorted(r.status_code for r in respostas.values())
-    assert status == [200, 409], f"esperado [200, 409], obtido {status}"
-    assert caminho_destino.exists()
+    assert status == [200, 200], f"esperado [200, 200], obtido {status}"
+    caminhos_gerados = {r.json()["caminho_arquivo"] for r in respostas.values()}
+    assert len(caminhos_gerados) == 2  # cada requisição termina com uma versão distinta
+    for caminho in caminhos_gerados:
+        assert os.path.exists(caminho)
 
 
 # ============================================================================

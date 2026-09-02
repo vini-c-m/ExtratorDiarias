@@ -99,8 +99,8 @@ function BlocoGeracao({
             <Alerta variante="aviso">
               O relatório do Portal da Transparência foi salvo normalmente, mas não foi possível gerar a planilha de
               diárias não publicadas ({estadoGeracao.totalNaoPublicadas} pendente
-              {estadoGeracao.totalNaoPublicadas === 1 ? "" : "s"} de investigação). Tente gerar o relatório
-              novamente.
+              {estadoGeracao.totalNaoPublicadas === 1 ? "" : "s"} de investigação). Isso normalmente indica que outra
+              geração desta competência ocorreu ao mesmo tempo. Gerar novamente deve resolver automaticamente.
             </Alerta>
           ) : (
             <p className={TIPOGRAFIA.textoAuxiliar}>Não há diárias não publicadas para investigação.</p>
