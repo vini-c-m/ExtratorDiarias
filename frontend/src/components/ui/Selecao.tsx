@@ -100,13 +100,38 @@ export default function Selecao({
     return () => document.removeEventListener("mousedown", aoClicarFora);
   }, [aberto]);
 
-  // Painel no portal não reflui com o resto da página: rolar ou
-  // redimensionar deixaria as coordenadas calculadas na abertura
+  // Painel no portal não reflui com o resto da página: rolar a PÁGINA (ou
+  // redimensionar a janela) deixaria as coordenadas calculadas na abertura
   // desatualizadas (não há como "seguir" o campo sem recalcular a cada
   // frame) — mais simples e previsível fechar, igual a um clique fora.
+  //
+  // Micro-sprint UX operacional — achado real e BLOQUEANTE (reproduzido ao
+  // vivo via Chromium/Playwright: rolar a roda do mouse DENTRO da própria
+  // lista fechava o dropdown depois de ~6 itens, nunca deixando o usuário
+  // alcançar Junho/Julho/Agosto): `scroll` é um evento que não faz
+  // bubbling, mas SEMPRE passa pela fase de CAPTURA de `window` até o
+  // elemento-alvo, não importa QUAL elemento disparou — o listener abaixo
+  // usava `addEventListener(..., true)` (captura) exatamente para pegar o
+  // scroll de QUALQUER ancestral da página (o caso que ele foi desenhado
+  // para resolver), mas isso também captura o scroll INTERNO da própria
+  // `<ul>` (`overflow-auto`, more itens que o `max-h-56` comporta) — cada
+  // rolagem do mouse dentro da lista contava como "a página rolou" e
+  // fechava o próprio painel que o usuário estava tentando rolar.
+  // Corrigido ignorando qualquer evento cujo alvo esteja DENTRO do próprio
+  // painel (`listboxRef`) — só fecha quando o scroll vem de fora dele
+  // (a página, ou qualquer outro elemento), nunca da rolagem interna da
+  // lista de opções.
   useEffect(() => {
     if (!aberto) return;
-    function fechar() {
+    function fechar(evento: Event) {
+      // `evento.target` de um scroll de PÁGINA é o `document` (Node válido);
+      // de um listener preso direto em `window` (como o próprio teste
+      // simula), o alvo é o objeto `window`, que não implementa `Node` —
+      // `Node.contains()` rejeitaria isso com TypeError. `instanceof Node`
+      // descarta esse caso antes de chamar `contains`, tratando-o como
+      // "fora do painel" (fecha), igual a um scroll de página real.
+      const alvo = evento.target;
+      if (alvo instanceof Node && listboxRef.current?.contains(alvo)) return;
       setAberto(false);
       setIndiceAtivo(-1);
     }

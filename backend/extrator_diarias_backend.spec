@@ -25,7 +25,12 @@ hiddenimports = [
     "uvicorn.lifespan.off",
 ]
 
-for pacote in ("fitz", "pymupdf", "pypdfium2", "pdfplumber", "openpyxl"):
+for pacote in ("fitz", "pymupdf", "pypdfium2", "pdfplumber", "openpyxl", "odf", "defusedxml", "filelock"):
+    # "odf" (não "odfpy") é o nome do pacote importável do pip odfpy==1.4.1 —
+    # `collect_all("odfpy")` não coleta nada (avisa "not a package") e é inócuo,
+    # mas usar o nome certo evita depender de um comportamento não garantido.
+    # "filelock" (correção cross-process) — puro Python, usa `ctypes`/`msvcrt`
+    # (stdlib) no Windows, nenhum binário/DLL próprio a coletar.
     d, b, h = collect_all(pacote)
     datas += d
     binaries += b

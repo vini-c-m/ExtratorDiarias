@@ -35,9 +35,11 @@ NOME_ARQUIVO_BASE_LOCAL_SQLITE = "base_local.sqlite"
 
 # ETAPA 2 (Auditoria P0, 2026-08-09) — número de tentativas e intervalo
 # (crescente, curto) do retry específico de `PermissionError` em
-# `os.replace`. Depois do lock global (`base_local.LOCK_SINCRONIZACAO`,
-# que elimina a concorrência ESCRITOR×ESCRITOR), a única janela de colisão
-# que sobra é LEITOR×ESCRITOR: uma consulta `mode=ro` da Central Analítica
+# `os.replace`. Depois da trava de `base_local.sincronizar()`
+# (`_trava_sincronizacao_arquivo`, cross-process desde a revalidação QA
+# Codex — ver `base_local.py`), que elimina a concorrência
+# ESCRITOR×ESCRITOR, a única janela de colisão que sobra é LEITOR×ESCRITOR:
+# uma consulta `mode=ro` da Central Analítica
 # (`repositorio_analitico._conectar_somente_leitura`) pode, por acaso,
 # estar com um handle aberto sobre `base_local.sqlite` no instante exato
 # da troca — reproduzido deterministicamente na auditoria (conexão

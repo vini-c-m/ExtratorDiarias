@@ -116,6 +116,36 @@ def _bloco_validacao(
     ]
 
 
+def _escrever_pdf_com_rodape_sobreposto(caminho: str, paginas: list) -> None:
+    """Como `_escrever_pdf`, mas cada página pode ser um dict com `linhas`
+    (lista normal, uma por linha, como sempre) e, opcionalmente,
+    `rodape_sobreposto` (lista de 2+ textos desenhados TODOS na mesma
+    posição — a posição onde a próxima linha cairia). Reproduz fisicamente o
+    defeito de exportação do processo real 19.20.100000001.0016125/2026-70:
+    dois rodapés gravados um sobre o outro na mesma coordenada da página,
+    produzindo a sobreposição de bounding box que `pdf_reader.py` detecta e
+    remove. Uma página sem `rodape_sobreposto` (ou uma página passada como
+    lista simples) se comporta exatamente como em `_escrever_pdf`."""
+    c = canvas.Canvas(caminho, pagesize=A4)
+    _largura, altura = A4
+    for pagina in paginas:
+        if isinstance(pagina, dict):
+            linhas = pagina["linhas"]
+            rodape_sobreposto = pagina.get("rodape_sobreposto")
+        else:
+            linhas = pagina
+            rodape_sobreposto = None
+        y = altura - _MARGEM_TOPO
+        for linha in linhas:
+            c.drawString(_MARGEM_ESQUERDA, y, linha)
+            y -= _ALTURA_LINHA
+        if rodape_sobreposto:
+            for texto in rodape_sobreposto:
+                c.drawString(_MARGEM_ESQUERDA, y, texto)
+        c.showPage()
+    c.save()
+
+
 def _bloco_nota_liquidacao(documento_habil: str) -> list[str]:
     return [
         "NOTA DE LIQUIDAÇÃO",
@@ -387,6 +417,91 @@ def _gerar_pdfs_padroes_documentais() -> None:
     )
 
 
+def _gerar_pdf_rodape_sobreposto() -> None:
+    """Caso 6 — Sprint de Correção Crítica: reprodução sintética (dados
+    fictícios) do padrão do processo real 19.20.100000001.0016125/2026-70. A
+    mesma Solicitação de Diária é reanexada ao processo — a segunda (páginas
+    3-4) é a vigente, por regra de negócio ("o último documento sempre
+    vence", nunca alterada por esta correção) — e, nas páginas dela, o
+    rodapé do documento anterior é gravado por engano na MESMA posição do
+    rodapé correto (duas chamadas de `drawString` na mesma coordenada),
+    produzindo a sobreposição física de bounding box que `pdf_reader.py`
+    detecta e remove. Inclui também, na página 2 (um anexo fictício tipo
+    Diário Oficial), uma citação em prosa a outro número SEI sem o sufixo
+    "/ pg. N" — exercita a proteção contra SEI incidental também nesta
+    fixture, igual ao processo real."""
+    pasta = os.path.join(_AQUI, "pdfs_padroes_documentais")
+    sei_processo = "19.20.0001.0000117/2026-17"
+
+    pagina1 = _bloco_solicitacao_servidor(
+        id_documento="6000101",
+        sei=sei_processo,
+        cidade_origem="Recife",
+        cidade_destino="Garanhuns",
+        data_inicial="18/09/2026",
+        data_retorno="18/09/2026",
+        cpf="11122233396",
+        nome="Beltrano de Tal",
+        pagina=1,
+    )
+
+    pagina2 = [
+        "AVISO PGJ Nº 99/2026 (fictício)",
+        "CONSIDERANDO a disponibilidade orçamentária, devidamente atestada",
+        "nos autos do SEI 19.20.9999.9999999/2026-99, RESOLVE...",
+        _rodape("EXTERNO normativas fictício - 6000150", sei_processo, 2),
+    ]
+
+    titulo_vigente = "CMFC - Solicitação de Diária - Servidor 6000102"
+    rodape_vigente_pg3 = _rodape(titulo_vigente, sei_processo, 3)
+    rodape_alheio_pg3 = _rodape(
+        "EXTERNO comprovante diária fictício - 6000160", sei_processo, 8
+    )
+    pagina3 = {
+        "linhas": [
+            "CMFC - Solicitação de Diária - Servidor - 6000102",
+            "",
+            "UNIDADE SOLICITANTE:",
+            "  UNIDADE TESTE",
+            "NOME DO SERVIDOR:",
+            "  Beltrano de Tal",
+            "CPF:",
+            "  11122233396",
+            "CIDADE ORIGEM:",
+            "  Recife",
+            "CIDADE(S) DESTINO:",
+            "  Garanhuns",
+            "DATA INICIAL:",
+            "  19/09/2026",
+            "DATA DE RETORNO:",
+        ],
+        "rodape_sobreposto": [rodape_alheio_pg3, rodape_vigente_pg3],
+    }
+
+    rodape_vigente_pg4 = _rodape(titulo_vigente, sei_processo, 4)
+    rodape_alheio_pg4 = _rodape(
+        "EXTERNO comprovante diária fictício - 6000160", sei_processo, 9
+    )
+    pagina4 = {
+        "linhas": [
+            "  19/09/2026",
+            "____________________________________________________________________________",
+            "OBSERVAÇÕES:",
+            "  -",
+        ],
+        "rodape_sobreposto": [rodape_alheio_pg4, rodape_vigente_pg4],
+    }
+
+    pagina5 = _bloco_validacao(
+        id_documento="6000103", sei=sei_processo, observacoes="2026DH000601", pagina=5
+    )
+
+    _escrever_pdf_com_rodape_sobreposto(
+        os.path.join(pasta, "SEI_19.20.0001.0000117_2026_17.pdf"),
+        [pagina1, pagina2, pagina3, pagina4, pagina5],
+    )
+
+
 def _gerar_pdfs_exemplo() -> None:
     pasta = os.path.join(_AQUI, "pdfs_exemplo")
 
@@ -494,6 +609,7 @@ def main() -> None:
     _gerar_pdfs_diaria_membro()
     _gerar_pdf_local_destino()
     _gerar_pdfs_padroes_documentais()
+    _gerar_pdf_rodape_sobreposto()
     _gerar_pdfs_exemplo()
     print("Fixtures sintéticas geradas com sucesso.")
 

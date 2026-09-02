@@ -5,6 +5,15 @@ pymupdf==1.28.0
 openpyxl==3.1.5
 pytest==9.1.1
 httpx==0.28.1
+# Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — leitura nativa da
+# Planilha de Passagens, formato real recebido pelo setor (`.ods`). Pure-Python,
+# mesmo perfil de empacotamento de `openpyxl` (sem DLL/`.pyd` nativo) — decisão
+# tomada após comparar com `pandas(engine="odf")` (custaria ~97 MB de numpy/pandas
+# novos, projeto não usa nenhum dos dois hoje), `pyexcel-ods3` (exige `lxml`,
+# falhou ao instalar em teste real por limite de path do Windows) e `ezodf`
+# (depende de `lxml` não declarado, sem release desde 2018). `defusedxml` é
+# dependência transitiva do próprio `odfpy`.
+odfpy==1.4.1
 # Sprint 19.7.2 — geração real de PDF em `POST /api/v1/analitica/relatorios`
 # (`analitica_service.py::gerar_relatorio`). Promovida de
 # requirements-dev.txt (onde só gerava PDFs de fixture de teste) para cá —
@@ -15,3 +24,15 @@ httpx==0.28.1
 # biblioteca padrão do Python, nenhuma dependência nova para nenhum dos
 # dois.
 reportlab==5.0.0
+# QA Codex (correção definitiva cross-process) — trava de arquivo real do SO
+# (LockFileEx no Windows via ctypes/msvcrt, flock no POSIX), não um lockfile
+# caseiro O_CREAT|O_EXCL: protege o ciclo read-modify-write dos JSONs de
+# configuração/decisões contra concorrência entre PROCESSOS (não só entre
+# threads do mesmo processo — `threading.Lock` sozinho não sobrevive a
+# `WEB_CONCURRENCY`/múltiplos workers Uvicorn, comprovado por QA). Puro
+# Python (nenhuma extensão nativa/DLL, nenhuma dependência de `pywin32`),
+# mesmo critério já usado para `odfpy` acima. A trava do SO é liberada
+# automaticamente pelo kernel quando o processo termina por qualquer motivo
+# (inclusive crash/kill) — nenhum risco de lock órfão em disco, ao contrário
+# de um sentinel file por convenção.
+filelock==3.32.5

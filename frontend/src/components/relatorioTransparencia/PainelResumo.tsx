@@ -49,6 +49,7 @@ function BlocoGeracao({
     erroAcaoPosGeracao,
     abrirRelatorio,
     abrirPasta,
+    abrirArquivoNaoPublicadas,
   } = useGerarRelatorioTransparencia(caminhoConfiguracaoTemplate);
 
   function aoSelecionarTemplate(evento: ChangeEvent<HTMLInputElement>) {
@@ -78,6 +79,34 @@ function BlocoGeracao({
             </Botao>
           </div>
         </div>
+
+        {/* Sprint 5 — resumo do XLSX operacional, gerado na mesma execução
+            a partir do MESMO ResultadoRevisado do oficial. Três estados
+            possíveis, nunca confundidos entre si: havia diárias e o arquivo
+            foi gerado; não havia nenhuma; havia, mas a escrita falhou depois
+            do oficial já salvo (nunca tratado como sucesso silencioso). */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-neutral-200 pt-4 dark:border-neutral-800">
+          {estadoGeracao.naoPublicadasGerado && estadoGeracao.caminhoArquivoNaoPublicadas ? (
+            <>
+              <p className={TIPOGRAFIA.textoAuxiliar}>
+                Diárias para investigação: <strong>{estadoGeracao.totalNaoPublicadas}</strong>
+              </p>
+              <Botao variante="secundaria" onClick={abrirArquivoNaoPublicadas}>
+                Abrir planilha de não publicadas
+              </Botao>
+            </>
+          ) : estadoGeracao.erroNaoPublicadas ? (
+            <Alerta variante="aviso">
+              O relatório do Portal da Transparência foi salvo normalmente, mas não foi possível gerar a planilha de
+              diárias não publicadas ({estadoGeracao.totalNaoPublicadas} pendente
+              {estadoGeracao.totalNaoPublicadas === 1 ? "" : "s"} de investigação). Tente gerar o relatório
+              novamente.
+            </Alerta>
+          ) : (
+            <p className={TIPOGRAFIA.textoAuxiliar}>Não há diárias não publicadas para investigação.</p>
+          )}
+        </div>
+
         {erroAcaoPosGeracao && (
           <div className="mt-4">
             <Alerta variante="erro">{erroAcaoPosGeracao}</Alerta>

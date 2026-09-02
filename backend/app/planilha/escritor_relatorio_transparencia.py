@@ -50,11 +50,28 @@ confirmado célula a célula — ver relatório da Micro-sprint 3F):
                                   (Base OB) quando ausente/conflitante no
                                   Controle — mesma precedência de Cargo
     I Motivo                  <- OrdemBancaria.motivo
-    J Valor da Passagem       <- SEMPRE "-" (decisão institucional
-                                  confirmada, Micro-sprint 3F: valor da
-                                  passagem não é responsabilidade do DIMCAC;
-                                  este gerador nunca calcula, infere ou lê
-                                  esse valor de nenhuma fonte)
+    J Valor da Passagem       <- Sprint 3 (HOMO-RT-06): linha_publicavel.
+                                  valor_passagem_publicavel(passagem), onde
+                                  `passagem` vem do cruzamento exato por OB
+                                  com a Planilha de Passagens (Sprint 1/2).
+                                  Numérico quando a fonte tem valor (estado
+                                  A); célula vazia para ausência/"NÃO SE
+                                  APLICA"/inconsistência da fonte/OB sem
+                                  correspondência (B/C/D/E) — fechamento
+                                  HOMO-RT-06 (decisão de produto final):
+                                  estado D (ex. "#VALOR!") NUNCA bloqueia a
+                                  geração, produz célula vazia como os
+                                  demais, mas permanece INVALIDO no domínio
+                                  (`OcorrenciaFinanceira.passagem.estado`)
+                                  e participa do fingerprint (`decisao.
+                                  _campos_linha_publicavel`) — nunca
+                                  reescrito para ausente/zero. Histórico
+                                  anterior a esta Sprint (Micro-sprint 3F):
+                                  o gerador sempre gravava "-" fixo, decisão
+                                  institucional então vigente de que valor
+                                  da passagem não era responsabilidade do
+                                  DIMCAC — premissa alterada pelo plano
+                                  aprovado desta feature.
     K Nº Diárias Integral     <- resolver_quantidade_diarias(...).integral
     L Nº Diárias Parcial      <- resolver_quantidade_diarias(...).parcial
                                   (Controle DIMCAC colunas N/O, já
@@ -77,9 +94,14 @@ from openpyxl import load_workbook
 from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.worksheet.worksheet import Worksheet
 
+from app.domain.entities.linha_passagem import LinhaPassagem
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.relatorio_transparencia.decisao import ResultadoRevisado
-from app.domain.relatorio_transparencia.linha_publicavel import nome_publicado, valor_do_controle_com_fallback
+from app.domain.relatorio_transparencia.linha_publicavel import (
+    nome_publicado,
+    valor_do_controle_com_fallback,
+    valor_passagem_publicavel,
+)
 from app.domain.relatorio_transparencia.motor_decisao import CandidatoNormal
 from app.domain.relatorio_transparencia.quantidade_diarias import resolver_quantidade_diarias
 
@@ -95,7 +117,6 @@ __all__ = [
 _NOME_ABA_DADOS = "Controle de Diárias"
 _PRIMEIRA_LINHA_DADOS = 7
 _ROTULO_LINHA_TOTAL_PREFIXO = "Total"
-_VALOR_PASSAGEM_PLACEHOLDER = "-"
 
 _MESES_EXTENSO = [
     "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
@@ -275,6 +296,7 @@ def _escrever_linha_ocorrencia(
     linha: int,
     ordem: OrdemBancaria,
     registros_controle,
+    passagem: LinhaPassagem | None,
 ) -> float:
     quantidade = resolver_quantidade_diarias(registros_controle)
     cargo = valor_do_controle_com_fallback(registros_controle, "cargo", ordem.cargo)
@@ -289,10 +311,16 @@ def _escrever_linha_ocorrencia(
     ws[f"G{linha}"] = ordem.trecho
     ws[f"H{linha}"] = transporte
     ws[f"I{linha}"] = ordem.motivo
-    # Item institucional confirmado (Micro-sprint 3F): valor da passagem não
-    # é responsabilidade do DIMCAC — nunca calculado/inferido, sempre o
-    # mesmo placeholder já usado pela esmagadora maioria do histórico real.
-    ws[f"J{linha}"] = _VALOR_PASSAGEM_PLACEHOLDER
+    # Sprint 3 (HOMO-RT-06, plano "Valor da Passagem no XLSX Oficial") —
+    # substitui o placeholder histórico fixo (Micro-sprint 3F: "valor da
+    # passagem não é responsabilidade do DIMCAC") pelo valor efetivamente
+    # publicável do cruzamento com a Planilha de Passagens. MESMA função
+    # usada pelo fingerprint (`decisao._campos_linha_publicavel`) — nunca
+    # duas implementações. Estado D (`inconsistente=True`) também chega
+    # aqui e produz célula vazia (`.valor is None`), igual a B/C/E —
+    # fechamento HOMO-RT-06: D nunca bloqueia a geração, só nunca vira um
+    # valor numérico por acidente.
+    ws[f"J{linha}"] = valor_passagem_publicavel(passagem).valor
     ws[f"K{linha}"] = quantidade.integral if quantidade else None
     ws[f"L{linha}"] = quantidade.parcial if quantidade else None
     ws[f"M{linha}"] = ordem.valor  # RN02 — sempre o valor bruto da Base OB, zero incluso
@@ -379,6 +407,16 @@ def gerar_xlsx_relatorio_transparencia(
 
     candidatos_ordenados = sorted(resultado.candidatos_publicaveis, key=_chave_ordenacao)
 
+    # Sprint 3 (HOMO-RT-06), fechamento — decisão de produto final: estado D
+    # (INVALIDO, ex. "#VALOR!") do Valor da Passagem NUNCA bloqueia a
+    # geração do relatório oficial (revisão da versão provisória anterior).
+    # `_escrever_linha_ocorrencia` já escreve célula vazia para D (mesmo
+    # caminho de B/C/E, via `valor_passagem_publicavel(...).valor is None`)
+    # — o estado INVALIDO em si permanece preservado em
+    # `OcorrenciaFinanceira.passagem.estado` e no fingerprint (`decisao.
+    # _campos_linha_publicavel`), nunca reescrito para ausente/zero; só não
+    # impede mais a publicação das demais ocorrências.
+
     destino_dir = os.path.dirname(os.path.abspath(caminho_destino)) or "."
     os.makedirs(destino_dir, exist_ok=True)
 
@@ -434,7 +472,11 @@ def gerar_xlsx_relatorio_transparencia(
             for indice, candidato in enumerate(candidatos_ordenados):
                 linha = _PRIMEIRA_LINHA_DADOS + indice
                 total_valor += _escrever_linha_ocorrencia(
-                    ws, linha, candidato.ocorrencia.ordem_bancaria, candidato.registros_controle
+                    ws,
+                    linha,
+                    candidato.ocorrencia.ordem_bancaria,
+                    candidato.registros_controle,
+                    candidato.ocorrencia.passagem,
                 )
 
             # Fórmulas de total — sempre recalculadas para a faixa REAL de

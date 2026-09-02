@@ -115,6 +115,17 @@ describe("preload", () => {
     );
   });
 
+  // Micro-sprint UX operacional — persistência dos caminhos de Base OB/Controle DIMCAC.
+  it("obterCaminhoConfiguracaoFontesRelatorioTransparencia invoca ipcRenderer.invoke no canal 'relatorio-transparencia:obter-caminho-configuracao-fontes'", async () => {
+    const api = await importarApiExposta();
+
+    api.obterCaminhoConfiguracaoFontesRelatorioTransparencia();
+
+    expect(ipcRendererMock.invoke).toHaveBeenCalledWith(
+      "relatorio-transparencia:obter-caminho-configuracao-fontes",
+    );
+  });
+
   it("escolherDestinoRelatorioTransparencia invoca ipcRenderer.invoke no canal 'relatorio-transparencia:escolher-destino' com o nome sugerido", async () => {
     const api = await importarApiExposta();
 

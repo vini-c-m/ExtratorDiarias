@@ -1,9 +1,12 @@
+import multiprocessing
 import os
 import sqlite3
+import time
 
 from openpyxl import Workbook, load_workbook
 
 from app.consulta import base_local
+from tests._multiprocesso_util import executar_e_reportar, segurar_trava_ate_ser_morto
 
 
 def test_caminho_base_local_usa_env_var_quando_definida(tmp_path, monkeypatch):
@@ -206,3 +209,86 @@ def test_sincronizar_grava_origem_informada_explicitamente(tmp_path, caminho_pla
 
     caminho_sqlite = caminho_xlsx.parent / "base_local.sqlite"
     assert _origem_gravada(caminho_sqlite) == "manual"
+
+
+# ============================================================================
+# QA Codex (revalidação cross-process) — `LOCK_SINCRONIZACAO` (`RLock`,
+# correção ETAPA 2 original) só protegia threads do mesmo processo; sob
+# `WEB_CONCURRENCY`/múltiplos workers, dois processos distintos podiam
+# colidir na mesma cópia `.xlsx`/reconstrução SQLite sem nenhuma
+# coordenação. Corrigido com `_trava_sincronizacao_arquivo`
+# (`filelock.FileLock`, cross-process) — o `RLock` continua existindo só
+# como sinal rápido em memória para `executar_sincronizacao_manual` (ver
+# `app/services/analitica_service.py`), não mais como a proteção real do
+# arquivo. Testes com `multiprocessing.Process` de verdade.
+# ============================================================================
+
+
+def test_sincronizar_multiprocesso_nao_corrompe_nem_falha(tmp_path):
+    origem_a = tmp_path / "planilha_a.xlsx"
+    workbook_a = Workbook()
+    workbook_a.active["A1"] = "conteudo A"
+    workbook_a.save(origem_a)
+
+    origem_b = tmp_path / "planilha_b.xlsx"
+    workbook_b = Workbook()
+    workbook_b.active["A1"] = "conteudo B"
+    workbook_b.save(origem_b)
+
+    destino_base = tmp_path / "dados_usuario"
+
+    fila = multiprocessing.Queue()
+    p1 = multiprocessing.Process(
+        target=executar_e_reportar,
+        args=(fila, base_local.sincronizar, (str(origem_a),), {"diretorio_base": destino_base}),
+    )
+    p2 = multiprocessing.Process(
+        target=executar_e_reportar,
+        args=(fila, base_local.sincronizar, (str(origem_b),), {"diretorio_base": destino_base}),
+    )
+    p1.start()
+    p2.start()
+    resultados = [fila.get(timeout=30) for _ in range(2)]
+    p1.join(timeout=30)
+    p2.join(timeout=30)
+
+    assert all(r[0] == "ok" for r in resultados), resultados  # nenhuma exceção em nenhum processo
+
+    caminho_destino = base_local.caminho_base_local(diretorio_base=destino_base)
+    assert caminho_destino.is_file()
+    # arquivo final sempre válido e coerente — nunca um estado misto/
+    # corrompido entre as duas cópias concorrentes (last-write-wins
+    # determinístico, mesma semântica de "sincronizar de novo sobrescreve").
+    conteudo_final = load_workbook(caminho_destino).active["A1"].value
+    assert conteudo_final in {"conteudo A", "conteudo B"}
+    assert not any(nome.endswith(".tmp") for nome in os.listdir(caminho_destino.parent))
+
+
+def test_sincronizar_processo_morto_segurando_trava_recupera_depois(tmp_path):
+    origem = tmp_path / "planilha_preenchida.xlsx"
+    workbook = Workbook()
+    workbook.active["A1"] = "conteudo recuperacao"
+    workbook.save(origem)
+
+    destino_base = tmp_path / "dados_usuario"
+    destino = base_local.caminho_base_local(diretorio_base=destino_base)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    fila = multiprocessing.Queue()
+    processo = multiprocessing.Process(
+        target=segurar_trava_ate_ser_morto,
+        args=(fila, base_local._trava_sincronizacao_arquivo, (destino,)),
+    )
+    processo.start()
+    sinal = fila.get(timeout=15)
+    assert sinal == "trava_obtida"
+
+    processo.kill()
+    processo.join(timeout=15)
+    assert not processo.is_alive()
+
+    inicio = time.monotonic()
+    caminho_destino = base_local.sincronizar(str(origem), diretorio_base=destino_base)
+    duracao = time.monotonic() - inicio
+    assert duracao < 8  # recupera bem antes do timeout de 10s — nenhum lock órfão
+    assert load_workbook(caminho_destino).active["A1"].value == "conteudo recuperacao"

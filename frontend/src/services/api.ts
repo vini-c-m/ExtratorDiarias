@@ -52,10 +52,12 @@ import type {
   ListaRevisoesRelatorioTransparencia,
   ParametrosFontesRelatorioTransparencia,
   RelatorioGeradoRelatorioTransparencia,
+  RequisicaoConfigurarFontesRelatorioTransparencia,
   RequisicaoConfigurarTemplateRelatorioTransparencia,
   RequisicaoDecisaoRelatorioTransparencia,
   RequisicaoGerarRelatorioTransparencia,
   ResumoRelatorioTransparencia,
+  StatusFontesRelatorioTransparencia,
   StatusTemplateRelatorioTransparencia,
 } from "../types/relatorioTransparencia";
 
@@ -1057,6 +1059,15 @@ function mensagem503RelatorioTransparencia(detail: string): Error {
       "Não foi possível ler a configuração do template oficial — o arquivo está corrompido. Selecione o template oficial novamente.",
     );
   }
+  // Micro-sprint UX operacional — mesmo critério acima (Confronto QA Codex /
+  // QA-RT-03), agora para o arquivo irmão de configuração das fontes
+  // persistidas (Base OB/Controle DIMCAC): sem este caso, cairia no erro
+  // genérico "dados de decisões", enganoso para este arquivo.
+  if (detail.startsWith("Configuração das fontes corrompida")) {
+    return new Error(
+      "Não foi possível ler a configuração salva de Base de Ordens Bancárias/Controle DIMCAC — o arquivo está corrompido. Selecione os arquivos novamente.",
+    );
+  }
   return new ErroRelatorioTransparenciaIndisponivel();
 }
 
@@ -1185,6 +1196,60 @@ export async function configurarTemplateRelatorioTransparencia(
     body: JSON.stringify(requisicao),
   });
 
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint UX operacional — `GET /fontes`: status persistido dos
+ * caminhos de Base de Ordens Bancárias e Controle DIMCAC (item 3 da
+ * micro-sprint — o usuário não deveria precisar reselecionar os dois
+ * arquivos a cada vez). Mesmo critério de erro amigável do Template
+ * Oficial: 503 só quando o próprio arquivo de configuração está
+ * corrompido, nunca quando as fontes simplesmente não foram configuradas
+ * ainda (isso é `configurado: false`, resposta 200 normal). */
+export async function obterStatusFontesRelatorioTransparencia(
+  caminhoConfiguracaoFontes: string,
+): Promise<StatusFontesRelatorioTransparencia> {
+  const resposta = await fetch(
+    `${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/fontes${construirQueryString({
+      caminho_configuracao_fontes: caminhoConfiguracaoFontes,
+    })}`,
+  );
+
+  if (resposta.status === 503) {
+    const corpo = await resposta.json().catch(() => null);
+    throw mensagem503RelatorioTransparencia((corpo as { detail?: string })?.detail ?? "");
+  }
+  if (!resposta.ok) {
+    const corpo = await resposta.json().catch(() => null);
+    throw new Error(mensagemDoErro422(corpo, resposta.status));
+  }
+
+  return resposta.json();
+}
+
+/** Micro-sprint UX operacional — `POST /fontes`: persiste o(s) caminho(s)
+ * selecionado(s). Atualização parcial — enviar só `caminho_base_ordens_
+ * bancarias` (ou só `caminho_controle_dimcac`) preserva o outro campo já
+ * configurado, permitindo selecionar as duas fontes em momentos
+ * diferentes. */
+export async function configurarFontesRelatorioTransparencia(
+  requisicao: RequisicaoConfigurarFontesRelatorioTransparencia,
+): Promise<StatusFontesRelatorioTransparencia> {
+  const resposta = await fetch(`${CAMINHO_BASE_RELATORIO_TRANSPARENCIA}/fontes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(requisicao),
+  });
+
+  if (resposta.status === 503) {
+    const corpo = await resposta.json().catch(() => null);
+    throw mensagem503RelatorioTransparencia((corpo as { detail?: string })?.detail ?? "");
+  }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
     throw new Error(mensagemDoErro422(corpo, resposta.status));

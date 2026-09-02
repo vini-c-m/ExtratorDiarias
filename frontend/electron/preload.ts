@@ -78,6 +78,12 @@ contextBridge.exposeInMainWorld("api", {
   // Central de Conferência).
   obterCaminhoConfiguracaoTemplateRelatorioTransparencia: (): Promise<string> =>
     ipcRenderer.invoke("relatorio-transparencia:obter-caminho-configuracao-template"),
+  // Micro-sprint UX operacional — mesmo critério acima, mas para a
+  // configuração isolada dos caminhos de Base de Ordens Bancárias e
+  // Controle DIMCAC (arquivo próprio, nunca o mesmo de decisões nem do
+  // Template Oficial).
+  obterCaminhoConfiguracaoFontesRelatorioTransparencia: (): Promise<string> =>
+    ipcRenderer.invoke("relatorio-transparencia:obter-caminho-configuracao-fontes"),
   // Micro-sprint 3H — diálogo nativo "Salvar como" para o XLSX final do
   // Relatório do Portal da Transparência. Diferente de `salvarRelatorio`
   // (que copia um arquivo já gerado pelo backend): aqui o backend ainda não

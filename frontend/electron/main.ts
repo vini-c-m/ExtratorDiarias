@@ -46,7 +46,27 @@ function subirBackend(): void {
       process.platform === "win32"
         ? path.join(BACKEND_DIR, ".venv", "Scripts", "python.exe")
         : path.join(BACKEND_DIR, ".venv", "bin", "python");
-    argumentos = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(BACKEND_PORT)];
+    // QA Codex (defesa em profundidade, NÃO a correção de concorrência em
+    // si — essa é `filelock.FileLock` no backend; ver
+    // `backend/app/consulta/persistencia_decisoes.py`) — `--workers 1`
+    // explícito. Diferente do build empacotado (`entrypoint.py`, que passa
+    // o objeto FastAPI já carregado), aqui `app.main:app` vai como STRING
+    // para o Uvicorn — o guard que faz o build empacotado recusar
+    // `WEB_CONCURRENCY>1` (por não aceitar objeto vivo com múltiplos
+    // workers) não existe neste caminho; um `WEB_CONCURRENCY` herdado do
+    // shell de desenvolvimento subiria múltiplos processos de verdade,
+    // silenciosamente, sem isso.
+    argumentos = [
+      "-m",
+      "uvicorn",
+      "app.main:app",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(BACKEND_PORT),
+      "--workers",
+      "1",
+    ];
     cwd = BACKEND_DIR;
   }
 

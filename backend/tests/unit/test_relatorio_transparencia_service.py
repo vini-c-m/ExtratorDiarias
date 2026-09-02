@@ -1,6 +1,10 @@
 from datetime import date
 
+import openpyxl
 import pytest
+from odf.opendocument import OpenDocumentSpreadsheet
+from odf.table import Table, TableCell, TableRow
+from odf.text import P
 from openpyxl import Workbook
 
 from app.domain.relatorio_transparencia.decisao import AcaoDecisao
@@ -133,6 +137,32 @@ def _preparar(tmp_path, linhas_ob, *, mes_referencia=5, caminho_decisoes=None):
         mes_referencia=mes_referencia,
         caminho_decisoes=str(caminho_decisoes),
     ), str(caminho_base_ob), str(caminho_controle), str(caminho_decisoes)
+
+
+# Sprint 3 (HOMO-RT-06) — Planilha de Passagens sintética (.ods), mesmo
+# formato mínimo já validado em `test_repositorio_planilha_passagens.py`.
+def _criar_planilha_passagens_ods(caminho, linhas):
+    def _celula(valor):
+        c = TableCell()
+        if isinstance(valor, (int, float)):
+            c = TableCell(valuetype="float", value=float(valor))
+        if valor is not None:
+            c.addElement(P(text=str(valor)))
+        return c
+
+    documento = OpenDocumentSpreadsheet()
+    tabela = Table(name="Controle de Diárias")
+    cabecalho = TableRow()
+    for rotulo in ("Ordem Bancária", "Transporte", "Valor da Passagem"):
+        cabecalho.addElement(_celula(rotulo))
+    tabela.addElement(cabecalho)
+    for linha in linhas:
+        tr = TableRow()
+        for valor in linha:
+            tr.addElement(_celula(valor))
+        tabela.addElement(tr)
+    documento.spreadsheet.addElement(tabela)
+    documento.save(str(caminho))
 
 
 # --- 1. Preparar relatório sem revisão ------------------------------------
@@ -1005,7 +1035,7 @@ def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
         caminho_destino=caminho_destino,
     )
 
-    assert resultado.total_ocorrencias == 1
+    assert resultado.oficial.total_ocorrencias == 1
     import os
 
     assert os.path.exists(caminho_destino)
@@ -1088,7 +1118,7 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
         caminho_destino=caminho_destino,
     )
 
-    assert resultado.total_ocorrencias == 1
+    assert resultado.oficial.total_ocorrencias == 1
     import openpyxl
 
     wb = openpyxl.load_workbook(caminho_destino)
@@ -1337,7 +1367,7 @@ def test_gerar_relatorio_xlsx_publica_exatamente_a_ocorrencia_fisica_escolhida(t
         caminho_destino=caminho_destino,
     )
 
-    assert resultado.total_ocorrencias == 1
+    assert resultado.oficial.total_ocorrencias == 1
     import openpyxl
 
     wb = openpyxl.load_workbook(caminho_destino)
@@ -1410,7 +1440,7 @@ def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_reexportar_linhas_trocad
         caminho_configuracao_template=caminho_configuracao_template,
         caminho_destino=caminho_destino,
     )
-    assert resultado_xlsx.total_ocorrencias == 1
+    assert resultado_xlsx.oficial.total_ocorrencias == 1
     import openpyxl
 
     wb = openpyxl.load_workbook(caminho_destino)
@@ -1810,7 +1840,7 @@ def test_xlsx_publica_exatamente_uma_linha_para_classe_identica(tmp_path):
         caminho_destino=caminho_destino,
     )
 
-    assert resultado.total_ocorrencias == 2  # 1 representante de A + B — NUNCA 3
+    assert resultado.oficial.total_ocorrencias == 2  # 1 representante de A + B — NUNCA 3
     import openpyxl
 
     wb = openpyxl.load_workbook(caminho_destino)
@@ -1851,7 +1881,7 @@ def test_xlsx_nenhuma_selecionada_gera_zero_linhas(tmp_path):
         caminho_destino=caminho_destino,
     )
 
-    assert resultado.total_ocorrencias == 0
+    assert resultado.oficial.total_ocorrencias == 0
     import openpyxl
 
     wb = openpyxl.load_workbook(caminho_destino)
@@ -1944,9 +1974,551 @@ def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp
         caminho_destino=caminho_destino,
     )
 
-    assert resultado.total_ocorrencias == 1
+    assert resultado.oficial.total_ocorrencias == 1
     import openpyxl
 
     wb = openpyxl.load_workbook(caminho_destino)
     ws = wb["Controle de Diárias"]
     assert ws["D7"].value == "TÉCNICO JUDICIÁRIO"  # NUNCA "ANALISTA JUDICIÁRIO" (o que foi visto na decisão antiga)
+
+
+# ============================================================================
+# Sprint 3 (HOMO-RT-06) — wiring OPCIONAL de `caminho_planilha_passagens` em
+# todo o service. `None` (omitido) preserva EXATAMENTE o comportamento
+# anterior; quando informado, a Planilha de Passagens é lida/cruzada e
+# `OcorrenciaFinanceira.passagem` chega preenchida até o escritor.
+# ============================================================================
+
+
+def test_omitir_planilha_passagens_preserva_comportamento_anterior(tmp_path):
+    """Controle — nenhum parâmetro novo, sem quebra de retrocompatibilidade:
+    `caminho_planilha_passagens` nunca informado em nenhuma chamada."""
+    resumo, *_ = _preparar(tmp_path, [_linha_ob(dh="2026DH000001", ob="2026OB000001")])
+
+    assert resumo.total_candidatos_normais == 1
+    assert resumo.pode_gerar_relatorio is True
+
+
+def test_gerar_relatorio_xlsx_sem_planilha_passagens_coluna_j_vazia(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+        # caminho_planilha_passagens OMITIDO de propósito.
+    )
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["J7"].value is None
+
+
+def test_gerar_relatorio_xlsx_com_planilha_passagens_publica_valor_real(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000042", valor=100.0)]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(caminho_passagens, [["2026OB000042", "AVIÃO", 1657.76]])
+
+    service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["J7"].value == 1657.76
+
+
+def test_gerar_relatorio_xlsx_ob_sem_correspondencia_na_planilha_fica_vazia(tmp_path):
+    """Estado E — OB da Base OB sem linha na Planilha de Passagens."""
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001", valor=100.0)]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(caminho_passagens, [["2026OB999999", "AVIÃO", 500.0]])
+
+    service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["J7"].value is None
+
+
+def test_gerar_relatorio_xlsx_estado_invalido_nao_bloqueia_via_service(tmp_path):
+    """Fechamento HOMO-RT-06 (decisão de produto final) — estado D propaga
+    do service até o escritor, mas NUNCA bloqueia: célula vazia, geração
+    conclui normalmente."""
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000042", valor=100.0)]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(caminho_passagens, [["2026OB000042", "CARRO", "#VALOR!"]])
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+
+    import os
+
+    assert resultado.oficial.total_ocorrencias == 1
+    assert os.path.exists(caminho_destino)
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["J7"].value is None
+
+
+def test_preparar_relatorio_com_planilha_passagens_nao_muda_rn01_rn07(tmp_path):
+    """A presença da Planilha de Passagens nunca altera quantos candidatos
+    normais/revisões existem — só enriquece dado, nunca reclassifica."""
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001"),
+        _linha_ob(
+            dh="2026DH000002", ob="2026OB000002", cpf=22222222222,
+            periodo_inicial=date(2026, 5, 11), periodo_final=date(2026, 5, 11),
+            trecho="RECIFE - ARCOVERDE", valor=308.19, data_ob="16/05/2026 09:00:00",
+        ),
+        _linha_ob(
+            dh="2026DH000003", ob="2026OB000003", cpf=22222222222,
+            periodo_inicial=date(2026, 5, 11), periodo_final=date(2026, 5, 11),
+            trecho="RECIFE - ARCOVERDE", valor=308.19, data_ob="17/05/2026 09:00:00",
+        ),
+    ]
+    resumo_sem, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(
+        caminho_passagens,
+        [["2026OB000001", "AVIÃO", 100.0], ["2026OB000002", "CARRO", "-"]],
+    )
+    resumo_com = service.preparar_relatorio(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+
+    assert resumo_com.total_candidatos_normais == resumo_sem.total_candidatos_normais
+    assert resumo_com.total_revisoes == resumo_sem.total_revisoes
+    assert resumo_com.revisoes[0].regra == "RN07"  # continua RN07, nunca disparado por passagem
+
+
+# ============================================================================
+# Sprint 5 — geração conjunta (oficial + operacional) a partir do MESMO
+# ResultadoRevisado, via `gerar_relatorio_xlsx`. Nenhuma reconstrução, nenhuma
+# reclassificação separada — os dois artefatos nascem da mesma chamada.
+# ============================================================================
+
+
+def _linhas_rn04_tres_fisicas_mesma_ob():
+    """[A,A,B] — 3 linhas físicas da MESMA OB/DH: as duas primeiras são
+    byte-idênticas entre si (mesmo `motivo`), a terceira diverge — único
+    cenário real em que `_resolver_repeticao_fisica` produz uma
+    `RevisaoNecessaria` RN04 com 3 ocorrências (achado do Sprint 4:
+    Categoria B só é alcançável com 3+ repetições físicas, nunca com 2)."""
+    return [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo idêntico"),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo idêntico"),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo DIFERENTE"),
+    ]
+
+
+def test_gerar_relatorio_xlsx_com_nao_publicadas_gera_dois_arquivos(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000001"],
+        autor="servidor.teste",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    import os
+
+    assert resultado.oficial.total_ocorrencias == 1
+    assert resultado.nao_publicadas_gerado is True
+    assert resultado.total_nao_publicadas == 1
+    assert resultado.total_categoria_a == 1
+    assert resultado.total_categoria_b == 0
+    assert resultado.erro_nao_publicadas is None
+    assert resultado.caminho_arquivo_nao_publicadas is not None
+    assert os.path.basename(resultado.caminho_arquivo_nao_publicadas) == "Diarias_Nao_Publicadas_Maio_2026.xlsx"
+    assert os.path.dirname(resultado.caminho_arquivo_nao_publicadas) == os.path.dirname(caminho_destino)
+    assert os.path.exists(resultado.caminho_arquivo_nao_publicadas)
+
+    wb = openpyxl.load_workbook(resultado.caminho_arquivo_nao_publicadas)
+    ws = wb.active
+    linhas_dados = [linha for linha in ws.iter_rows(min_row=2) if linha[0].value]
+    assert len(linhas_dados) == 1
+    assert linhas_dados[0][4].value == "2026OB000002"  # coluna E — OB
+    assert linhas_dados[0][0].value == "Não publicada por decisão humana"  # coluna A — Categoria
+
+
+def test_gerar_relatorio_xlsx_sem_nao_publicadas_nao_cria_arquivo_operacional(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    import os
+
+    assert resultado.oficial.total_ocorrencias == 1
+    assert resultado.nao_publicadas_gerado is False
+    assert resultado.total_nao_publicadas == 0
+    assert resultado.total_categoria_a == 0
+    assert resultado.total_categoria_b == 0
+    assert resultado.caminho_arquivo_nao_publicadas is None
+    assert resultado.erro_nao_publicadas is None
+    assert not os.path.exists(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
+
+
+def test_gerar_relatorio_xlsx_publicar_zero_todas_na_operacional_categoria_a(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[],  # PUBLICAR ZERO — decisão concluída, distinta de ADIAR
+        autor="servidor.teste",
+        observacao="Nenhuma das duas ocorrências deste grupo será publicada nesta competência.",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.oficial.total_ocorrencias == 0
+    assert resultado.nao_publicadas_gerado is True
+    assert resultado.total_nao_publicadas == 2
+    assert resultado.total_categoria_a == 2
+    assert resultado.total_categoria_b == 0
+
+    wb = openpyxl.load_workbook(resultado.caminho_arquivo_nao_publicadas)
+    ws = wb.active
+    obs_operacional = {linha[4].value for linha in ws.iter_rows(min_row=2) if linha[0].value}
+    assert obs_operacional == {"2026OB000001", "2026OB000002"}
+
+
+def test_gerar_relatorio_xlsx_duplicata_fisica_vira_categoria_b_na_operacional(tmp_path):
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
+        tmp_path, _linhas_rn04_tres_fisicas_mesma_ob()
+    )
+    revisao = resumo.revisoes[0]
+    assert revisao.regra == "RN04"
+    identidade_grupo = revisao.identidade_grupo
+    identidade_a1 = revisao.ocorrencias[0].identidade  # uma das duas físicas idênticas
+
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade_grupo,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=[identidade_a1],
+        autor="servidor.teste",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    assert resultado.oficial.total_ocorrencias == 1
+    assert resultado.total_nao_publicadas == 2
+    assert resultado.total_categoria_a == 1
+    assert resultado.total_categoria_b == 1
+
+    wb = openpyxl.load_workbook(resultado.caminho_arquivo_nao_publicadas)
+    ws = wb.active
+    categorias = {linha[0].value for linha in ws.iter_rows(min_row=2) if linha[0].value}
+    assert categorias == {"Não publicada por decisão humana", "Duplicata física idêntica suprimida"}
+
+
+def test_gerar_relatorio_xlsx_falha_no_operacional_retorna_estado_parcial(tmp_path, monkeypatch):
+    """O oficial JÁ foi promovido com sucesso antes da tentativa do
+    operacional — uma falha aqui NUNCA pode desfazer isso nem virar um
+    'sucesso' silencioso dos dois artefatos."""
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000001"],
+        autor="servidor.teste",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    def _levanta(*args, **kwargs):
+        raise OSError("disco cheio (simulado)")
+
+    monkeypatch.setattr(service, "gerar_xlsx_diarias_nao_publicadas", _levanta)
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    import os
+
+    assert os.path.exists(caminho_destino)  # oficial permanece promovido, nunca desfeito
+    assert resultado.oficial.total_ocorrencias == 1
+    assert resultado.nao_publicadas_gerado is False
+    assert resultado.caminho_arquivo_nao_publicadas is None
+    assert resultado.total_nao_publicadas == 1  # contagem real preservada mesmo sem arquivo gravado
+    assert resultado.total_categoria_a == 1
+    assert resultado.erro_nao_publicadas is not None
+    assert "disco cheio" in resultado.erro_nao_publicadas
+
+
+def test_gerar_relatorio_xlsx_operacional_ja_existe_retorna_estado_parcial_no_clobber(tmp_path):
+    """No-clobber já homologado do escritor operacional (Sprint 4) — um
+    arquivo pré-existente no destino derivado nunca é sobrescrito às
+    cegas; o oficial, gerado antes, continua promovido normalmente."""
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000001"],
+        autor="servidor.teste",
+    )
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+    caminho_operacional_preexistente = str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx")
+    Workbook().save(caminho_operacional_preexistente)
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+    )
+
+    import os
+
+    assert os.path.exists(caminho_destino)
+    assert resultado.oficial.total_ocorrencias == 1
+    assert resultado.nao_publicadas_gerado is False
+    assert resultado.caminho_arquivo_nao_publicadas is None
+    assert resultado.erro_nao_publicadas is not None
+    assert "destino" in resultado.erro_nao_publicadas.lower() or "existe" in resultado.erro_nao_publicadas.lower()
+
+
+def test_gerar_relatorio_xlsx_bloqueado_nao_cria_nenhum_arquivo(tmp_path):
+    """Revisão pendente (G05) continua bloqueando a geração — nem o oficial
+    nem o operacional chegam a ser criados."""
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    _, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+
+    with pytest.raises(service.RelatorioBloqueadoPorPendencias):
+        service.gerar_relatorio_xlsx(
+            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_controle_dimcac=caminho_controle,
+            ano_exercicio=2026,
+            mes_referencia=5,
+            caminho_decisoes=caminho_decisoes,
+            caminho_configuracao_template=caminho_configuracao_template,
+            caminho_destino=caminho_destino,
+        )
+
+    import os
+
+    assert not os.path.exists(caminho_destino)
+    assert not os.path.exists(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
+
+
+def test_gerar_relatorio_xlsx_passagem_preservada_no_oficial_e_operacional(tmp_path):
+    """Preserva integralmente a semântica HOMO-RT-06: A → valor numérico no
+    oficial, B/C/D/E → célula vazia no oficial; o operacional mantém a
+    'Situação da Passagem' legível mesmo quando o valor publicável é
+    vazio."""
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
+    identidade = resumo.revisoes[0].identidade_grupo
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = str(tmp_path / "saida.xlsx")
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(
+        caminho_passagens,
+        [["2026OB000001", "AVIÃO", 500.0], ["2026OB000002", "CARRO", "-"]],
+    )
+    # A decisão precisa ser registrada com a MESMA Planilha de Passagens
+    # ativa que será usada na geração — HOMO-RT-06 inclui o valor da
+    # passagem no fingerprint da linha publicável, então uma decisão
+    # registrada sem essa fonte fica DESATUALIZADA ao gerar com ela ativa
+    # (comportamento correto e já homologado, não um bug deste teste).
+    service.registrar_decisao_revisao(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        identidade_grupo=identidade,
+        acao=AcaoDecisao.PUBLICAR,
+        obs_selecionadas=["2026OB000001"],
+        autor="servidor.teste",
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+
+    resultado = service.gerar_relatorio_xlsx(
+        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_controle_dimcac=caminho_controle,
+        ano_exercicio=2026,
+        mes_referencia=5,
+        caminho_decisoes=caminho_decisoes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=caminho_destino,
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+
+    wb_oficial = openpyxl.load_workbook(caminho_destino)
+    ws_oficial = wb_oficial["Controle de Diárias"]
+    assert ws_oficial["J7"].value == 500.0  # A — publicada no oficial
+
+    wb_operacional = openpyxl.load_workbook(resultado.caminho_arquivo_nao_publicadas)
+    ws_operacional = wb_operacional.active
+    linhas_dados = [linha for linha in ws_operacional.iter_rows(min_row=2) if linha[0].value]
+    assert len(linhas_dados) == 1
+    linha_b = linhas_dados[0]
+    assert linha_b[4].value == "2026OB000002"  # coluna E — OB
+    assert linha_b[15].value is None  # coluna P — Valor da Passagem (B — ausência, célula vazia)
+    assert linha_b[16].value == "AUSENTE"  # coluna Q — Situação da Passagem, preservada mesmo vazia
+
+
+def test_derivar_caminho_nao_publicadas_mesmo_diretorio_nome_por_competencia(tmp_path):
+    caminho_oficial = str(tmp_path / "Relatorio_Portal_Transparencia_Dezembro_2026.xlsx")
+    caminho = service._derivar_caminho_nao_publicadas(caminho_oficial, ano_exercicio=2026, mes_referencia=12)
+
+    import os
+
+    assert os.path.dirname(caminho) == os.path.dirname(os.path.abspath(caminho_oficial))
+    assert os.path.basename(caminho) == "Diarias_Nao_Publicadas_Dezembro_2026.xlsx"

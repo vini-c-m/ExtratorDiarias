@@ -15,20 +15,129 @@ este módulo não lê nem escreve nada além do seu próprio arquivo JSON."""
 
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
+
+import filelock
 
 from app.domain.relatorio_transparencia.decisao import AcaoDecisao, DecisaoHumana
 
 __all__ = [
     "VERSAO_ESQUEMA_ATUAL",
     "PersistenciaDecisoesCorrompida",
+    "PersistenciaDecisoesEmUso",
     "VersaoEsquemaIncompativel",
     "carregar_decisoes",
     "salvar_decisao",
 ]
 
 VERSAO_ESQUEMA_ATUAL = 1
+
+# QA Codex (achado real, BUG-01) — `salvar_decisao` fazia um ciclo
+# read-modify-write (carregar tudo → mesclar uma decisão → escrever tudo)
+# sem nenhuma trava, usando um nome de `.tmp` FIXO (derivado só do
+# `caminho`, nunca único por chamada). Duas chamadas concorrentes (duas
+# requisições HTTP simultâneas a `POST /revisoes/{id}/decisao` — o endpoint
+# é síncrono, o FastAPI/Starlette despacha em threads reais do mesmo
+# processo) liam o mesmo estado antes de qualquer uma escrever, e as duas
+# escritas colidiam no mesmo `.tmp` — resultado: decisão perdida
+# silenciosamente, ou `PermissionError` no Windows. `os.replace` sozinho só
+# protege a promoção final, não o ciclo inteiro.
+#
+# QA Codex (revalidação, cross-process) — um `threading.Lock` (correção
+# anterior desta função) só protege threads do MESMO processo. Com
+# `WEB_CONCURRENCY`/`--workers` > 1, o Uvicorn sobe processos Python
+# distintos, cada um com sua própria instância de `threading.Lock` — os
+# locks não se enxergam, e a mesma corrida (decisão perdida/erro) volta a
+# acontecer. Trocado por `filelock.FileLock`: trava real do sistema
+# operacional (`LockFileEx` no Windows via `ctypes`/`msvcrt` da stdlib —
+# nenhuma dependência de `pywin32` —, `flock` no POSIX), que protege
+# threads E processos com o MESMO mecanismo. Bloqueante, com timeout de
+# 10s (ver `PersistenciaDecisoesEmUso` abaixo) — a seção crítica é só
+# serializar um JSON pequeno, sempre rápida; o timeout existe só como rede
+# de segurança contra um processo externo genuinamente travado (antivírus
+# varrendo o arquivo, disco lento etc.), não porque a operação em si seja
+# lenta.
+#
+# Por que não deixa lock órfão após um crash: a trava do `filelock` é uma
+# trava CONSULTIVA do SO sobre um handle de arquivo aberto — quando o
+# processo que a detém termina por qualquer motivo (saída normal, exceção,
+# `kill -9`/`TerminateProcess`), o kernel fecha todos os handles abertos
+# por ele, liberando a trava junto. O arquivo `.lock` físico pode continuar
+# existindo em disco (é só o alvo da trava, não o sinal dela — confirmado
+# na própria documentação da lib: "Windows attempts to delete the lock
+# file after release, but deletion is not guaranteed... does not affect
+# lock correctness") — um processo novo tentando adquirir a trava consulta
+# o SO, nunca a mera existência do arquivo. Diferente, por desenho, do
+# lockfile `O_CREAT|O_EXCL` de
+# `escritor_relatorio_transparencia._adquirir_trava_destino` (mantido como
+# está, fora de escopo — problema de operação longa/fail-fast diferente, e
+# risco de lock órfão já conhecido e deliberadamente não corrigido).
+def _trava_decisoes(caminho: Path) -> filelock.FileLock:
+    return filelock.FileLock(f"{caminho}.lock", timeout=10)
+
+
+# Achado real durante a homologação desta correção (volume alto de
+# requisições HTTP concorrentes, servidor Uvicorn multi-worker de verdade)
+# — mesmo com a trava cross-process cobrindo o ciclo inteiro, `os.replace`
+# ainda podia falhar com `PermissionError: [WinError 5] Acesso negado`: no
+# Windows, `open()`/`Path.read_text()` abrem um arquivo SEM
+# `FILE_SHARE_DELETE` por padrão — um LEITOR concorrente (`carregar_
+# decisoes`, chamado sem trava por `GET /revisoes` ou pela própria
+# reconstrução de estado que roda ANTES de `salvar_decisao` adquirir a
+# trava) pode ter o arquivo de destino aberto no instante exato em que
+# `os.replace` tenta promovê-lo, e o Windows recusa. Não é a mesma classe
+# de bug do QA (escritor×escritor, já eliminada pela trava) — é
+# leitor×escritor, e o próprio código já tem o remédio testado para
+# exatamente isso: `base_local_sqlite._substituir_com_retry` (poucas
+# tentativas, backoff curto — a colisão é sempre um LEITOR de passagem,
+# nunca um lock preso, então uma nova tentativa quase imediata já resolve).
+# Reaproveita o mesmo desenho aqui, mesmos valores.
+_TENTATIVAS_REPLACE = 3
+_INTERVALO_BASE_RETRY_REPLACE_S = 0.05
+
+
+def _substituir_com_retry(caminho_tmp: Path, caminho_destino: Path) -> None:
+    ultimo_erro: PermissionError | None = None
+    for tentativa in range(_TENTATIVAS_REPLACE):
+        try:
+            os.replace(caminho_tmp, caminho_destino)
+            return
+        except PermissionError as erro:
+            ultimo_erro = erro
+            if tentativa < _TENTATIVAS_REPLACE - 1:
+                time.sleep(_INTERVALO_BASE_RETRY_REPLACE_S * (tentativa + 1))
+    assert ultimo_erro is not None
+    raise ultimo_erro
+
+
+# Mesmo achado, lado LEITOR: `carregar_decisoes` (chamada sem trava — por
+# `GET /revisoes`/`/preparar`, ou pela reconstrução de estado que roda
+# ANTES de `salvar_decisao` adquirir a trava) também pode colidir com um
+# `os.replace` em andamento e receber `PermissionError` — comprovado em
+# execução real sob carga concorrente alta. Mesmo retry curto, mesma
+# lógica: a colisão é sempre um ESCRITOR de passagem, nunca uma permissão
+# genuinamente negada, então tentar de novo quase imediatamente resolve.
+def _ler_texto_com_retry(caminho: Path) -> str:
+    ultimo_erro: PermissionError | None = None
+    for tentativa in range(_TENTATIVAS_REPLACE):
+        try:
+            return caminho.read_text(encoding="utf-8")
+        except PermissionError as erro:
+            ultimo_erro = erro
+            if tentativa < _TENTATIVAS_REPLACE - 1:
+                time.sleep(_INTERVALO_BASE_RETRY_REPLACE_S * (tentativa + 1))
+    assert ultimo_erro is not None
+    raise ultimo_erro
+
+
+class PersistenciaDecisoesEmUso(Exception):
+    """O arquivo de decisões está sendo usado por outro processo/thread há
+    mais de 10s (timeout do `FileLock`) — nunca deveria acontecer em uso
+    normal (a seção protegida é só serializar um JSON pequeno); mensagem já
+    adequada para exibição direta ao usuário ("tente novamente"), nunca a
+    exceção técnica (`filelock.Timeout`) crua."""
 
 
 class PersistenciaDecisoesCorrompida(Exception):
@@ -96,7 +205,7 @@ def carregar_decisoes(caminho: str | Path) -> dict[str, DecisaoHumana]:
         return {}
 
     try:
-        texto = caminho.read_text(encoding="utf-8")
+        texto = _ler_texto_com_retry(caminho)
     except UnicodeDecodeError as erro:
         raise PersistenciaDecisoesCorrompida(
             "Arquivo de decisões corrompido (codificação de texto inválida)."
@@ -145,16 +254,34 @@ def salvar_decisao(caminho: str | Path, decisao: DecisaoHumana) -> None:
     arquivo inteiro com uma única decisão. Escrita atômica: grava em
     `<caminho>.tmp` e só then troca com `os.replace` (mesma técnica já
     homologada em `configuracao_app.persistir_pastas_operacionais`) — uma
-    falha no meio da escrita nunca deixa o arquivo real corrompido."""
-    caminho = Path(caminho)
-    decisoes = carregar_decisoes(caminho)
-    decisoes[decisao.identidade_grupo] = decisao
+    falha no meio da escrita nunca deixa o arquivo real corrompido.
 
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    conteudo = {
-        "versao_esquema": VERSAO_ESQUEMA_ATUAL,
-        "decisoes": {identidade: _decisao_para_dict(d) for identidade, d in decisoes.items()},
-    }
-    temporario = caminho.with_suffix(caminho.suffix + ".tmp")
-    temporario.write_text(json.dumps(conteudo, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporario, caminho)
+    QA Codex (BUG-01, correção cross-process) — todo o ciclo leitura+
+    mesclagem+escrita+promoção corre sob `_trava_decisoes(caminho)`
+    (`filelock.FileLock`, trava real do SO — protege threads E processos):
+    duas chamadas concorrentes para o mesmo `caminho` (identidades de
+    grupo diferentes), mesmo vindas de processos Uvicorn distintos (ex.
+    `WEB_CONCURRENCY>1`), agora são serializadas e as duas sobrevivem, em
+    vez de uma sobrescrever silenciosamente a outra. O nome do `.tmp`
+    continua fixo (`<caminho>.tmp`) de propósito — com o ciclo inteiro
+    protegido pela trava, só uma chamada por vez (de qualquer processo)
+    pode estar escrevendo nele, então a exclusividade deixa de depender do
+    nome ser único."""
+    caminho = Path(caminho)
+    try:
+        with _trava_decisoes(caminho):
+            decisoes = carregar_decisoes(caminho)
+            decisoes[decisao.identidade_grupo] = decisao
+
+            caminho.parent.mkdir(parents=True, exist_ok=True)
+            conteudo = {
+                "versao_esquema": VERSAO_ESQUEMA_ATUAL,
+                "decisoes": {identidade: _decisao_para_dict(d) for identidade, d in decisoes.items()},
+            }
+            temporario = caminho.with_suffix(caminho.suffix + ".tmp")
+            temporario.write_text(json.dumps(conteudo, ensure_ascii=False, indent=2), encoding="utf-8")
+            _substituir_com_retry(temporario, caminho)
+    except filelock.Timeout as erro:
+        raise PersistenciaDecisoesEmUso(
+            "O arquivo de decisões está sendo usado por outro processo. Tente novamente em instantes."
+        ) from erro

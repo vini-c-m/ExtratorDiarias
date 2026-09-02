@@ -1,4 +1,5 @@
 import re
+from collections import Counter
 
 from app.domain.entities.campos_extraidos import CamposExtraidos
 from app.extraction.segmentacao_documentos import ultimo_segmento
@@ -97,6 +98,52 @@ _PADRAO_VALOR_CPF = r"(\d{3}[.\- ]?\d{3}[.\- ]?\d{3}[.\- ]?\d{2})"
 _PADRAO_SEI_RODAPE = re.compile(r"SEI\s+([\d./-]+)\s*/\s*pg\.\s*\d+", re.IGNORECASE)
 _PADRAO_SEI_SOLTO = re.compile(r"SEI\s*([\d./-]+)")
 
+# Sprint de Correção Crítica — fallback estrutural de SEI (processo real
+# 19.20.100000001.0016125/2026-70): quando a Solicitação vigente (a última —
+# nunca uma anterior, ver `ultimo_segmento`) tem o próprio rodapé removido
+# por `pdf_reader.py` (sobreposição física de duas páginas, ver comentário
+# daquele módulo), a busca primária acima não encontra nada dentro do
+# segmento. O SEI, ao contrário de todo campo de negócio, é metadado do
+# PROCESSO — idêntico em toda página, não pertence a um documento específico
+# — então é seguro (e só para ele) procurar fora do segmento, no texto
+# completo, DESDE QUE a fonte continue sendo o mesmo rodapé estrutural do
+# próprio SEI (`_PADRAO_SEI_RODAPE`, com o sufixo "/ pg. N"), nunca um regex
+# solto: uma citação em prosa a outro processo dentro de um anexo/normativo
+# (ex.: Diário Oficial) nunca tem esse sufixo, então nunca entra nesta
+# contagem. Este é o único fallback do parser inteiro que olha fora do
+# segmento da última ocorrência — todo campo de negócio continua vindo
+# exclusivamente de `texto_requerimento` (ver `SeiParserV1.extrair`).
+_PADRAO_SEI_NUP_MPPE = re.compile(r"SEI\s+MPPE\s+NUP:\s*([\d./-]+)", re.IGNORECASE)
+_MINIMO_OCORRENCIAS_CONSENSO_SEI = 2
+
+
+def _sei_por_consenso_estrutural(texto: str) -> str | None:
+    """Só chamado quando a busca primária (restrita ao segmento da última
+    Solicitação) não encontra nada. Conta, no texto INTEIRO do processo,
+    quantas vezes cada NUP aparece no rodapé padrão "SEI <NUP> / pg. <N>" —
+    só retorna um candidato com maioria clara (nunca em caso de empate) e
+    pelo menos `_MINIMO_OCORRENCIAS_CONSENSO_SEI` ocorrências (uma única
+    ocorrência isolada não é 'consenso'). Se existir também uma linha "SEI
+    MPPE NUP: <NUP>" e ela discordar do candidato majoritário, trata como
+    ambíguo — sinal de que algo está errado, nunca critério de desempate — e
+    não retorna nada. Em qualquer dúvida, devolve `None`: nunca adivinha."""
+    contagem = Counter(match.group(1) for match in _PADRAO_SEI_RODAPE.finditer(texto))
+    if not contagem:
+        return None
+
+    mais_comuns = contagem.most_common(2)
+    candidato, votos = mais_comuns[0]
+    if votos < _MINIMO_OCORRENCIAS_CONSENSO_SEI:
+        return None
+    if len(mais_comuns) > 1 and mais_comuns[1][1] == votos:
+        return None  # empate entre dois NUPs — não adivinha
+
+    nup_do_despacho = _PADRAO_SEI_NUP_MPPE.search(texto)
+    if nup_do_despacho and nup_do_despacho.group(1) != candidato:
+        return None  # fontes estruturais discordam — ambíguo, não adivinha
+
+    return candidato
+
 # Programa Permanente de QA Evolutivo (2026-08-06) — caso real SEI
 # 19.20.0001.0001165/2026-47: "FINALIDADE DA VIAGEM" é o único campo deste
 # formulário que é texto livre, então é o único que ocasionalmente quebra em
@@ -145,7 +192,10 @@ class SeiParserV1(ParserSei):
 
         texto_requerimento = ultimo_segmento(texto, _PADRAO_TITULO_REQUERIMENTO) or texto
 
-        sei = _PADRAO_SEI_RODAPE.search(texto_requerimento) or _PADRAO_SEI_SOLTO.search(texto_requerimento)
+        sei_primario = _PADRAO_SEI_RODAPE.search(texto_requerimento) or _PADRAO_SEI_SOLTO.search(
+            texto_requerimento
+        )
+        sei = sei_primario.group(1).strip() if sei_primario else _sei_por_consenso_estrutural(texto)
 
         doc_origem = _buscar_campo("LOTAÇÃO", texto_requerimento)
         if not doc_origem:
@@ -172,7 +222,7 @@ class SeiParserV1(ParserSei):
             data_retorno = _buscar_campo("DATA DE RETORNO", texto_requerimento, r"([\d/]+)")
 
         return CamposExtraidos(
-            sei=sei.group(1).strip() if sei else None,
+            sei=sei,
             doc_origem=doc_origem.group(1).strip() if doc_origem else None,
             cpf=_somente_numeros(cpf.group(1)) if cpf else None,
             periodo_inicial=data_inicio.group(1).strip() if data_inicio else None,

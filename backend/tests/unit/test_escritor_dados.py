@@ -1,4 +1,6 @@
+import multiprocessing
 import os
+import time
 
 import pytest
 from openpyxl import load_workbook
@@ -9,6 +11,7 @@ from app.planilha.escritor_dados import (
     cadastrar_servidor,
 )
 from app.planilha import escritor_dados
+from tests._multiprocesso_util import executar_e_reportar, segurar_trava_ate_ser_morto
 
 
 def _cadastrar(caminho, cpf="111.222.333-44", **overrides):
@@ -414,3 +417,84 @@ def test_ordenacao_preserva_cabecalho_intacto(caminho_planilha_conferencia_teste
 
     cabecalho_depois = [load_workbook(caminho)["Dados"].cell(row=1, column=c).value for c in range(1, 9)]
     assert cabecalho_depois == cabecalho_antes
+
+
+# ============================================================================
+# QA Codex (revalidação cross-process) — `threading.Lock` (correção
+# anterior) só protegia threads do mesmo processo; sob `WEB_CONCURRENCY`/
+# múltiplos workers, dois processos distintos podiam gravar CPFs
+# diferentes na mesma linha livre, sem nenhuma coordenação. Corrigido com
+# `_trava_escrita_dados` (`filelock.FileLock`, cross-process). Testes com
+# `multiprocessing.Process` de verdade.
+# ============================================================================
+
+
+def test_cadastrar_servidor_multiprocesso_cpfs_diferentes_sobrevivem(caminho_planilha_conferencia_teste):
+    caminho = caminho_planilha_conferencia_teste()
+
+    fila = multiprocessing.Queue()
+    p1 = multiprocessing.Process(
+        target=executar_e_reportar,
+        args=(
+            fila,
+            cadastrar_servidor,
+            (caminho,),
+            {"cpf": "111.111.111-11", "nome": "Processo A", "matricula": "1001", "cargo": "Cargo A"},
+        ),
+    )
+    p2 = multiprocessing.Process(
+        target=executar_e_reportar,
+        args=(
+            fila,
+            cadastrar_servidor,
+            (caminho,),
+            {"cpf": "222.222.222-22", "nome": "Processo B", "matricula": "1002", "cargo": "Cargo B"},
+        ),
+    )
+    p1.start()
+    p2.start()
+    resultados = [fila.get(timeout=20) for _ in range(2)]
+    p1.join(timeout=20)
+    p2.join(timeout=20)
+
+    assert all(r[0] == "ok" for r in resultados), resultados
+    estados = {r[1].estado for r in resultados}
+    # As duas cadastradas com sucesso — nenhuma sobrescreveu a outra na
+    # mesma linha livre (o próprio bug reportado pelo QA: duas requisições
+    # quase simultâneas escrevendo CPFs diferentes na mesma linha).
+    assert estados == {EstadoCadastro.SALVO}
+
+    workbook = load_workbook(caminho)
+    planilha = workbook["Dados"]
+    cpfs_gravados = {
+        planilha.cell(row=linha, column=1).value
+        for linha in range(2, planilha.max_row + 1)
+        if planilha.cell(row=linha, column=1).value is not None
+    }
+    assert 11111111111 in cpfs_gravados
+    assert 22222222222 in cpfs_gravados
+
+
+def test_cadastrar_servidor_processo_morto_segurando_trava_recupera_depois(
+    caminho_planilha_conferencia_teste,
+):
+    caminho = caminho_planilha_conferencia_teste()
+
+    fila = multiprocessing.Queue()
+    processo = multiprocessing.Process(
+        target=segurar_trava_ate_ser_morto,
+        args=(fila, escritor_dados._trava_escrita_dados, (caminho,)),
+    )
+    processo.start()
+    sinal = fila.get(timeout=15)
+    assert sinal == "trava_obtida"
+
+    processo.kill()
+    processo.join(timeout=15)
+    assert not processo.is_alive()
+
+    inicio = time.monotonic()
+    resultado = _cadastrar(caminho, cpf="333.333.333-33", nome="Processo Recuperacao")
+    duracao = time.monotonic() - inicio
+    assert duracao < 8  # recupera bem antes do timeout de 10s — nenhum lock órfão
+    assert resultado.estado is EstadoCadastro.SALVO

@@ -164,6 +164,12 @@ describe("useGerarRelatorioTransparencia — gerar", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 11,
       linha_total: 12,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
 
     const { result } = renderHook(() => useGerarRelatorioTransparencia(CAMINHO_CONFIGURACAO_TEMPLATE));
@@ -186,6 +192,10 @@ describe("useGerarRelatorioTransparencia — gerar", () => {
       caminhoArquivo: "C:\\fake\\Relatorio.xlsx",
       caminhoPasta: "C:\\fake",
       totalOcorrencias: 5,
+      naoPublicadasGerado: false,
+      caminhoArquivoNaoPublicadas: null,
+      totalNaoPublicadas: 0,
+      erroNaoPublicadas: null,
     });
   });
 
@@ -203,6 +213,12 @@ describe("useGerarRelatorioTransparencia — gerar", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 7,
       linha_total: 8,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
 
     const { result } = renderHook(() => useGerarRelatorioTransparencia(CAMINHO_CONFIGURACAO_TEMPLATE));
@@ -250,7 +266,14 @@ describe("useGerarRelatorioTransparencia — gerar", () => {
 });
 
 describe("useGerarRelatorioTransparencia — abrir relatório/pasta", () => {
-  async function gerarComSucesso() {
+  async function gerarComSucesso(
+    camposNaoPublicadas: {
+      caminho_arquivo_nao_publicadas?: string | null;
+      total_nao_publicadas?: number;
+      nao_publicadas_gerado?: boolean;
+      erro_nao_publicadas?: string | null;
+    } = {},
+  ) {
     statusMock.mockResolvedValue({ configurado: true, disponivel: true, caminho_template: "C:\\fake\\Modelo.xlsx" });
     (window.api.escolherDestinoRelatorioTransparencia as ReturnType<typeof vi.fn>).mockResolvedValue(
       "C:\\fake\\pasta\\Relatorio.xlsx",
@@ -262,6 +285,13 @@ describe("useGerarRelatorioTransparencia — abrir relatório/pasta", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 7,
       linha_total: 8,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
+      ...camposNaoPublicadas,
     });
 
     const { result } = renderHook(() => useGerarRelatorioTransparencia(CAMINHO_CONFIGURACAO_TEMPLATE));
@@ -315,6 +345,50 @@ describe("useGerarRelatorioTransparencia — abrir relatório/pasta", () => {
     });
 
     expect(result.current.erroAcaoPosGeracao).toBe("Não foi possível abrir a pasta do relatório.");
+    expect(result.current.estadoGeracao.fase).toBe("sucesso");
+  });
+
+  it("abrirArquivoNaoPublicadas chama abrirArquivo com o caminho do XLSX operacional", async () => {
+    const result = await gerarComSucesso({
+      caminho_arquivo_nao_publicadas: "C:\\fake\\pasta\\Diarias_Nao_Publicadas_Agosto_2026.xlsx",
+      total_nao_publicadas: 3,
+      nao_publicadas_gerado: true,
+    });
+
+    await act(async () => {
+      await result.current.abrirArquivoNaoPublicadas();
+    });
+
+    expect(window.api.abrirArquivo).toHaveBeenCalledWith(
+      "C:\\fake\\pasta\\Diarias_Nao_Publicadas_Agosto_2026.xlsx",
+    );
+  });
+
+  it("abrirArquivoNaoPublicadas não faz nada quando não há arquivo operacional (X=0)", async () => {
+    const result = await gerarComSucesso();
+
+    await act(async () => {
+      await result.current.abrirArquivoNaoPublicadas();
+    });
+
+    expect(window.api.abrirArquivo).not.toHaveBeenCalled();
+  });
+
+  it("falha ao abrir a planilha de não publicadas: mostra erro amigável, mantém a fase 'sucesso'", async () => {
+    const result = await gerarComSucesso({
+      caminho_arquivo_nao_publicadas: "C:\\fake\\pasta\\Diarias_Nao_Publicadas_Agosto_2026.xlsx",
+      total_nao_publicadas: 3,
+      nao_publicadas_gerado: true,
+    });
+    (window.api.abrirArquivo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("ENOENT"));
+
+    await act(async () => {
+      await result.current.abrirArquivoNaoPublicadas();
+    });
+
+    expect(result.current.erroAcaoPosGeracao).toBe(
+      "Não foi possível abrir a planilha de diárias não publicadas. Localize-a manualmente na pasta de destino.",
+    );
     expect(result.current.estadoGeracao.fase).toBe("sucesso");
   });
 });

@@ -46,9 +46,17 @@ from app.consulta.repositorio_ordens_bancarias import (
     abrir_base_ordens_bancarias,
     ordens_bancarias_por_dh,
 )
+from app.consulta.repositorio_planilha_passagens import (
+    EstruturaPlanilhaPassagensInvalida,
+    PlanilhaPassagensNaoEncontrada,
+    abrir_planilha_passagens,
+    linhas_passagens_por_ob,
+)
 from app.domain.relatorio_transparencia.competencia import intervalo_acumulado
+from app.domain.relatorio_transparencia.cruzamento_passagens import anexar_passagens_ao_resultado
 from app.domain.relatorio_transparencia.decisao import (
     AcaoDecisao,
+    CategoriaNaoPublicada,
     ContextoRevisaoParaExibicao,
     DecisaoHumana,
     EstadoRevisao,
@@ -62,12 +70,16 @@ from app.domain.relatorio_transparencia.decisao import (
 )
 from app.domain.relatorio_transparencia.motor_decisao import OcorrenciaFinanceira, classificar
 from app.domain.relatorio_transparencia.motor_reconciliacao import reconciliar
+from app.planilha.escritor_relatorio_nao_publicadas import (
+    gerar_xlsx_diarias_nao_publicadas,
+)
 from app.planilha.escritor_relatorio_transparencia import (
     DestinoJaExiste,
     GeracaoConcorrenteEmAndamento,
     RelatorioBloqueadoPorPendencias,
     RelatorioGeradoResultado,
     TemplateEstruturalmenteInvalido,
+    _MESES_EXTENSO,  # noqa: PLC2701 — mesmo reuso já praticado (ex. `_cpf_normalizado`, `_adquirir_trava_destino`): nunca uma segunda lista de nomes de mês
     gerar_xlsx_relatorio_transparencia,
 )
 
@@ -76,6 +88,8 @@ __all__ = [
     "EstruturaBaseOBInvalida",
     "ControleDimcacNaoEncontrado",
     "EstruturaControleInvalida",
+    "PlanilhaPassagensNaoEncontrada",
+    "EstruturaPlanilhaPassagensInvalida",
     "RevisaoNaoEncontrada",
     "DecisaoInvalida",
     "PersistenciaDecisoesCorrompida",
@@ -89,6 +103,7 @@ __all__ = [
     "OcorrenciaResumo",
     "RevisaoResumo",
     "ResumoRelatorio",
+    "RelatorioCompletoGeradoResultado",
     "preparar_relatorio",
     "listar_revisoes",
     "registrar_decisao_revisao",
@@ -189,6 +204,49 @@ class ResumoRelatorio:
     total_requer_nova_decisao: int = 0
 
 
+@dataclass(frozen=True)
+class RelatorioCompletoGeradoResultado:
+    """Sprint 5 (plano "Valor da Passagem + Não Publicadas") — resultado da
+    geração CONJUNTA dos dois artefatos, a partir do MESMO `ResultadoRevisado`
+    (nunca reprocessado entre um arquivo e outro). Nunca substitui
+    `RelatorioGeradoResultado` (contrato do escritor oficial, já homologado,
+    intocado) — só agrega o resultado dele com o do escritor operacional
+    (Sprint 4).
+
+    `nao_publicadas_gerado=False` cobre DOIS cenários bem distintos, cada um
+    com seu próprio significado:
+    - `total_nao_publicadas == 0`: não havia nada a gerar (G04 já garantiu
+      isso — nenhuma diária ficou de fora). Comportamento intencional
+      (item 1 do pedido): NUNCA cria um XLSX operacional vazio.
+      `erro_nao_publicadas` permanece `None` neste caso — não é uma falha.
+    - `total_nao_publicadas > 0` mas a escrita do arquivo operacional
+      falhou DEPOIS do oficial já ter sido promovido com sucesso: estado
+      PARCIAL, nunca escondido — `erro_nao_publicadas` traz a causa. O
+      oficial já está seguro no destino (nunca desfeito); só o operacional
+      precisa ser gerado de novo (mesma proteção de no-clobber do escritor
+      operacional protege uma nova tentativa)."""
+
+    oficial: RelatorioGeradoResultado
+    caminho_arquivo_nao_publicadas: str | None
+    total_nao_publicadas: int
+    total_categoria_a: int
+    total_categoria_b: int
+    nao_publicadas_gerado: bool
+    erro_nao_publicadas: str | None = None
+
+
+def _derivar_caminho_nao_publicadas(caminho_destino_oficial: str, *, ano_exercicio: int, mes_referencia: int) -> str:
+    """Mesma pasta do XLSX oficial (item 1: "a partir do MESMO
+    ResultadoRevisado", mesma operação, sem pedir um segundo diálogo ao
+    usuário — nenhuma seleção nova de destino). Nome fixo por competência,
+    mesma convenção já usada no nome sugerido do oficial (mês por extenso +
+    ano) — `_MESES_EXTENSO` é a MESMA lista já usada para o título dentro do
+    XLSX oficial, nunca uma segunda lista de nomes de mês."""
+    diretorio = os.path.dirname(os.path.abspath(caminho_destino_oficial)) or "."
+    mes_nome = _MESES_EXTENSO[mes_referencia - 1].capitalize()
+    return os.path.join(diretorio, f"Diarias_Nao_Publicadas_{mes_nome}_{ano_exercicio}.xlsx")
+
+
 def _abrir_base_ob(caminho: str):
     if not os.path.isfile(caminho):
         raise BaseOBNaoEncontrada(f"Base de Ordens Bancárias não encontrada: {caminho}")
@@ -214,11 +272,23 @@ def _montar_resultado_revisado(
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
+    caminho_planilha_passagens: str | None = None,
 ) -> ResultadoRevisado:
     """Núcleo único de reconstrução — reaproveitado por `preparar_relatorio`,
-    `listar_revisoes` e `registrar_decisao_revisao`. Nunca lê nem escreve
-    nada além do que os componentes das Micro-sprints 1-3C já leem/escrevem
-    (nenhum novo formato de arquivo, nenhuma nova leitura de estado)."""
+    `listar_revisoes`, `registrar_decisao_revisao` e `gerar_relatorio_xlsx`.
+    Nunca lê nem escreve nada além do que os componentes já homologados
+    leem/escrevem (nenhum novo formato de arquivo, nenhuma nova leitura de
+    estado).
+
+    Sprint 3 (HOMO-RT-06) — `caminho_planilha_passagens` é OPCIONAL e
+    retrocompatível: `None` (padrão) preserva EXATAMENTE o comportamento
+    anterior a esta Sprint, nenhuma leitura nova, `OcorrenciaFinanceira.
+    passagem` permanece `None` (estado E) para toda ocorrência — nenhum
+    chamador existente precisa mudar. Quando informado, a Planilha de
+    Passagens é lida e cruzada por OB (Sprint 1/2) e anexada ao resultado
+    JÁ CLASSIFICADO por `classificar()` (RN01-RN07), ANTES de
+    `aplicar_decisoes` — para que o fingerprint calculado ali já reflita o
+    Valor da Passagem (HOMO-RT-06)."""
     planilha_ob = _abrir_base_ob(caminho_base_ordens_bancarias)
     resultado_ob = ordens_bancarias_por_dh(planilha_ob)
 
@@ -229,6 +299,11 @@ def _montar_resultado_revisado(
 
     intervalo = intervalo_acumulado(ano_exercicio, mes_referencia)
     resultado_classificado = classificar(resultado_reconciliado, intervalo)
+
+    if caminho_planilha_passagens is not None:
+        tabela_passagens = abrir_planilha_passagens(caminho_planilha_passagens)
+        resultado_passagens = linhas_passagens_por_ob(tabela_passagens)
+        resultado_classificado = anexar_passagens_ao_resultado(resultado_classificado, resultado_passagens.por_ob)
 
     decisoes = carregar_decisoes(caminho_decisoes)
     return aplicar_decisoes(resultado_classificado, decisoes)
@@ -299,6 +374,7 @@ def preparar_relatorio(
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
+    caminho_planilha_passagens: str | None = None,
 ) -> ResumoRelatorio:
     """FONTES + RNs + DECISÕES HUMANAS VÁLIDAS → estado atual. Sempre
     reconstrói do zero — nunca lê um resultado derivado salvo de uma
@@ -310,6 +386,7 @@ def preparar_relatorio(
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
+        caminho_planilha_passagens=caminho_planilha_passagens,
     )
     resumo = _resumo(revisado)
     _logger.info(
@@ -333,6 +410,7 @@ def listar_revisoes(
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
+    caminho_planilha_passagens: str | None = None,
 ) -> list[RevisaoResumo]:
     revisado = _montar_resultado_revisado(
         caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
@@ -340,6 +418,7 @@ def listar_revisoes(
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
+        caminho_planilha_passagens=caminho_planilha_passagens,
     )
     return [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado, r.decisao) for r in revisado.revisoes]
 
@@ -356,6 +435,7 @@ def registrar_decisao_revisao(
     obs_selecionadas: Iterable[str] = (),
     autor: str,
     observacao: str | None = None,
+    caminho_planilha_passagens: str | None = None,
 ) -> ResumoRelatorio:
     """Registra uma decisão humana e devolve o estado já atualizado.
     Reconstrói o estado ANTES de decidir (nunca confia em nenhuma
@@ -388,6 +468,7 @@ def registrar_decisao_revisao(
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
+        caminho_planilha_passagens=caminho_planilha_passagens,
     )
 
     revisao_alvo: RevisaoComEstado | None = None
@@ -439,6 +520,7 @@ def registrar_decisao_revisao(
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
+        caminho_planilha_passagens=caminho_planilha_passagens,
     )
     return _resumo(revisado_atualizado)
 
@@ -453,23 +535,48 @@ def gerar_relatorio_xlsx(
     caminho_configuracao_template: str,
     caminho_destino: str,
     hoje: date | None = None,
-) -> RelatorioGeradoResultado:
-    """Micro-sprint 3F/3H — único ponto de entrada real para gerar o XLSX
-    final. Nunca recebe do chamador uma lista de OBs a publicar ou
-    qualquer outro dado de conteúdo: o frontend (ou qualquer outro
-    chamador) só pode pedir "gerar o relatório desta competência" — todo
-    o conteúdo vem, sempre, da reconstrução por `_montar_resultado_
-    revisado` (mesmo núcleo único de `preparar_relatorio`/
-    `registrar_decisao_revisao`, fontes brutas + RN01-RN07 + decisões já
-    persistidas). `pode_gerar_relatorio` (G05) é verificado dentro de
-    `gerar_xlsx_relatorio_transparencia` mesmo que este service seja
-    contornado — a garantia real não depende desta camada.
+    caminho_planilha_passagens: str | None = None,
+) -> RelatorioCompletoGeradoResultado:
+    """Micro-sprint 3F/3H, estendido na Sprint 5 — único ponto de entrada
+    real para gerar os DOIS artefatos desta competência. Nunca recebe do
+    chamador uma lista de OBs a publicar ou qualquer outro dado de
+    conteúdo: o frontend (ou qualquer outro chamador) só pode pedir "gerar
+    o relatório desta competência" — todo o conteúdo vem, sempre, da
+    reconstrução por `_montar_resultado_revisado` (mesmo núcleo único de
+    `preparar_relatorio`/`registrar_decisao_revisao`, fontes brutas +
+    RN01-RN07 + decisões já persistidas). `pode_gerar_relatorio` (G05) é
+    verificado dentro de `gerar_xlsx_relatorio_transparencia` mesmo que
+    este service seja contornado — a garantia real não depende desta
+    camada.
 
     Micro-sprint 3H — `caminho_configuracao_template` é só o ponteiro para
     a configuração do Template Oficial (mesmo padrão de `caminho_decisoes`);
     o caminho real do template é resolvido aqui, nunca recebido diretamente
     do chamador (o template é infraestrutura fixa do módulo, configurada
-    uma vez, não um parâmetro de cada geração)."""
+    uma vez, não um parâmetro de cada geração).
+
+    Sprint 5 — os dois artefatos nascem do MESMO `revisado` (uma única
+    reconstrução, um único `aplicar_decisoes`): o XLSX oficial consome
+    `revisado.candidatos_publicaveis` (via `gerar_xlsx_relatorio_
+    transparencia`, INTOCADO); o operacional consome `revisado.
+    ocorrencias_nao_publicaveis` (via `gerar_xlsx_diarias_nao_publicadas`,
+    Sprint 4, também INTOCADO) — nunca uma segunda leitura de fontes, nunca
+    uma segunda aplicação de decisões, nunca reclassificação. Estruturalmente
+    impossível uma ocorrência aparecer nos dois arquivos: as duas listas
+    vêm da mesma partição de `ResultadoRevisado`, calculada uma única vez.
+
+    Geração conjunta, NUNCA uma segunda implementação de segurança: os dois
+    escritores mantêm, cada um, seu PRÓPRIO lock/tmp/no-clobber já
+    homologados (destinos diferentes nunca colidem entre si — mesma
+    garantia já testada para gerações simultâneas em destinos distintos).
+    O oficial é gerado PRIMEIRO e sempre é o produto principal — se ele
+    falhar, nada mais acontece (comportamento já homologado, propagado sem
+    mudança). Se o oficial tiver sucesso mas o operacional falhar depois,
+    o oficial NUNCA é desfeito (não há como desfazer uma promoção atômica
+    já efetivada sem abrir uma nova janela TOCTOU, e o oficial já é
+    confiável) — o resultado volta com `nao_publicadas_gerado=False` e
+    `erro_nao_publicadas` preenchido, nunca um sucesso silencioso do tipo
+    "os dois foram gerados" quando só um foi."""
     caminho_template = resolver_caminho_template(caminho_configuracao_template)
     revisado = _montar_resultado_revisado(
         caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
@@ -477,8 +584,9 @@ def gerar_relatorio_xlsx(
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
+        caminho_planilha_passagens=caminho_planilha_passagens,
     )
-    resultado = gerar_xlsx_relatorio_transparencia(
+    resultado_oficial = gerar_xlsx_relatorio_transparencia(
         revisado,
         caminho_template=caminho_template,
         caminho_destino=caminho_destino,
@@ -487,9 +595,73 @@ def gerar_relatorio_xlsx(
         hoje=hoje,
     )
     _logger.info(
-        "Relatório XLSX gerado: %s (%s ocorrências, valor total diárias %.2f)",
-        resultado.caminho_arquivo,
-        resultado.total_ocorrencias,
-        resultado.total_valor_diarias,
+        "Relatório XLSX oficial gerado: %s (%s ocorrências, valor total diárias %.2f)",
+        resultado_oficial.caminho_arquivo,
+        resultado_oficial.total_ocorrencias,
+        resultado_oficial.total_valor_diarias,
     )
-    return resultado
+
+    nao_publicaveis = revisado.ocorrencias_nao_publicaveis
+    total_a = sum(
+        1 for item in nao_publicaveis if item.categoria is CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA
+    )
+    total_b = len(nao_publicaveis) - total_a
+
+    # Item 1 do pedido: nunca cria um XLSX operacional vazio — G04 já
+    # garante que "zero não publicadas" é um estado real e válido (não uma
+    # falha), então esse caso nem tenta escrever o segundo arquivo.
+    if not nao_publicaveis:
+        return RelatorioCompletoGeradoResultado(
+            oficial=resultado_oficial,
+            caminho_arquivo_nao_publicadas=None,
+            total_nao_publicadas=0,
+            total_categoria_a=0,
+            total_categoria_b=0,
+            nao_publicadas_gerado=False,
+        )
+
+    caminho_nao_publicadas = _derivar_caminho_nao_publicadas(
+        caminho_destino, ano_exercicio=ano_exercicio, mes_referencia=mes_referencia
+    )
+    try:
+        resultado_operacional = gerar_xlsx_diarias_nao_publicadas(
+            nao_publicaveis, caminho_destino=caminho_nao_publicadas
+        )
+    except Exception as erro:  # noqa: BLE001 — deliberado: o oficial JÁ foi
+        # promovido com sucesso acima (arquivo real, seguro, no destino do
+        # usuário) — uma falha aqui NUNCA pode derrubar essa informação nem
+        # fingir sucesso; precisa virar estado PARCIAL explícito no
+        # resultado, não uma exceção que esconderia do chamador que o
+        # oficial deu certo. Qualquer causa (no-clobber, geração
+        # concorrente, disco cheio, permissão) recebe o MESMO tratamento:
+        # reportar, nunca inventar um resultado melhor do que o real.
+        _logger.error(
+            "Relatório oficial gerado com sucesso, mas falhou a geração do XLSX operacional (%s): %s",
+            caminho_nao_publicadas,
+            erro,
+        )
+        return RelatorioCompletoGeradoResultado(
+            oficial=resultado_oficial,
+            caminho_arquivo_nao_publicadas=None,
+            total_nao_publicadas=len(nao_publicaveis),
+            total_categoria_a=total_a,
+            total_categoria_b=total_b,
+            nao_publicadas_gerado=False,
+            erro_nao_publicadas=str(erro),
+        )
+
+    _logger.info(
+        "Relatório XLSX operacional gerado: %s (%s ocorrências: %s categoria A, %s categoria B)",
+        resultado_operacional.caminho_arquivo,
+        resultado_operacional.total_ocorrencias,
+        resultado_operacional.total_categoria_a,
+        resultado_operacional.total_categoria_b,
+    )
+    return RelatorioCompletoGeradoResultado(
+        oficial=resultado_oficial,
+        caminho_arquivo_nao_publicadas=resultado_operacional.caminho_arquivo,
+        total_nao_publicadas=len(nao_publicaveis),
+        total_categoria_a=total_a,
+        total_categoria_b=total_b,
+        nao_publicadas_gerado=True,
+    )

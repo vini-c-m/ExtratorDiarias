@@ -12,6 +12,12 @@ export interface ParametrosFontesRelatorioTransparencia {
   // Infraestrutura interna (nunca escolhida pelo usuário) — ver
   // `electron/ipc/relatorioTransparencia.ts`.
   caminho_decisoes: string;
+  // Sprint 3 (HOMO-RT-06), fechamento — terceira fonte, OPCIONAL: `undefined`
+  // preserva o comportamento anterior (Valor da Passagem fica com célula
+  // vazia). Mesmo objeto de parâmetros reaproveitado por preparar/decidir/
+  // gerar (`useRelatorioTransparencia`/`useGerarRelatorioTransparencia`) —
+  // nenhum estado paralelo.
+  caminho_planilha_passagens?: string;
 }
 
 export interface OcorrenciaRelatorioTransparencia {
@@ -97,6 +103,32 @@ export interface RequisicaoConfigurarTemplateRelatorioTransparencia {
   caminho_template: string;
 }
 
+// Micro-sprint UX operacional — persistência dos caminhos de Base de Ordens
+// Bancárias e Controle DIMCAC (mesmo espírito do Template Oficial acima,
+// mas sem validação de conteúdo — só lembra onde o usuário apontou da
+// última vez).
+
+export interface StatusArquivoFonteRelatorioTransparencia {
+  configurado: boolean;
+  disponivel: boolean;
+  caminho: string | null;
+}
+
+export interface StatusFontesRelatorioTransparencia {
+  base_ordens_bancarias: StatusArquivoFonteRelatorioTransparencia;
+  controle_dimcac: StatusArquivoFonteRelatorioTransparencia;
+  // Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — terceira fonte
+  // persistida, mesmo mecanismo das duas acima.
+  planilha_passagens: StatusArquivoFonteRelatorioTransparencia;
+}
+
+export interface RequisicaoConfigurarFontesRelatorioTransparencia {
+  caminho_configuracao_fontes: string;
+  caminho_base_ordens_bancarias?: string | null;
+  caminho_controle_dimcac?: string | null;
+  caminho_planilha_passagens?: string | null;
+}
+
 export interface RequisicaoGerarRelatorioTransparencia extends ParametrosFontesRelatorioTransparencia {
   // Infraestrutura interna (nunca escolhida pelo usuário) — o template real
   // é resolvido pelo backend a partir desta configuração, mesmo padrão de
@@ -112,4 +144,20 @@ export interface RelatorioGeradoRelatorioTransparencia {
   primeira_linha_dados: number;
   ultima_linha_dados: number;
   linha_total: number;
+  // Sprint 5 — geração conjunta: o XLSX operacional
+  // (`Diarias_Nao_Publicadas_<competencia>.xlsx`) nasce do MESMO
+  // ResultadoRevisado do oficial. `nao_publicadas_gerado=false` cobre dois
+  // cenários distintos, diferenciados por `erro_nao_publicadas`:
+  // - nenhuma diária não publicada nesta competência (`total_nao_publicadas
+  //   === 0`, `erro_nao_publicadas === null`) — nenhum arquivo é criado, de
+  //   propósito.
+  // - havia diárias a reportar, mas a escrita do operacional falhou DEPOIS
+  //   do oficial já ter sido salvo com sucesso (`erro_nao_publicadas`
+  //   preenchido) — estado parcial, nunca "sucesso" silencioso dos dois.
+  caminho_arquivo_nao_publicadas: string | null;
+  total_nao_publicadas: number;
+  total_categoria_a: number;
+  total_categoria_b: number;
+  nao_publicadas_gerado: boolean;
+  erro_nao_publicadas: string | null;
 }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useFontesRelatorioTransparencia } from "../../hooks/useFontesRelatorioTransparencia";
 import { SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import Alerta from "../ui/Alerta";
@@ -34,6 +35,12 @@ export interface ParametrosPreparacao {
   mes_referencia: number;
   caminho_base_ordens_bancarias: string;
   caminho_controle_dimcac: string;
+  // Sprint 3 (HOMO-RT-06), fechamento — OPCIONAL: só enviado quando o
+  // usuário já tem uma Planilha de Passagens persistida/selecionada; sem
+  // ela, o comportamento é exatamente o anterior a esta feature (célula
+  // vazia). Nunca gateia "Preparar Relatório" — Base OB e Controle DIMCAC
+  // continuam os únicos campos obrigatórios (ver `podePreparar` abaixo).
+  caminho_planilha_passagens?: string;
 }
 
 interface Props {
@@ -44,6 +51,11 @@ interface Props {
    * Relatório" até existir, mesmo que os demais campos já estejam
    * preenchidos. */
   caminhoDecisoesResolvido: boolean;
+  /** Micro-sprint UX operacional (item 3) — infraestrutura interna (mesmo
+   * padrão de `caminhoDecisoesResolvido`), resolvida via IPC pela página:
+   * ONDE persistir/reler os caminhos de Base OB e Controle DIMCAC já
+   * selecionados em sessões anteriores. `null` até resolver. */
+  caminhoConfiguracaoFontes: string | null;
   onPreparar: (parametros: ParametrosPreparacao, autor: string) => void;
 }
 
@@ -54,13 +66,36 @@ interface Props {
 // ação principal. Estado do formulário é local: só sai daqui quando
 // "Preparar Relatório" é clicado (mesmo padrão de `FormularioConfiguracao`,
 // que só reporta pra cima via `aoConfigurar` na submissão).
-export default function PainelEntrada({ erro, preparando, caminhoDecisoesResolvido, onPreparar }: Props) {
+export default function PainelEntrada({
+  erro,
+  preparando,
+  caminhoDecisoesResolvido,
+  caminhoConfiguracaoFontes,
+  onPreparar,
+}: Props) {
   const agora = new Date();
   const [mes, setMes] = useState(MESES[agora.getMonth()]);
   const [ano, setAno] = useState(String(agora.getFullYear()));
-  const [caminhoBaseOB, setCaminhoBaseOB] = useState<string | null>(null);
-  const [caminhoControleDimcac, setCaminhoControleDimcac] = useState<string | null>(null);
   const [autor, setAutor] = useState("");
+
+  // Micro-sprint UX operacional (item 3) — Base OB e Controle DIMCAC não
+  // são mais `useState` locais isolados: o hook carrega o que já foi
+  // selecionado em sessões anteriores (persistido via `GET/POST /fontes`)
+  // e cada seleção nova já sai persistida, pronta para a próxima abertura
+  // do módulo.
+  const {
+    statusBaseOB,
+    statusControleDimcac,
+    statusPlanilhaPassagens,
+    configurarBaseOB,
+    configurarControleDimcac,
+    configurarPlanilhaPassagens,
+  } = useFontesRelatorioTransparencia(caminhoConfiguracaoFontes);
+
+  const caminhoBaseOB = statusBaseOB.fase === "pronto" ? statusBaseOB.caminho : null;
+  const caminhoControleDimcac = statusControleDimcac.fase === "pronto" ? statusControleDimcac.caminho : null;
+  const caminhoPlanilhaPassagens =
+    statusPlanilhaPassagens.fase === "pronto" ? statusPlanilhaPassagens.caminho : null;
 
   const podePreparar =
     mes.trim() !== "" &&
@@ -79,6 +114,10 @@ export default function PainelEntrada({ erro, preparando, caminhoDecisoesResolvi
         mes_referencia: MESES.indexOf(mes) + 1,
         caminho_base_ordens_bancarias: caminhoBaseOB,
         caminho_controle_dimcac: caminhoControleDimcac,
+        // Sprint 3 (HOMO-RT-06), fechamento — reaproveita o mesmo caminho já
+        // persistido pelo seletor abaixo; `undefined` quando ainda não há
+        // Planilha de Passagens selecionada (nunca bloqueia a preparação).
+        caminho_planilha_passagens: caminhoPlanilhaPassagens ?? undefined,
       },
       // Normalização mínima e só para decisões NOVAS (histórico de decisões
       // já persistidas nunca é reescrito): remove espaços nas pontas e
@@ -121,14 +160,33 @@ export default function PainelEntrada({ erro, preparando, caminhoDecisoesResolvi
           <SeletorArquivoFonte
             rotulo="Base de Ordens Bancárias"
             caminhoSelecionado={caminhoBaseOB}
-            onSelecionar={setCaminhoBaseOB}
+            onSelecionar={configurarBaseOB}
             desabilitado={preparando}
+            indisponivel={statusBaseOB.fase === "indisponivel"}
           />
           <SeletorArquivoFonte
             rotulo="Controle DIMCAC"
             caminhoSelecionado={caminhoControleDimcac}
-            onSelecionar={setCaminhoControleDimcac}
+            onSelecionar={configurarControleDimcac}
             desabilitado={preparando}
+            indisponivel={statusControleDimcac.fase === "indisponivel"}
+          />
+          {/* Sprint 3 (HOMO-RT-06), fechamento — o caminho persistido aqui é
+           * efetivamente usado por "Preparar Relatório"/"Gerar Relatório"
+           * (ver `caminho_planilha_passagens` em `aoClicarPreparar` abaixo),
+           * mas deliberadamente NÃO entra em `podePreparar`: selecionar esta
+           * fonte continua opcional — sem ela, Valor da Passagem fica com
+           * célula vazia (comportamento idêntico ao anterior a esta
+           * feature), nunca bloqueia a preparação/geração do relatório.
+           * `.ods` é o formato real recebido pelo setor (leitura nativa, sem
+           * exigir conversão manual para `.xlsx`). */}
+          <SeletorArquivoFonte
+            rotulo="Planilha de Passagens"
+            caminhoSelecionado={caminhoPlanilhaPassagens}
+            onSelecionar={configurarPlanilhaPassagens}
+            desabilitado={preparando}
+            indisponivel={statusPlanilhaPassagens.fase === "indisponivel"}
+            accept=".ods"
           />
         </div>
       </div>
@@ -142,6 +200,22 @@ export default function PainelEntrada({ erro, preparando, caminhoDecisoesResolvi
           disabled={preparando}
         />
       </div>
+
+      {statusBaseOB.fase === "erro" && (
+        <div className="mb-5">
+          <Alerta variante="erro">{statusBaseOB.mensagem}</Alerta>
+        </div>
+      )}
+      {statusControleDimcac.fase === "erro" && (
+        <div className="mb-5">
+          <Alerta variante="erro">{statusControleDimcac.mensagem}</Alerta>
+        </div>
+      )}
+      {statusPlanilhaPassagens.fase === "erro" && (
+        <div className="mb-5">
+          <Alerta variante="erro">{statusPlanilhaPassagens.mensagem}</Alerta>
+        </div>
+      )}
 
       {erro && (
         <div className="mb-5">

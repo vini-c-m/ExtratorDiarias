@@ -78,6 +78,65 @@ describe("Selecao — painel em portal (correção do bug de empilhamento visual
     await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
   });
 
+  // Micro-sprint UX operacional — bug real reproduzido na aplicação (Chromium/
+  // Playwright): rolar a roda do mouse DENTRO da própria lista fechava o
+  // dropdown depois de poucos itens, nunca deixando o usuário alcançar as
+  // opções finais (Junho/Julho/Agosto no seletor de Mês). Causa: `scroll`
+  // não faz bubbling, mas sempre passa pela fase de CAPTURA de `window` —
+  // o listener de "fechar ao rolar a página" (capture=true) capturava
+  // também o scroll INTERNO da lista. `dispatchEvent` num elemento DENTRO
+  // do painel simula exatamente esse scroll interno.
+  it("rolar a LISTA internamente (scroll cujo alvo é o próprio painel) NUNCA fecha o dropdown", async () => {
+    const usuario = userEvent.setup();
+    render(<SelecaoControlada />);
+
+    await usuario.click(screen.getByRole("combobox", { name: "Mês" }));
+    const listbox = screen.getByRole("listbox");
+
+    listbox.dispatchEvent(new Event("scroll"));
+    // dá uma volta ao event loop — se o painel fosse fechar, já teria fechado.
+    await new Promise((resolver) => setTimeout(resolver, 0));
+
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  it("rolar um ITEM dentro da lista (alvo é um descendente do painel, não a lista em si) também não fecha", async () => {
+    const usuario = userEvent.setup();
+    render(<SelecaoControlada />);
+
+    await usuario.click(screen.getByRole("combobox", { name: "Mês" }));
+    const opcao = screen.getByRole("option", { name: "Janeiro" });
+
+    opcao.dispatchEvent(new Event("scroll", { bubbles: true }));
+    await new Promise((resolver) => setTimeout(resolver, 0));
+
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  it("lista longa (12 meses): todas as opções ficam no DOM, nenhuma é omitida/paginada", async () => {
+    const MESES = [
+      "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+      "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+    ];
+    function SelecaoDeMeses() {
+      const [valor, setValor] = useState("");
+      return <Selecao rotulo="Mês" valor={valor} opcoes={MESES} onMudar={setValor} />;
+    }
+    const usuario = userEvent.setup();
+    render(<SelecaoDeMeses />);
+
+    await usuario.click(screen.getByRole("combobox", { name: "Mês" }));
+
+    // Critério da micro-sprint: todos os 12 meses precisam ser acessíveis —
+    // aqui verificado como "estão todos renderizados como opção", nunca
+    // truncados/paginados pelo componente (a rolagem visual é coberta pelos
+    // testes de scroll acima, que garantem que rolar não fecha o painel).
+    for (const mes of MESES) {
+      expect(screen.getByRole("option", { name: mes })).toBeInTheDocument();
+    }
+    expect(screen.getAllByRole("option")).toHaveLength(MESES.length + 1); // + opção "Selecione"
+  });
+
   it("desabilitado: nunca abre o painel", async () => {
     const usuario = userEvent.setup();
     render(<Selecao rotulo="Mês" valor="" opcoes={OPCOES} onMudar={vi.fn()} disabled />);

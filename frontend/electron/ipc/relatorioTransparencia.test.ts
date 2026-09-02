@@ -70,6 +70,19 @@ describe("registrarIpcRelatorioTransparencia", () => {
     });
   });
 
+  describe("relatorio-transparencia:obter-caminho-configuracao-fontes", () => {
+    it("devolve um caminho dentro da pasta de dados do usuário, em um arquivo próprio (nunca decisões/template)", () => {
+      getPathMock.mockReturnValue("C:\\Users\\servidor\\AppData\\Roaming\\ExtratorDiarias");
+
+      const resultado = chamarHandler("relatorio-transparencia:obter-caminho-configuracao-fontes");
+
+      expect(getPathMock).toHaveBeenCalledWith("userData");
+      expect(resultado).toBe(
+        "C:\\Users\\servidor\\AppData\\Roaming\\ExtratorDiarias\\relatorio_transparencia_fontes_configuracao.json",
+      );
+    });
+  });
+
   describe("relatorio-transparencia:escolher-destino", () => {
     it("devolve o caminho escolhido pelo usuário no diálogo nativo", async () => {
       showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: "C:\\fake\\Relatorio.xlsx" });

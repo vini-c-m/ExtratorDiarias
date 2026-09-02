@@ -14,20 +14,31 @@ vi.mock("../services/api", async (importarOriginal) => {
     registrarDecisaoRevisaoRelatorioTransparencia: vi.fn(),
     obterStatusTemplateRelatorioTransparencia: vi.fn(),
     gerarRelatorioTransparencia: vi.fn(),
+    obterStatusFontesRelatorioTransparencia: vi.fn(),
+    configurarFontesRelatorioTransparencia: vi.fn(),
   };
 });
 
 import {
+  configurarFontesRelatorioTransparencia,
   gerarRelatorioTransparencia,
+  obterStatusFontesRelatorioTransparencia,
   obterStatusTemplateRelatorioTransparencia,
   prepararRelatorioTransparencia,
   registrarDecisaoRevisaoRelatorioTransparencia,
 } from "../services/api";
+import type {
+  RequisicaoConfigurarFontesRelatorioTransparencia,
+  StatusFontesRelatorioTransparencia,
+} from "../types/relatorioTransparencia";
 
 const prepararMock = vi.mocked(prepararRelatorioTransparencia);
 const decidirMock = vi.mocked(registrarDecisaoRevisaoRelatorioTransparencia);
 const statusTemplateMock = vi.mocked(obterStatusTemplateRelatorioTransparencia);
 const gerarMock = vi.mocked(gerarRelatorioTransparencia);
+const statusFontesMock = vi.mocked(obterStatusFontesRelatorioTransparencia);
+const configurarFontesMock = vi.mocked(configurarFontesRelatorioTransparencia);
+const FONTE_NAO_CONFIGURADA = { configurado: false, disponivel: false, caminho: null };
 
 function criarXlsx(nome: string): File {
   return new File(["conteúdo fictício"], nome, {
@@ -74,6 +85,9 @@ beforeEach(() => {
     obterCaminhoConfiguracaoTemplateRelatorioTransparencia: vi
       .fn()
       .mockResolvedValue("C:\\fake\\AppData\\template_configuracao.json"),
+    obterCaminhoConfiguracaoFontesRelatorioTransparencia: vi
+      .fn()
+      .mockResolvedValue("C:\\fake\\AppData\\fontes_configuracao.json"),
     escolherDestinoRelatorioTransparencia: vi.fn(),
     abrirArquivo: vi.fn().mockResolvedValue(undefined),
   };
@@ -82,6 +96,51 @@ beforeEach(() => {
     disponivel: true,
     caminho_template: "C:\\fake\\Modelo_Oficial.xlsx",
   });
+  statusFontesMock.mockResolvedValue({
+    base_ordens_bancarias: FONTE_NAO_CONFIGURADA,
+    controle_dimcac: FONTE_NAO_CONFIGURADA,
+    planilha_passagens: FONTE_NAO_CONFIGURADA,
+  });
+  // Micro-sprint UX operacional — atualização parcial: ecoa só o campo
+  // enviado, mesmo contrato do backend real (nunca apaga os outros). Sprint 1
+  // (plano "Valor da Passagem no XLSX Oficial") estendeu para a 3ª fonte.
+  configurarFontesMock.mockImplementation(
+    async (
+      requisicao: RequisicaoConfigurarFontesRelatorioTransparencia,
+    ): Promise<StatusFontesRelatorioTransparencia> => {
+      if (requisicao.caminho_base_ordens_bancarias) {
+        return {
+          base_ordens_bancarias: {
+            configurado: true,
+            disponivel: true,
+            caminho: requisicao.caminho_base_ordens_bancarias,
+          },
+          controle_dimcac: FONTE_NAO_CONFIGURADA,
+          planilha_passagens: FONTE_NAO_CONFIGURADA,
+        };
+      }
+      if (requisicao.caminho_planilha_passagens) {
+        return {
+          base_ordens_bancarias: FONTE_NAO_CONFIGURADA,
+          controle_dimcac: FONTE_NAO_CONFIGURADA,
+          planilha_passagens: {
+            configurado: true,
+            disponivel: true,
+            caminho: requisicao.caminho_planilha_passagens,
+          },
+        };
+      }
+      return {
+        base_ordens_bancarias: FONTE_NAO_CONFIGURADA,
+        controle_dimcac: {
+          configurado: true,
+          disponivel: true,
+          caminho: requisicao.caminho_controle_dimcac ?? null,
+        },
+        planilha_passagens: FONTE_NAO_CONFIGURADA,
+      };
+    },
+  );
 });
 
 afterEach(() => {
@@ -95,6 +154,7 @@ async function prepararComSucesso(
 ) {
   prepararMock.mockResolvedValue(resumo);
   await waitFor(() => expect(window.api.obterCaminhoDecisoesRelatorioTransparencia).toHaveBeenCalled());
+  await waitFor(() => expect(statusFontesMock).toHaveBeenCalled());
 
   const inputs = document.querySelectorAll('input[type="file"][accept=".xlsx"]');
   await usuario.upload(inputs[0] as HTMLInputElement, criarXlsx("OB_2026_08.xlsx"));
@@ -322,6 +382,12 @@ describe("RelatorioPortalTransparencia", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 1805,
       linha_total: 1806,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
 
     await usuario.click(screen.getByRole("button", { name: "Gerar Relatório" }));

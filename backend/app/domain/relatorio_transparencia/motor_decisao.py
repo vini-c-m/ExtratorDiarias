@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 
+from app.domain.entities.linha_passagem import LinhaPassagem
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.entities.registro_controle import RegistroControle
 from app.domain.relatorio_transparencia.competencia import IntervaloAcumulado
@@ -45,11 +46,26 @@ class OcorrenciaFinanceira:
     revisão) — decisão humana muda PUBLICAÇÃO, nunca PROVENIÊNCIA (achado
     da revisão do confronto: antes desta correção, uma ocorrência que
     passava por REVISAO_NECESSARIA perdia a referência ao Controle ao
-    virar candidata publicável)."""
+    virar candidata publicável).
+
+    `passagem` (Sprint 3, HOMO-RT-06) é um campo de dados INERTE — carrega o
+    resultado do cruzamento exato por OB com a Planilha de Passagens
+    (`cruzamento_passagens.anexar_passagens_ao_resultado`, chamado DEPOIS de
+    `classificar()`, nunca aqui dentro), no mesmo espírito de
+    `registros_controle`. `None` por padrão (nunca preenchido por
+    `classificar()`) — é assim para TODO código anterior a este campo (todo
+    teste/fixture existente antes da Sprint 3), e também é a representação
+    correta do estado E (OB sem correspondência na Planilha de Passagens).
+    Deliberadamente NUNCA participa de `CAMPOS_EVIDENCIA_MATERIAL`/
+    `_campos_divergentes`/RN01-RN07 — evidência de entrada (RN04) e linha
+    efetivamente publicável (fingerprint de decisão, `decisao.py`) continuam
+    conceitos diferentes; ver `linha_publicavel.valor_passagem_publicavel`
+    para onde `passagem` de fato é usado."""
 
     dh: str
     ordem_bancaria: OrdemBancaria
     registros_controle: list[RegistroControle] = field(default_factory=list)
+    passagem: LinhaPassagem | None = None
 
 
 @dataclass(frozen=True)

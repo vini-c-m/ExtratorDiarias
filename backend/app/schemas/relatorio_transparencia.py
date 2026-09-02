@@ -15,13 +15,24 @@ class ParametrosRelatorioBase(BaseModel):
     """Entrada compartilhada por todas as operações — nenhuma delas lê
     estado de uma preparação anterior; toda chamada informa de novo onde
     estão as fontes e a persistência de decisões (item 9 da especificação:
-    reconstruir sempre, nunca cache)."""
+    reconstruir sempre, nunca cache).
+
+    Sprint 3 (HOMO-RT-06), fechamento — `caminho_planilha_passagens` é
+    OPCIONAL e retrocompatível: `None` (padrão) preserva exatamente o
+    comportamento anterior a esta Sprint (nenhuma leitura da Planilha de
+    Passagens, Valor da Passagem fica com célula vazia em todas as
+    ocorrências). Informado, é lido/cruzado por OB e passa a integrar a
+    linha publicável/fingerprint em toda operação que usa esta base
+    (`/preparar`, `/revisoes`, `/revisoes/{id}/decisao`, `/gerar`) — mesmo
+    padrão de propagação de `caminho_base_ordens_bancarias`/
+    `caminho_controle_dimcac`, nenhum estado paralelo."""
 
     caminho_base_ordens_bancarias: str
     caminho_controle_dimcac: str
     ano_exercicio: int
     mes_referencia: int = Field(ge=1, le=12)
     caminho_decisoes: str
+    caminho_planilha_passagens: str | None = None
 
 
 class ParametrosRelatorioQuery(ParametrosRelatorioBase):
@@ -137,12 +148,34 @@ class RequisicaoGerarRelatorio(ParametrosRelatorioBase):
 
 
 class RelatorioGeradoResposta(BaseModel):
+    """Sprint 5 — passa a descrever os DOIS artefatos gerados a partir do
+    mesmo snapshot de decisões. Os campos originais (`caminho_arquivo` em
+    diante) permanecem no topo, sem mudança de nome/tipo, e continuam
+    descrevendo exclusivamente o XLSX oficial — retrocompatibilidade
+    estrutural para qualquer consumidor existente. Os campos novos
+    descrevem o XLSX operacional (`Diarias_Nao_Publicadas_<competencia>.
+    xlsx`): `nao_publicadas_gerado=False` cobre dois cenários bem
+    distintos, diferenciados por `erro_nao_publicadas`:
+    - `total_nao_publicadas == 0` e `erro_nao_publicadas is None`: não
+      havia nenhuma diária não publicada nesta competência — nenhum
+      arquivo é criado, por decisão de produto (item 1 do Sprint 5).
+    - `total_nao_publicadas > 0` e `erro_nao_publicadas` preenchido: havia
+      diárias a reportar, mas a escrita/promoção do XLSX operacional
+      falhou DEPOIS do oficial já ter sido promovido com sucesso — estado
+      parcial explícito, nunca um "sucesso" silencioso dos dois."""
+
     caminho_arquivo: str
     total_ocorrencias: int
     total_valor_diarias: float
     primeira_linha_dados: int
     ultima_linha_dados: int
     linha_total: int
+    caminho_arquivo_nao_publicadas: str | None = None
+    total_nao_publicadas: int = 0
+    total_categoria_a: int = 0
+    total_categoria_b: int = 0
+    nao_publicadas_gerado: bool = False
+    erro_nao_publicadas: str | None = None
 
 
 class ParametrosConfiguracaoTemplateQuery(BaseModel):
@@ -163,3 +196,35 @@ class StatusTemplateResposta(BaseModel):
     configurado: bool
     disponivel: bool
     caminho_template: str | None = None
+
+
+class ParametrosConfiguracaoFontesQuery(BaseModel):
+    """`GET /fontes` — Micro-sprint UX operacional (persistência dos
+    caminhos de Base de Ordens Bancárias e Controle DIMCAC)."""
+
+    caminho_configuracao_fontes: str
+
+
+class RequisicaoConfigurarFontes(BaseModel):
+    """`POST /fontes` — atualização parcial: cada campo é opcional
+    (`None` preserva o valor já persistido) para permitir selecionar Base
+    OB, Controle DIMCAC e Planilha de Passagens em momentos diferentes."""
+
+    caminho_configuracao_fontes: str
+    caminho_base_ordens_bancarias: str | None = None
+    caminho_controle_dimcac: str | None = None
+    # Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — terceira fonte,
+    # mesmo padrão de atualização parcial dos dois campos acima.
+    caminho_planilha_passagens: str | None = None
+
+
+class StatusArquivoFonteResposta(BaseModel):
+    configurado: bool
+    disponivel: bool
+    caminho: str | None = None
+
+
+class StatusFontesResposta(BaseModel):
+    base_ordens_bancarias: StatusArquivoFonteResposta
+    controle_dimcac: StatusArquivoFonteResposta
+    planilha_passagens: StatusArquivoFonteResposta

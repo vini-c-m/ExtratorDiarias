@@ -1,7 +1,12 @@
+import json
+import multiprocessing
+import threading
+import time
 from datetime import date, datetime, timezone
 
 import pytest
 
+from app.consulta import persistencia_decisoes as pd_module
 from app.consulta.persistencia_decisoes import (
     VERSAO_ESQUEMA_ATUAL,
     PersistenciaDecisoesCorrompida,
@@ -9,6 +14,7 @@ from app.consulta.persistencia_decisoes import (
     carregar_decisoes,
     salvar_decisao,
 )
+from tests._multiprocesso_util import executar_e_reportar, segurar_trava_ate_ser_morto
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.relatorio_transparencia.decisao import AcaoDecisao, registrar_decisao
 from app.domain.relatorio_transparencia.motor_decisao import OcorrenciaFinanceira, RevisaoNecessaria
@@ -269,3 +275,247 @@ def test_json_persistido_nao_contem_cpf_nem_motivo_em_claro(tmp_path):
     assert "11111111111" not in conteudo_bruto  # CPF usado no fingerprint, nunca em claro
     assert "Motivo de teste" not in conteudo_bruto  # motivo da OB, só entra no hash
     assert "RECIFE-GARANHUNS" not in conteudo_bruto  # trecho, só entra no hash
+
+
+# ============================================================================
+# QA Codex (BUG-01) — `salvar_decisao` fazia um ciclo read-modify-write sem
+# nenhuma trava, com um `.tmp` fixo compartilhado: duas chamadas concorrentes
+# perdiam uma decisão silenciosamente, ou levantavam `PermissionError` no
+# Windows. Corrigido com `_LOCK_SALVAR_DECISAO` (`threading.Lock()`,
+# cobrindo o ciclo inteiro). Os testes abaixo usam `threading.Barrier` para
+# sincronizar o INÍCIO das duas (ou mais) threads, e um atraso injetado via
+# `monkeypatch` logo após a leitura interna (`carregar_decisoes`, chamada
+# por nome dentro do próprio módulo — patchável em `pd_module`) para alargar
+# a janela vulnerável de forma confiável, em vez de depender só da sorte do
+# agendamento do SO. Passam de forma determinística tanto antes quanto
+# depois da correção só mudaria o RESULTADO (decisão perdida vs. as duas
+# sobrevivendo) — por isso servem também como prova viva do bug quando
+# rodados contra o código sem o lock.
+# ============================================================================
+
+
+def _outra_revisao(sufixo: str) -> RevisaoNecessaria:
+    return RevisaoNecessaria(
+        regra="RN04",
+        motivo=f"Outro motivo {sufixo}",
+        ocorrencias=[
+            OcorrenciaFinanceira(
+                dh=f"2026DH0009{sufixo}", ordem_bancaria=_ordem(ob=f"2026OB0009{sufixo}")
+            )
+        ],
+    )
+
+
+def _patchear_leitura_com_atraso(monkeypatch, atraso_s: float = 0.05):
+    """Alarga deterministicamente a janela entre a leitura e a escrita de
+    `salvar_decisao`, sem tocar no código de produção."""
+    carregar_original = pd_module.carregar_decisoes
+
+    def _carregar_com_atraso(caminho_arg):
+        resultado = carregar_original(caminho_arg)
+        time.sleep(atraso_s)
+        return resultado
+
+    monkeypatch.setattr(pd_module, "carregar_decisoes", _carregar_com_atraso)
+
+
+def test_salvar_decisao_concorrente_duas_identidades_diferentes_sobrevivem(tmp_path, monkeypatch):
+    caminho = tmp_path / "decisoes.json"
+    decisao_a = registrar_decisao(_revisao(), acao=AcaoDecisao.ADIAR, autor="servidor.a")
+    decisao_b = registrar_decisao(
+        _outra_revisao("b"), acao=AcaoDecisao.PUBLICAR, autor="servidor.b", obs_publicaveis=["2026OB0009b"]
+    )
+    _patchear_leitura_com_atraso(monkeypatch)
+
+    barreira = threading.Barrier(2)
+    erros: dict[str, Exception | None] = {}
+
+    def _tarefa(nome, decisao):
+        barreira.wait(timeout=5)
+        try:
+            pd_module.salvar_decisao(caminho, decisao)
+        except Exception as erro:  # noqa: BLE001 — capturado só para o assert abaixo
+            erros[nome] = erro
+        else:
+            erros[nome] = None
+
+    t1 = threading.Thread(target=_tarefa, args=("A", decisao_a))
+    t2 = threading.Thread(target=_tarefa, args=("B", decisao_b))
+    t1.start()
+    t2.start()
+    t1.join(timeout=15)
+    t2.join(timeout=15)
+
+    assert erros == {"A": None, "B": None}  # nenhuma exceção nas duas threads
+    carregadas = carregar_decisoes(caminho)  # leitura real, sem o atraso injetado
+    assert decisao_a.identidade_grupo in carregadas  # nenhuma decisão perdida
+    assert decisao_b.identidade_grupo in carregadas
+
+
+def test_salvar_decisao_concorrente_cinco_threads_arquivo_permanece_json_valido(tmp_path, monkeypatch):
+    caminho = tmp_path / "decisoes.json"
+    _patchear_leitura_com_atraso(monkeypatch, atraso_s=0.02)
+
+    decisoes = [
+        registrar_decisao(
+            _outra_revisao(str(indice)),
+            acao=AcaoDecisao.PUBLICAR,
+            autor=f"servidor.{indice}",
+            obs_publicaveis=[f"2026OB0009{indice}"],
+        )
+        for indice in range(5)
+    ]
+
+    barreira = threading.Barrier(len(decisoes))
+    erros: dict[int, Exception | None] = {}
+
+    def _tarefa(indice, decisao):
+        barreira.wait(timeout=5)
+        try:
+            pd_module.salvar_decisao(caminho, decisao)
+        except Exception as erro:  # noqa: BLE001
+            erros[indice] = erro
+        else:
+            erros[indice] = None
+
+    threads = [threading.Thread(target=_tarefa, args=(i, d)) for i, d in enumerate(decisoes)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=15)
+
+    assert erros == dict.fromkeys(range(5))  # nenhuma exceção em nenhuma thread
+    conteudo_bruto = caminho.read_text(encoding="utf-8")
+    json.loads(conteudo_bruto)  # nunca corrompe — sempre JSON válido
+    carregadas = carregar_decisoes(caminho)
+    assert {d.identidade_grupo for d in decisoes} <= set(carregadas)  # nenhuma decisão perdida
+
+
+def test_salvar_decisao_excecao_durante_escrita_nao_deixa_estado_invalido(tmp_path, monkeypatch):
+    caminho = tmp_path / "decisoes.json"
+    decisao_inicial = registrar_decisao(_revisao(), acao=AcaoDecisao.ADIAR, autor="servidor.inicial")
+    salvar_decisao(caminho, decisao_inicial)
+    conteudo_antes = caminho.read_text(encoding="utf-8")
+
+    def _write_text_falha(self, *args, **kwargs):
+        raise OSError("Falha de E/S simulada durante a escrita do .tmp")
+
+    monkeypatch.setattr("pathlib.Path.write_text", _write_text_falha)
+    decisao_nova = registrar_decisao(
+        _outra_revisao("x"), acao=AcaoDecisao.PUBLICAR, autor="servidor.novo", obs_publicaveis=["2026OB0009x"]
+    )
+
+    with pytest.raises(OSError):
+        salvar_decisao(caminho, decisao_nova)
+
+    # A falha aconteceu escrevendo o `.tmp`, antes de qualquer `os.replace` —
+    # o arquivo real permanece exatamente como estava.
+    assert caminho.read_text(encoding="utf-8") == conteudo_antes
+
+    monkeypatch.undo()
+    # O lock precisa ter sido liberado mesmo com a exceção (garantia do
+    # próprio `with` do Python) — uma chamada subsequente, sem a falha
+    # simulada, tem que funcionar normalmente, nunca travar (deadlock).
+    salvar_decisao(caminho, decisao_nova)
+    carregadas = carregar_decisoes(caminho)
+    assert decisao_nova.identidade_grupo in carregadas
+
+
+# ============================================================================
+# QA Codex (revalidação cross-process) — comprovou por contraexemplo que o
+# `threading.Lock` (correção anterior) não sobrevive a `WEB_CONCURRENCY`/
+# múltiplos workers Uvicorn: cada processo tem sua própria instância do
+# lock, então os mesmos bugs (decisão perdida, erro) voltavam a acontecer
+# entre PROCESSOS distintos, mesmo com a correção de threads já aplicada.
+# Os testes abaixo usam `multiprocessing.Process` de verdade (não
+# `threading.Thread`) para reproduzir exatamente esse cenário contra
+# `_LOCK_SALVAR_DECISAO`... já removido — agora `_trava_decisoes`
+# (`filelock.FileLock`).
+# ============================================================================
+
+
+def test_salvar_decisao_multiprocesso_duas_identidades_diferentes_sobrevivem(tmp_path):
+    caminho = tmp_path / "decisoes.json"
+    decisao_a = registrar_decisao(
+        _outra_revisao("mpa"), acao=AcaoDecisao.PUBLICAR, autor="servidor.a", obs_publicaveis=["2026OB0009mpa"]
+    )
+    decisao_b = registrar_decisao(
+        _outra_revisao("mpb"), acao=AcaoDecisao.PUBLICAR, autor="servidor.b", obs_publicaveis=["2026OB0009mpb"]
+    )
+
+    fila = multiprocessing.Queue()
+    p1 = multiprocessing.Process(target=executar_e_reportar, args=(fila, salvar_decisao, (caminho, decisao_a), {}))
+    p2 = multiprocessing.Process(target=executar_e_reportar, args=(fila, salvar_decisao, (caminho, decisao_b), {}))
+    p1.start()
+    p2.start()
+    resultados = [fila.get(timeout=20) for _ in range(2)]
+    p1.join(timeout=20)
+    p2.join(timeout=20)
+
+    assert all(r[0] == "ok" for r in resultados), resultados  # nenhuma exceção em nenhum processo
+    carregadas = carregar_decisoes(caminho)
+    assert decisao_a.identidade_grupo in carregadas  # nenhuma decisão perdida
+    assert decisao_b.identidade_grupo in carregadas
+
+
+def test_salvar_decisao_multiprocesso_cinco_processos_arquivo_permanece_valido(tmp_path):
+    caminho = tmp_path / "decisoes.json"
+    decisoes = [
+        registrar_decisao(
+            _outra_revisao(f"mp{indice}"),
+            acao=AcaoDecisao.PUBLICAR,
+            autor=f"servidor.{indice}",
+            obs_publicaveis=[f"2026OB0009mp{indice}"],
+        )
+        for indice in range(5)
+    ]
+
+    fila = multiprocessing.Queue()
+    processos = [
+        multiprocessing.Process(target=executar_e_reportar, args=(fila, salvar_decisao, (caminho, decisao), {}))
+        for decisao in decisoes
+    ]
+    for p in processos:
+        p.start()
+    resultados = [fila.get(timeout=30) for _ in range(5)]
+    for p in processos:
+        p.join(timeout=30)
+
+    assert all(r[0] == "ok" for r in resultados), resultados
+    conteudo_bruto = caminho.read_text(encoding="utf-8")
+    json.loads(conteudo_bruto)  # nunca corrompe — sempre JSON válido
+    carregadas = carregar_decisoes(caminho)
+    assert {d.identidade_grupo for d in decisoes} <= set(carregadas)  # nenhuma decisão perdida
+
+
+def test_salvar_decisao_processo_morto_segurando_trava_recupera_depois(tmp_path):
+    """Mata um processo real (`Process.kill()`, sem chance de rodar
+    `finally`/cleanup Python) enquanto ele segura `_trava_decisoes` —
+    prova que a trava do SO (não uma convenção em código) some junto com o
+    processo, e uma tentativa logo depois recupera dentro do timeout,
+    nunca herdando um lock preso."""
+    caminho = tmp_path / "decisoes.json"
+
+    fila = multiprocessing.Queue()
+    processo = multiprocessing.Process(
+        target=segurar_trava_ate_ser_morto,
+        args=(fila, pd_module._trava_decisoes, (caminho,)),
+    )
+    processo.start()
+    sinal = fila.get(timeout=15)
+    assert sinal == "trava_obtida"
+
+    processo.kill()
+    processo.join(timeout=15)
+    assert not processo.is_alive()
+
+    decisao_recuperacao = registrar_decisao(
+        _outra_revisao("rec"), acao=AcaoDecisao.ADIAR, autor="servidor.recuperacao"
+    )
+    inicio = time.monotonic()
+    salvar_decisao(caminho, decisao_recuperacao)  # NUNCA deve levantar PersistenciaDecisoesEmUso
+    duracao = time.monotonic() - inicio
+    assert duracao < 8  # recupera bem antes do timeout de 10s — nenhum lock órfão
+
+    carregadas = carregar_decisoes(caminho)
+    assert decisao_recuperacao.identidade_grupo in carregadas

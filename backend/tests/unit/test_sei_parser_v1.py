@@ -460,3 +460,218 @@ def test_finalidade_da_viagem_de_uma_linha_so_continua_intocada():
     campos = _campos(texto)
 
     assert campos.motivo == "Acompanhar a SGMP para assunto Institucional."
+
+
+# --- Sprint de Correção Crítica (Plan Mode revisado) — extração robusta da
+# última ocorrência quando ela tem o rodapé sobreposto/corrompido pelo
+# próprio SEI (processo real 19.20.100000001.0016125/2026-70). Regra de
+# negócio inegociável, verificada em TODOS os testes abaixo: o último
+# documento sempre vence — nunca há recuo para uma Solicitação/Requerimento
+# anterior, mesmo quando a última é difícil de extrair. A única exceção é o
+# SEI, que é metadado do PROCESSO (idêntico em toda página), não do
+# documento — por isso pode ter uma fonte estrutural fora do segmento
+# (`_sei_por_consenso_estrutural`), nunca os demais campos. -----------------
+
+
+def test_campo_ausente_no_segundo_requerimento_nunca_recupera_do_primeiro():
+    """Caso C: o segundo (vigente) Requerimento não tem CIDADE(S) DESTINO —
+    o valor fica ausente (é dele que a extração continua vindo), nunca
+    recuperado do primeiro, mesmo que o primeiro tivesse o campo preenchido."""
+    texto = """
+    CMFC - Solicitação de Diária - Servidor - 7000001
+    CIDADE ORIGEM:
+      Recife
+    CIDADE(S) DESTINO:
+      Garanhuns
+    DATA INICIAL:
+      01/10/2026
+    DATA DE RETORNO:
+      01/10/2026
+    CMFC - Solicitação de Diária - Servidor 7000001         SEI 19.20.0000.0000007/2026-00 / pg. 1
+
+    CMFC - Solicitação de Diária - Servidor - 7000002
+    CIDADE ORIGEM:
+      Recife
+    DATA INICIAL:
+      02/10/2026
+    DATA DE RETORNO:
+      02/10/2026
+    CMFC - Solicitação de Diária - Servidor 7000002         SEI 19.20.0000.0000007/2026-00 / pg. 2
+    """
+    campos = _campos(texto)
+
+    assert campos.periodo_inicial == "02/10/2026"
+    assert campos.cidade_destino is None  # nunca "Garanhuns", herdado do primeiro
+
+
+def test_corrupcao_severa_atingindo_o_corpo_gera_erro_nunca_usa_o_primeiro():
+    """Caso F: se a corrupção fosse severa o bastante para atingir também o
+    corpo do formulário (não só o rodapé) e nenhum campo pudesse ser extraído
+    da última ocorrência, o resultado é erro explícito -- nunca um fallback
+    silencioso para os dados do primeiro documento."""
+    texto = """
+    CMFC - Solicitação de Diária - Servidor - 1100001
+    CIDADE ORIGEM:
+      Recife
+    CIDADE(S) DESTINO:
+      Garanhuns
+    DATA INICIAL:
+      01/11/2026
+    DATA DE RETORNO:
+      01/11/2026
+    CPF:
+      11111111111
+    CMFC - Solicitação de Diária - Servidor 1100001         SEI 19.20.0000.0000011/2026-00 / pg. 1
+
+    CMFC - Solicitação de Diária - Servidor - 1100002
+    """
+    campos = _campos(texto)
+
+    assert campos.periodo_inicial is None
+    assert campos.periodo_final is None
+    assert campos.cpf is None
+    assert campos.cidade_destino is None
+
+    processo = validar("arquivo.pdf", campos)
+    assert processo.status is StatusProcesso.ERRO
+    assert "Período inicial não encontrado" in processo.erro.motivos
+    assert "Período final não encontrado" in processo.erro.motivos
+    assert "CPF não encontrado" in processo.erro.motivos
+
+
+def test_processo_real_rodape_sobreposto_extrai_da_segunda_solicitacao_vigente(
+    caminho_pdf_rodape_sobreposto,
+):
+    """Casos D/E/I: reprodução com fixture sintética (Caso 6) do padrão do
+    processo real. A segunda Solicitação (páginas 3-4) tem o próprio rodapé
+    sobreposto/corrompido, removido por `pdf_reader.py` — o parser extrai
+    dela mesma assim (nunca recua para a primeira, página 1, que tem
+    18/09/2026 em vez de 19/09/2026) e `DATA DE RETORNO` resolve
+    corretamente mesmo com o valor partido pela quebra de página 3->4."""
+    texto = pdf_reader.ler_texto(caminho_pdf_rodape_sobreposto)
+    campos = _campos(texto)
+
+    assert campos.periodo_inicial == "19/09/2026"
+    assert campos.periodo_final == "19/09/2026"
+    assert campos.cpf == "11122233396"
+    assert campos.doc_origem == "UNIDADE TESTE"
+
+    processo = validar("SEI_19.20.0001.0000117_2026_17.pdf", campos)
+    assert processo.status is StatusProcesso.SUCESSO
+
+
+def test_sei_primario_falha_mas_consenso_estrutural_do_processo_e_inequivoco():
+    """Caso K: o segmento da última Solicitação não tem nenhum rodapé
+    reconhecível (ex.: removido por `pdf_reader.py` por estar corrompido),
+    mas o mesmo NUP aparece limpo, no formato de rodapé, em outras páginas do
+    mesmo processo — maioria clara, sem ambiguidade, mínimo de 2 ocorrências."""
+    texto = (
+        "CMFC - Solicitação de Diária - Servidor - 8000001\n"
+        "CIDADE ORIGEM:\n  Recife\n"
+        "SEI 19.20.0000.0000008/2026-08 / pg. 1\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 8000002\n"
+        "SEI 19.20.0000.0000008/2026-08 / pg. 2\n"
+        "CMFC - Solicitação de Diária - Servidor - 8000003\n"
+        "CIDADE ORIGEM:\n  Recife\n"
+        "CIDADE(S) DESTINO:\n  Garanhuns\n"
+        "DATA INICIAL:\n  03/10/2026\n"
+        "DATA DE RETORNO:\n  03/10/2026\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.sei == "19.20.0000.0000008/2026-08"
+
+
+def test_sei_primario_falha_com_apenas_uma_ocorrencia_estrutural_nao_adivinha():
+    """Uma única ocorrência isolada do rodapé em todo o processo não é
+    'consenso' — o mínimo de `_MINIMO_OCORRENCIAS_CONSENSO_SEI` (2) não é
+    alcançado, então o fallback não retorna nada."""
+    texto = (
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 8100001\n"
+        "SEI 19.20.0000.0000081/2026-81 / pg. 1\n"
+        "CMFC - Solicitação de Diária - Servidor - 8100002\n"
+        "CIDADE ORIGEM:\n  Recife\n"
+        "DATA INICIAL:\n  06/10/2026\n"
+        "DATA DE RETORNO:\n  06/10/2026\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.sei is None
+
+
+def test_fallback_de_sei_tambem_ignora_citacao_incidental_sem_sufixo_pg():
+    """Caso L (fallback): mesmo quando a extração primária falha e o
+    fallback estrutural entra em ação, uma citação incidental a outro
+    processo (sem o sufixo "/ pg. N", igual ao Diário Oficial anexado no
+    processo real) continua sendo ignorada — só o NUP com o rodapé de
+    página genuíno pode vencer."""
+    texto = (
+        "CONSIDERANDO a disponibilidade orçamentária, devidamente atestada "
+        "nos autos do SEI 19.20.9999.9999999/2026-99, RESOLVE...\n"
+        "CMFC - Solicitação de Diária - Servidor - 9000001\n"
+        "SEI 19.20.0000.0000009/2026-09 / pg. 1\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 9000002\n"
+        "SEI 19.20.0000.0000009/2026-09 / pg. 2\n"
+        "CMFC - Solicitação de Diária - Servidor - 9000003\n"
+        "CIDADE ORIGEM:\n  Recife\n"
+        "DATA INICIAL:\n  04/10/2026\n"
+        "DATA DE RETORNO:\n  04/10/2026\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.sei == "19.20.0000.0000009/2026-09"
+
+
+def test_fallback_de_sei_nao_adivinha_quando_ha_empate_entre_nups():
+    """Caso M: dois NUPs diferentes aparecem o MESMO número de vezes (2) no
+    formato de rodapé — ambíguo, o fallback não escolhe nenhum dos dois."""
+    texto = (
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1000091\n"
+        "SEI 19.20.0000.0000010/2026-10 / pg. 1\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1000092\n"
+        "SEI 19.20.0000.0000010/2026-10 / pg. 2\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1000093\n"
+        "SEI 19.20.0000.0000011/2026-11 / pg. 3\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1000094\n"
+        "SEI 19.20.0000.0000011/2026-11 / pg. 4\n"
+        "CMFC - Solicitação de Diária - Servidor - 1000095\n"
+        "CIDADE ORIGEM:\n  Recife\n"
+        "DATA INICIAL:\n  05/10/2026\n"
+        "DATA DE RETORNO:\n  05/10/2026\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.sei is None
+
+    processo = validar("arquivo.pdf", campos)
+    assert processo.status is StatusProcesso.ERRO
+    assert "SEI não encontrado" in processo.erro.motivos
+
+
+def test_sei_primario_funciona_fallback_nunca_e_acionado():
+    """Caso J, reafirmado: quando a extração primária encontra o SEI dentro
+    do segmento da última Solicitação, o fallback estrutural nunca entra em
+    ação — mesmo que o texto completo tivesse outro NUP mais frequente em
+    outro lugar, o valor do próprio segmento sempre vence."""
+    texto = (
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1200001\n"
+        "SEI 19.20.0000.0000099/2026-99 / pg. 1\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1200002\n"
+        "SEI 19.20.0000.0000099/2026-99 / pg. 2\n"
+        "CMFC - Confirmação dos Serviços - Diária -Servidor - 1200003\n"
+        "SEI 19.20.0000.0000099/2026-99 / pg. 3\n"
+        "CMFC - Solicitação de Diária - Servidor - 1200004\n"
+        "CIDADE ORIGEM:\n  Recife\n"
+        "DATA INICIAL:\n  07/10/2026\n"
+        "DATA DE RETORNO:\n  07/10/2026\n"
+        "CMFC - Solicitação de Diária - Servidor 1200004"
+        "         SEI 19.20.0000.0000012/2026-12 / pg. 4\n"
+    )
+
+    campos = _campos(texto)
+
+    assert campos.sei == "19.20.0000.0000012/2026-12"

@@ -3,11 +3,16 @@ Oficial do Relatório de Diárias — Portal da Transparência. Dados 100%
 sintéticos, nenhum arquivo real."""
 
 import json
+import multiprocessing
+import pathlib
+import threading
+import time
 
 import pytest
 from openpyxl import Workbook
 
 from app.consulta import configuracao_template_relatorio_transparencia as config
+from tests._multiprocesso_util import executar_e_reportar, segurar_trava_ate_ser_morto
 
 
 def _criar_xlsx(caminho) -> str:
@@ -255,3 +260,154 @@ def test_config_valida_continua_funcionando_apos_a_correcao(tmp_path):
     carregada = config.carregar_configuracao_template(caminho_configuracao)
 
     assert carregada.caminho_template == caminho_template
+
+
+# ============================================================================
+# Achado colateral da auditoria de concorrência que corrigiu BUG-01/BUG-02
+# (`persistencia_decisoes.py`/`configuracao_fontes_relatorio_transparencia.py`)
+# — `persistir_configuracao_template` usava a mesma técnica `.tmp` fixo +
+# `os.replace` sem trava. Diferente dos outros dois módulos, esta função não
+# faz merge de campos (sempre um overwrite completo — não lê a configuração
+# anterior), então o risco não é "lost update" de um campo, é duas escritas
+# concorrentes colidindo no mesmo `.tmp` (JSON corrompido / `PermissionError`
+# no Windows). Corrigido com `_LOCK_PERSISTIR_CONFIGURACAO_TEMPLATE`
+# (`threading.Lock()`, cobrindo só a escrita — a validação do arquivo de
+# template, que não toca o recurso compartilhado, fica fora do lock).
+# Mesma técnica de teste: como não há uma leitura interna para atrasar (a
+# função não lê a config anterior), o atraso é injetado na própria escrita
+# (`Path.write_text`), alargando a janela entre "escreveu o .tmp" e
+# "promoveu com os.replace" — exatamente onde a corrida acontecia.
+# ============================================================================
+
+
+def _patchear_escrita_com_atraso(monkeypatch, atraso_s: float = 0.05):
+    escrever_original = pathlib.Path.write_text
+
+    def _escrever_com_atraso(self, *args, **kwargs):
+        resultado = escrever_original(self, *args, **kwargs)
+        time.sleep(atraso_s)
+        return resultado
+
+    monkeypatch.setattr("pathlib.Path.write_text", _escrever_com_atraso)
+
+
+def test_persistir_configuracao_template_concorrente_nao_corrompe_nem_falha(tmp_path, monkeypatch):
+    caminho_configuracao = str(tmp_path / "configuracao.json")
+    caminho_template_a = _criar_xlsx(tmp_path / "template_a.xlsx")
+    caminho_template_b = _criar_xlsx(tmp_path / "template_b.xlsx")
+    _patchear_escrita_com_atraso(monkeypatch)
+
+    barreira = threading.Barrier(2)
+    erros: dict[str, Exception | None] = {}
+
+    def _tarefa(nome, caminho_template):
+        barreira.wait(timeout=5)
+        try:
+            config.persistir_configuracao_template(caminho_configuracao, caminho_template)
+        except Exception as erro:  # noqa: BLE001 — capturado só para o assert abaixo
+            erros[nome] = erro
+        else:
+            erros[nome] = None
+
+    t1 = threading.Thread(target=_tarefa, args=("A", caminho_template_a))
+    t2 = threading.Thread(target=_tarefa, args=("B", caminho_template_b))
+    t1.start()
+    t2.start()
+    t1.join(timeout=15)
+    t2.join(timeout=15)
+
+    assert erros == {"A": None, "B": None}  # nenhuma exceção nas duas threads
+    conteudo_bruto = (tmp_path / "configuracao.json").read_text(encoding="utf-8")
+    json.loads(conteudo_bruto)  # nunca corrompe — sempre JSON válido
+
+    final = config.carregar_configuracao_template(caminho_configuracao)
+    # last-write-wins determinístico (mesma semântica de negócio de hoje
+    # para "selecionar o template duas vezes seguidas") — nunca um estado
+    # misto/corrompido entre as duas tentativas.
+    assert final.caminho_template in {caminho_template_a, caminho_template_b}
+
+
+def test_persistir_configuracao_template_excecao_durante_escrita_nao_deixa_estado_invalido(tmp_path, monkeypatch):
+    caminho_template_v1 = _criar_xlsx(tmp_path / "v1.xlsx")
+    caminho_configuracao = tmp_path / "configuracao.json"
+    config.persistir_configuracao_template(str(caminho_configuracao), caminho_template_v1)
+    conteudo_antes = caminho_configuracao.read_text(encoding="utf-8")
+
+    caminho_template_v2 = _criar_xlsx(tmp_path / "v2.xlsx")
+
+    def _write_text_falha(self, *args, **kwargs):
+        raise OSError("Falha de E/S simulada durante a escrita do .tmp")
+
+    monkeypatch.setattr("pathlib.Path.write_text", _write_text_falha)
+
+    with pytest.raises(OSError):
+        config.persistir_configuracao_template(str(caminho_configuracao), caminho_template_v2)
+
+    # A falha aconteceu escrevendo o `.tmp`, antes de qualquer `os.replace` —
+    # o arquivo real permanece exatamente como estava.
+    assert caminho_configuracao.read_text(encoding="utf-8") == conteudo_antes
+
+    monkeypatch.undo()
+    # O lock precisa ter sido liberado mesmo com a exceção — uma chamada
+    # subsequente, sem a falha simulada, tem que funcionar normalmente,
+    # nunca travar (deadlock).
+    atualizada = config.persistir_configuracao_template(str(caminho_configuracao), caminho_template_v2)
+    assert atualizada.caminho_template == caminho_template_v2
+
+
+# ============================================================================
+# QA Codex (revalidação cross-process) — `multiprocessing.Process` de
+# verdade, mesmo critério dos outros módulos irmãos.
+# ============================================================================
+
+
+def test_persistir_configuracao_template_multiprocesso_nao_corrompe_nem_falha(tmp_path):
+    caminho_configuracao = str(tmp_path / "configuracao.json")
+    caminho_template_a = _criar_xlsx(tmp_path / "template_a.xlsx")
+    caminho_template_b = _criar_xlsx(tmp_path / "template_b.xlsx")
+
+    fila = multiprocessing.Queue()
+    p1 = multiprocessing.Process(
+        target=executar_e_reportar,
+        args=(fila, config.persistir_configuracao_template, (caminho_configuracao, caminho_template_a), {}),
+    )
+    p2 = multiprocessing.Process(
+        target=executar_e_reportar,
+        args=(fila, config.persistir_configuracao_template, (caminho_configuracao, caminho_template_b), {}),
+    )
+    p1.start()
+    p2.start()
+    resultados = [fila.get(timeout=20) for _ in range(2)]
+    p1.join(timeout=20)
+    p2.join(timeout=20)
+
+    assert all(r[0] == "ok" for r in resultados), resultados
+    conteudo_bruto = (tmp_path / "configuracao.json").read_text(encoding="utf-8")
+    json.loads(conteudo_bruto)  # nunca corrompe
+
+    final = config.carregar_configuracao_template(caminho_configuracao)
+    assert final.caminho_template in {caminho_template_a, caminho_template_b}  # last-write-wins, nunca misto
+
+
+def test_persistir_configuracao_template_processo_morto_segurando_trava_recupera_depois(tmp_path):
+    caminho_configuracao = str(tmp_path / "configuracao.json")
+    caminho_template = _criar_xlsx(tmp_path / "template.xlsx")
+
+    fila = multiprocessing.Queue()
+    processo = multiprocessing.Process(
+        target=segurar_trava_ate_ser_morto,
+        args=(fila, config._trava_template, (caminho_configuracao,)),
+    )
+    processo.start()
+    sinal = fila.get(timeout=15)
+    assert sinal == "trava_obtida"
+
+    processo.kill()
+    processo.join(timeout=15)
+    assert not processo.is_alive()
+
+    inicio = time.monotonic()
+    atualizada = config.persistir_configuracao_template(caminho_configuracao, caminho_template)
+    duracao = time.monotonic() - inicio
+    assert duracao < 8  # recupera bem antes do timeout de 10s — nenhum lock órfão
+    assert atualizada.caminho_template == caminho_template

@@ -43,6 +43,8 @@ declare global {
       obterCaminhoDecisoesRelatorioTransparencia?: () => Promise<string>;
       // Micro-sprint 3H — mesmo critério de opcionalidade acima.
       obterCaminhoConfiguracaoTemplateRelatorioTransparencia?: () => Promise<string>;
+      // Micro-sprint UX operacional — mesmo critério de opcionalidade acima.
+      obterCaminhoConfiguracaoFontesRelatorioTransparencia?: () => Promise<string>;
       escolherDestinoRelatorioTransparencia?: (nomeSugerido: string) => Promise<string | null>;
     };
   }

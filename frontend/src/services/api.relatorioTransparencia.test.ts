@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ErroRelatorioTransparenciaIndisponivel,
+  configurarFontesRelatorioTransparencia,
   gerarRelatorioTransparencia,
   listarRevisoesRelatorioTransparencia,
+  obterStatusFontesRelatorioTransparencia,
   obterStatusTemplateRelatorioTransparencia,
   prepararRelatorioTransparencia,
   registrarDecisaoRevisaoRelatorioTransparencia,
@@ -267,5 +269,89 @@ describe("gerarRelatorioTransparencia — 503 de template corrompido", () => {
     await expect(gerarRelatorioTransparencia(REQUISICAO_GERAR)).rejects.toThrow(
       ErroRelatorioTransparenciaIndisponivel,
     );
+  });
+});
+
+// --- Micro-sprint UX operacional — persistência dos caminhos de Base de
+// Ordens Bancárias e Controle DIMCAC.
+
+function resposta503FontesCorrompidas() {
+  return {
+    ok: false,
+    status: 503,
+    json: async () => ({
+      detail: "Configuração das fontes corrompida (JSON inválido: linha 1 coluna 3).",
+    }),
+  };
+}
+
+describe("obterStatusFontesRelatorioTransparencia", () => {
+  it("envia o caminho de configuração na query e devolve o status das duas fontes", async () => {
+    const statusFontes = {
+      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "C:\\fake\\ob.xlsx" },
+      controle_dimcac: { configurado: false, disponivel: false, caminho: null },
+      planilha_passagens: { configurado: false, disponivel: false, caminho: null },
+    };
+    const fetchMock = vi.fn(async (_url: string) => respostaOk(statusFontes));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resultado = await obterStatusFontesRelatorioTransparencia("C:\\fake\\AppData\\fontes_configuracao.json");
+
+    expect(resultado).toEqual(statusFontes);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toContain("/fontes?");
+    expect(url).toContain(encodeURIComponent("C:\\fake\\AppData\\fontes_configuracao.json"));
+  });
+
+  it("503 de fontes corrompidas vira mensagem específica, nunca a de 'dados de decisões'", async () => {
+    const fetchMock = vi.fn(async () => resposta503FontesCorrompidas());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      obterStatusFontesRelatorioTransparencia("C:\\fake\\AppData\\fontes_configuracao.json"),
+    ).rejects.toThrow(/Base de Ordens Bancárias.*corrompido/i);
+  });
+
+  it("503 sem relação com fontes continua caindo no erro genérico já existente", async () => {
+    const fetchMock = vi.fn(async () => resposta503());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      obterStatusFontesRelatorioTransparencia("C:\\fake\\AppData\\fontes_configuracao.json"),
+    ).rejects.toThrow(ErroRelatorioTransparenciaIndisponivel);
+  });
+});
+
+describe("configurarFontesRelatorioTransparencia", () => {
+  it("envia a requisição no corpo e devolve o status atualizado das duas fontes", async () => {
+    const statusFontes = {
+      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "C:\\fake\\ob.xlsx" },
+      controle_dimcac: { configurado: true, disponivel: true, caminho: "C:\\fake\\dimcac.xlsx" },
+      planilha_passagens: { configurado: false, disponivel: false, caminho: null },
+    };
+    const fetchMock = vi.fn(async (_url: string, _opcoes: RequestInit) => respostaOk(statusFontes));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resultado = await configurarFontesRelatorioTransparencia({
+      caminho_configuracao_fontes: "C:\\fake\\AppData\\fontes_configuracao.json",
+      caminho_base_ordens_bancarias: "C:\\fake\\ob.xlsx",
+    });
+
+    expect(resultado).toEqual(statusFontes);
+    const [, opcoes] = fetchMock.mock.calls[0];
+    expect(opcoes.method).toBe("POST");
+    expect(JSON.parse(opcoes.body as string)).toEqual({
+      caminho_configuracao_fontes: "C:\\fake\\AppData\\fontes_configuracao.json",
+      caminho_base_ordens_bancarias: "C:\\fake\\ob.xlsx",
+    });
+  });
+
+  it("503 de fontes corrompidas vira mensagem específica", async () => {
+    const fetchMock = vi.fn(async () => resposta503FontesCorrompidas());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      configurarFontesRelatorioTransparencia({ caminho_configuracao_fontes: "C:\\fake\\fontes.json" }),
+    ).rejects.toThrow(/Base de Ordens Bancárias.*corrompido/i);
   });
 });

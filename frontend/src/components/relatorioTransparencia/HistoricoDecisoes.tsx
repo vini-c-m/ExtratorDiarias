@@ -1,6 +1,8 @@
-import { SCROLL_FINO, SUPERFICIE_BASE } from "../../theme/estilos";
+import { useState } from "react";
+import { PAINEL_MODAL, SCROLL_FINO, SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import Badge from "../ui/Badge";
+import Botao from "../ui/Botao";
 import type { RevisaoRelatorioTransparencia } from "../../types/relatorioTransparencia";
 
 const ROTULO_ESTADO: Record<RevisaoRelatorioTransparencia["estado"], string> = {
@@ -95,83 +97,215 @@ function resumoDecisao(revisao: RevisaoRelatorioTransparencia): string {
   return `Publicou ${partes.join(" + ")}`;
 }
 
+function obsDoGrupo(revisao: RevisaoRelatorioTransparencia): string[] {
+  return Array.from(new Set(revisao.ocorrencias.map((oc) => oc.ob))).sort();
+}
+
+// Micro-sprint UX operacional — antes esta função decidia sozinha, com um
+// único critério (multiplicidade > 1), a frase inteira do resumo. Extraída
+// aqui só para ser reaproveitada tanto pela linha resumida da tabela quanto
+// pelo painel de detalhe (`DetalheDecisao`), sem duplicar a regra.
+function haClasseIdentica(revisao: RevisaoRelatorioTransparencia): boolean {
+  const multiplicidadePorIdentidade = new Map<string, number>();
+  for (const ocorrencia of revisao.ocorrencias) {
+    multiplicidadePorIdentidade.set(
+      ocorrencia.identidade,
+      (multiplicidadePorIdentidade.get(ocorrencia.identidade) ?? 0) + 1,
+    );
+  }
+  return Array.from(multiplicidadePorIdentidade.values()).some((quantidade) => quantidade > 1);
+}
+
+interface PropsDetalhe {
+  revisao: RevisaoRelatorioTransparencia;
+  onFechar: () => void;
+}
+
+// Micro-sprint UX operacional — homologação manual apontou que o histórico
+// misturava resumo e detalhe na mesma linha de tabela (Decisão + lista
+// técnica de identidades sempre visíveis), dificultando encontrar rápido
+// "essa competência já foi decidida?" em meio a texto técnico. Este painel
+// concentra tudo que uma decisão concluída registrou; a linha da tabela
+// agora só resume o essencial (Regra/OB(s)/Estado/Responsável/Data) e
+// aponta para cá via "Ver decisão".
+function DetalheDecisao({ revisao, onFechar }: PropsDetalhe) {
+  const obs = obsDoGrupo(revisao);
+  const publicaveis = revisao.obs_publicaveis ?? [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="detalhe-decisao-titulo"
+        className={`w-full max-w-lg p-8 ${PAINEL_MODAL}`}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <h2 id="detalhe-decisao-titulo" className={TIPOGRAFIA.titulo}>
+            Detalhe da decisão
+          </h2>
+          <Badge variante={varianteEstado(revisao.estado)}>{ROTULO_ESTADO[revisao.estado]}</Badge>
+        </div>
+
+        <dl className="mt-5 space-y-3.5">
+          <div>
+            <dt className={TIPOGRAFIA.legenda}>Regra</dt>
+            <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{revisao.regra}</dd>
+          </div>
+          <div>
+            <dt className={TIPOGRAFIA.legenda}>OB(s)</dt>
+            <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{obs.join(", ")}</dd>
+          </div>
+          <div>
+            <dt className={TIPOGRAFIA.legenda}>Responsável</dt>
+            <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{revisao.autor ?? "—"}</dd>
+          </div>
+          <div>
+            <dt className={TIPOGRAFIA.legenda}>Data/hora</dt>
+            <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{formatarDataHora(revisao.decidido_em)}</dd>
+          </div>
+          <div>
+            <dt className={TIPOGRAFIA.legenda}>O que foi publicado</dt>
+            <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{resumoDecisao(revisao)}</dd>
+            {publicaveis.length > 0 && (
+              <dd className={`mt-1 ${TIPOGRAFIA.legenda}`}>
+                {publicaveis.map(formatarIdentidadePublicavel).join(", ")}
+              </dd>
+            )}
+            {haClasseIdentica(revisao) && (
+              <dd className={`mt-1 ${TIPOGRAFIA.legenda}`}>
+                Este grupo tem ocorrências fisicamente repetidas e idênticas entre si (RN04) — a decisão
+                publica no máximo uma representante de cada classe idêntica.
+              </dd>
+            )}
+          </div>
+          <div>
+            <dt className={TIPOGRAFIA.legenda}>Observação</dt>
+            <dd className={`mt-0.5 whitespace-pre-line ${TIPOGRAFIA.texto}`}>{revisao.observacao ?? "—"}</dd>
+          </div>
+        </dl>
+
+        <div className="mt-7 flex justify-end">
+          <Botao variante="secundaria" onClick={onFechar} autoFocus>
+            Fechar
+          </Botao>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface PropsTabela {
+  revisoes: RevisaoRelatorioTransparencia[];
+  onVerDecisao: (revisao: RevisaoRelatorioTransparencia) => void;
+}
+
+// Micro-sprint UX operacional — mesma tabela é reaproveitada para os dois
+// blocos (concluídas e pendências): só a lista de `revisoes` recebida
+// muda, o formato de linha é o mesmo (resumo + "Ver decisão" quando existe
+// uma decisão anterior a mostrar, mesmo que hoje esteja desatualizada).
+function TabelaRevisoes({ revisoes, onVerDecisao }: PropsTabela) {
+  return (
+    <div className={`${SUPERFICIE_BASE} overflow-hidden`}>
+      <div className={`max-h-[28rem] overflow-auto ${SCROLL_FINO}`}>
+        <table className="w-full min-w-[44rem] border-collapse">
+          <thead>
+            <tr>
+              {["Regra", "OB(s)", "Estado", "Responsável", "Decidido em", ""].map((rotulo, indice) => (
+                <th
+                  key={rotulo || `acoes-${indice}`}
+                  className="sticky top-0 z-10 border-b border-white/10 bg-[#0b1120] px-4 py-3 text-left text-[13px] font-semibold text-slate-400"
+                >
+                  {rotulo}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {revisoes.map((revisao) => (
+              <tr key={revisao.identidade_grupo}>
+                <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
+                  {revisao.regra}
+                </td>
+                <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
+                  {obsDoGrupo(revisao).join(", ")}
+                </td>
+                <td className="border-b border-white/10 px-4 py-3">
+                  <Badge variante={varianteEstado(revisao.estado)}>{ROTULO_ESTADO[revisao.estado]}</Badge>
+                </td>
+                <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
+                  {revisao.autor ?? "—"}
+                </td>
+                <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-400">
+                  {formatarDataHora(revisao.decidido_em)}
+                </td>
+                <td className="border-b border-white/10 px-4 py-3 text-right">
+                  {/* Só existe algo para ver quando já houve uma decisão registrada
+                   * (mesmo que hoje ela conte como pendência por estar desatualizada
+                   * ou exigir nova decisão) — "pendente" nunca teve decisão alguma. */}
+                  {revisao.autor && (
+                    <Botao variante="link" onClick={() => onVerDecisao(revisao)}>
+                      Ver decisão
+                    </Botao>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   revisoes: RevisaoRelatorioTransparencia[];
 }
 
-// Micro-sprint corretiva HOMO-RT-02 — histórico de decisões. Não é um
-// sistema de auditoria/autenticação novo: só uma leitura tabular do MESMO
-// `resumo.revisoes` que a tela de revisão já recebe do backend
-// (`GET/POST` já existentes), sem endpoint novo. Responsável/data/decisão
-// são exibidos exatamente como persistidos por `DecisaoHumana` — nunca
-// reinterpretados, normalizados ou combinados entre registros para inferir
-// identidade (nenhuma autenticação existe no app, local/desktop).
+// Micro-sprint UX operacional — homologação manual apontou que o histórico
+// misturava, na mesma tabela e com o mesmo peso visual, decisões já
+// concluídas (DECIDIDA/ADIADA) com casos que ainda exigem ação humana
+// (PENDENTE/DESATUALIZADA/REQUER_NOVA_DECISAO) — como se fossem entradas
+// de histórico equivalentes. Redesenhado em dois blocos, priorizando as
+// decisões concluídas (primeiro bloco, sempre visível mesmo vazio) e
+// isolando as pendências claramente à parte (segundo bloco, só aparece
+// quando existe alguma) — nenhuma pendência polui o histórico como se
+// já estivesse resolvida.
 //
-// Sem coluna de "competência": uma decisão não é gravada por competência —
-// o intervalo de reconciliação é sempre acumulado desde janeiro (mesma
-// competência acumulada usada na conciliação), então a mesma decisão pode
-// valer para vários meses de referência. Inventar essa coluna exigiria um
-// campo que não existe em `DecisaoHumana` só por conveniência de exibição.
+// Nenhuma decisão/estado novo foi criado; `resumo.revisoes` continua sendo
+// a mesma lista já recebida do backend (GET/POST existentes) — só a forma
+// de agrupar/exibir mudou.
 export default function HistoricoDecisoes({ revisoes }: Props) {
+  const [detalhe, setDetalhe] = useState<RevisaoRelatorioTransparencia | null>(null);
+
   if (revisoes.length === 0) {
     return <p className={TIPOGRAFIA.textoAuxiliar}>Nenhuma revisão para esta competência.</p>;
   }
 
+  const concluidas = revisoes.filter((revisao) => revisao.estado === "decidida" || revisao.estado === "adiada");
+  const pendencias = revisoes.filter(
+    (revisao) => revisao.estado !== "decidida" && revisao.estado !== "adiada",
+  );
+
   return (
-    <div className={`${SUPERFICIE_BASE} overflow-hidden`}>
-      <div className={`max-h-[28rem] overflow-auto ${SCROLL_FINO}`}>
-        <table className="w-full min-w-[52rem] border-collapse">
-          <thead>
-            <tr>
-              {["Regra", "OB(s)", "Estado", "Responsável", "Decidido em", "Decisão", "Observação"].map(
-                (rotulo) => (
-                  <th
-                    key={rotulo}
-                    className="sticky top-0 z-10 border-b border-white/10 bg-[#0b1120] px-4 py-3 text-left text-[13px] font-semibold text-slate-400"
-                  >
-                    {rotulo}
-                  </th>
-                ),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {revisoes.map((revisao) => {
-              const obsDoGrupo = Array.from(new Set(revisao.ocorrencias.map((oc) => oc.ob))).sort();
-              return (
-                <tr key={revisao.identidade_grupo}>
-                  <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
-                    {revisao.regra}
-                  </td>
-                  <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
-                    {obsDoGrupo.join(", ")}
-                  </td>
-                  <td className="border-b border-white/10 px-4 py-3">
-                    <Badge variante={varianteEstado(revisao.estado)}>{ROTULO_ESTADO[revisao.estado]}</Badge>
-                  </td>
-                  <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
-                    {revisao.autor ?? "—"}
-                  </td>
-                  <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-400">
-                    {formatarDataHora(revisao.decidido_em)}
-                  </td>
-                  <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
-                    <div>{resumoDecisao(revisao)}</div>
-                    {revisao.obs_publicaveis && revisao.obs_publicaveis.length > 0 && (
-                      <div className={`mt-0.5 ${TIPOGRAFIA.legenda}`}>
-                        {revisao.obs_publicaveis.map(formatarIdentidadePublicavel).join(", ")}
-                      </div>
-                    )}
-                  </td>
-                  <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-400">
-                    {revisao.observacao ?? "—"}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+    <div className="space-y-7">
+      <div>
+        <h3 className={`mb-3 ${TIPOGRAFIA.subtitulo}`}>Histórico de decisões</h3>
+        {concluidas.length === 0 ? (
+          <p className={TIPOGRAFIA.textoAuxiliar}>Nenhuma decisão concluída ainda nesta competência.</p>
+        ) : (
+          <TabelaRevisoes revisoes={concluidas} onVerDecisao={setDetalhe} />
+        )}
       </div>
+
+      {pendencias.length > 0 && (
+        <div>
+          <h3 className={`mb-3 ${TIPOGRAFIA.subtitulo}`}>Pendências que exigem nova decisão</h3>
+          <TabelaRevisoes revisoes={pendencias} onVerDecisao={setDetalhe} />
+        </div>
+      )}
+
+      {detalhe && <DetalheDecisao revisao={detalhe} onFechar={() => setDetalhe(null)} />}
     </div>
   );
 }

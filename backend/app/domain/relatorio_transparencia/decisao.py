@@ -18,7 +18,11 @@ from enum import Enum
 import hashlib
 import json
 
-from app.domain.relatorio_transparencia.linha_publicavel import nome_publicado, valor_do_controle_com_fallback
+from app.domain.relatorio_transparencia.linha_publicavel import (
+    nome_publicado,
+    valor_do_controle_com_fallback,
+    valor_passagem_publicavel,
+)
 from app.domain.relatorio_transparencia.motor_decisao import (
     CAMPOS_EVIDENCIA_MATERIAL,
     CandidatoNormal,
@@ -34,6 +38,7 @@ __all__ = [
     "AcaoDecisao",
     "EstadoRevisao",
     "DecisaoHumana",
+    "CategoriaNaoPublicada",
     "OcorrenciaNaoPublicavel",
     "RevisaoComEstado",
     "ResultadoRevisado",
@@ -48,9 +53,17 @@ __all__ = [
 
 _SEPARADOR_CAMPO = "\x1f"  # unit separator — usado só por `identidade_grupo` abaixo
 
-_VERSAO_IDENTIDADE_OCORRENCIA = "v3"
+_VERSAO_IDENTIDADE_OCORRENCIA = "v4"
 """Confronto QA Codex / HOMO-RT-04, item 14 (v2), avançada para v3 pela
-correção HOMO-RT-05: prefixo de versão do formato de
+correção HOMO-RT-05, e para v4 pela Sprint 3 (HOMO-RT-06, plano "Valor da
+Passagem no XLSX Oficial"): mesmo padrão já estabelecido — sempre que o
+CONJUNTO de campos de `_campos_linha_publicavel` muda (aqui, a adição de
+`valor_passagem_publicado`/`valor_passagem_bloqueia_geracao`), a versão é
+incrementada, para que nenhuma identidade gravada sob `v3` colida
+textualmente com `v4` — `aplicar_decisoes` nunca reaplica uma decisão v3
+às cegas sobre uma ocorrência cuja linha publicável agora inclui Valor da
+Passagem; cai no mesmo caminho de ambiguidade que qualquer formato
+anterior, exigindo nova decisão humana. Prefixo de versão do formato de
 `identidades_ocorrencias` para repetição física — nunca omitido, mesmo que o
 hash sozinho já fosse improvável de colidir com formatos anteriores. Gerações
 anteriores (nenhuma delas usa o prefixo ATUAL, então nunca podem ser
@@ -60,16 +73,18 @@ HOMO-RT-02), `"{ob}#{N}"` posicional (HOMO-RT-02 — instável a reordenação),
 vulnerável a colisão estrutural), `"{ob}#v2:{hash}"` (HOMO-RT-04 —
 canonicalização JSON estrutural, mas sem os campos da LINHA PUBLICÁVEL —
 Nome efetivo/Cargo efetivo/Transporte efetivo/Quantidade de Diárias
-efetiva, ver `_campos_linha_publicavel` abaixo — corrigido aqui,
-HOMO-RT-05). `aplicar_decisoes` já rejeita qualquer `obs_publicaveis` que
+efetiva, ver `_campos_linha_publicavel` abaixo — corrigido em HOMO-RT-05),
+`"{ob}#v3:{hash}"` (HOMO-RT-05 — linha publicável completa, mas sem Valor da
+Passagem, que ainda não existia como campo publicável — corrigido aqui,
+HOMO-RT-06). `aplicar_decisoes` já rejeita qualquer `obs_publicaveis` que
 não bata com NENHUMA identidade atual (ambiguidade → `REQUER_NOVA_DECISAO`);
 o prefixo torna essa proteção estrutural — nenhum formato anterior pode
 colidir textualmente com `f"{ob}#{_VERSAO_IDENTIDADE_OCORRENCIA}:{hash}"`,
 em vez de depender só da improbabilidade estatística. Uma decisão gravada
-sob `v2` (conteúdo canônico incompleto, mas estruturalmente seguro) nunca
-coincide textualmente com uma identidade `v3` — cai no mesmo caminho de
-ambiguidade que qualquer formato anterior, exigindo nova decisão humana
-(nunca reaplicada às cegas)."""
+sob `v3` (linha publicável sem Valor da Passagem, mas estruturalmente
+segura) nunca coincide textualmente com uma identidade `v4` — cai no mesmo
+caminho de ambiguidade que qualquer formato anterior, exigindo nova decisão
+humana (nunca reaplicada às cegas)."""
 
 
 class AcaoDecisao(str, Enum):
@@ -129,14 +144,44 @@ class DecisaoHumana:
     observacao: str | None = None
 
 
+class CategoriaNaoPublicada(str, Enum):
+    """Sprint 4 (plano "XLSX Operacional de Diárias Não Publicadas") — as
+    DUAS categorias já homologadas, nenhuma terceira inventada (ver
+    docstring de `OcorrenciaNaoPublicavel` abaixo para a distinção exata).
+    ADIAR/PENDENTE/DESATUALIZADA/REQUER_NOVA_DECISAO nunca produzem
+    `OcorrenciaNaoPublicavel` — só uma revisão efetivamente `DECIDIDA`
+    (`PUBLICAR` com fingerprint válido) chega a este ponto do código."""
+
+    NAO_PUBLICADA_POR_DECISAO_HUMANA = "nao_publicada_por_decisao_humana"
+    DUPLICATA_FISICA_IDENTICA_SUPRIMIDA = "duplicata_fisica_identica_suprimida"
+
+
 @dataclass(frozen=True)
 class OcorrenciaNaoPublicavel:
-    """Uma OB explicitamente excluída da publicação por decisão humana —
-    nunca desaparece: continua rastreável aqui, com a decisão que a
-    excluiu."""
+    """Uma ocorrência que não entrou no XLSX oficial apesar de a revisão do
+    seu grupo estar `DECIDIDA` — nunca desaparece: continua rastreável
+    aqui, com a decisão que a excluiu e a categoria exata do motivo.
+
+    `categoria` é calculada exatamente onde este dataclass já era
+    construído (Sprint 4 rotula o que `aplicar_decisoes` já sabia, nunca
+    recalcula nada em paralelo — mesmo princípio de NOVO-RT-08: uma única
+    fonte de verdade, nunca duas listas/loops divergentes):
+    - `NAO_PUBLICADA_POR_DECISAO_HUMANA`: a identidade desta ocorrência não
+      está em `decisao.obs_publicaveis` — o usuário nunca selecionou esta
+      identidade (inclui "publicar zero": `obs_publicaveis` vazio faz TODA
+      ocorrência do grupo cair aqui, nunca em duplicata suprimida).
+    - `DUPLICATA_FISICA_IDENTICA_SUPRIMIDA`: a identidade FOI selecionada,
+      mas já existe outra ocorrência física com a MESMA identidade
+      publicada antes desta no mesmo grupo (I11a — identidade idêntica,
+      nunca há base lógica para distinguir qual das duas é "a
+      representante") — publicar as duas duplicaria o mesmo pagamento no
+      relatório, então só a primeira em ordem de iteração é publicada; as
+      demais caem aqui, nunca como se o usuário as tivesse rejeitado
+      individualmente."""
 
     ocorrencia: OcorrenciaFinanceira
     decisao: DecisaoHumana
+    categoria: CategoriaNaoPublicada
 
 
 @dataclass(frozen=True)
@@ -482,9 +527,38 @@ def _campos_linha_publicavel(oc: OcorrenciaFinanceira) -> list[tuple[str, object
     uma repetição física exige revisão humana, RN04) — misturar as duas
     listas faria RN04 disparar por uma diferença de Cargo do Controle
     DIMCAC que hoje nunca é avaliada por aquela regra, uma mudança de
-    escopo de RN01-RN07 não pedida por esta correção."""
+    escopo de RN01-RN07 não pedida por esta correção.
+
+    Sprint 3 (HOMO-RT-06) — `valor_passagem_publicado`/
+    `valor_passagem_inconsistente` seguem exatamente o mesmo padrão:
+    calculados por `linha_publicavel.valor_passagem_publicavel(oc.passagem)`
+    — a MESMA função que `escritor_relatorio_transparencia.py` chama para
+    escrever a coluna J — e deliberadamente FORA de `CAMPOS_EVIDENCIA_
+    MATERIAL`/`_campos_divergentes`: Valor da Passagem nunca entra em RN04
+    (RN01-RN07 permanecem semanticamente idênticos; a evidência de entrada
+    da Base OB continua sendo a única coisa que RN04 avalia). `oc.passagem`
+    é `None` (estado E) para toda ocorrência construída antes desta Sprint
+    (nenhum teste/fixture anterior a ela precisou mudar) — `valor_passagem_
+    publicavel(None)` sempre devolve `(valor=None, inconsistente=False)`,
+    então o par de campos abaixo é uma constante para código legado, mas
+    ainda assim participa da serialização (é por isso, sozinho, que a versão
+    de identidade avançou de v3 para v4 — o FORMATO da linha publicável
+    mudou para toda ocorrência, mesmo quando o valor efetivo não muda).
+
+    Fechamento HOMO-RT-06 (decisão de produto final): `valor_passagem_
+    inconsistente` (estado D, INVALIDO — inconsistência da própria fonte,
+    ex. `"#VALOR!"`) participa do fingerprint de propósito, MESMO a célula
+    pública sendo idêntica à de B/C/E (todas vazias) — "sem passagem" (B/C/E,
+    dado limpo) e "passagem inconsistente na fonte" (D, dado suspeito) são
+    circunstâncias administrativas distintas; se uma decisão humana foi
+    tomada com a fonte limpa e ela degradar para D antes da próxima geração,
+    a decisão precisa virar DESATUALIZADA — nunca continuar válida
+    silenciosamente só porque a célula pública não mudou. Por isso B→D,
+    C→D e E→D (e o inverso) sempre mudam o fingerprint, enquanto B↔C↔E
+    entre si nunca mudam (ver testes dedicados em `test_decisao.py`)."""
     ordem = oc.ordem_bancaria
     quantidade = resolver_quantidade_diarias(oc.registros_controle)
+    valor_passagem = valor_passagem_publicavel(oc.passagem)
     return [
         ("nome_publicado", nome_publicado(ordem)),
         ("cargo_publicado", valor_do_controle_com_fallback(oc.registros_controle, "cargo", ordem.cargo)),
@@ -494,6 +568,8 @@ def _campos_linha_publicavel(oc: OcorrenciaFinanceira) -> list[tuple[str, object
         ),
         ("quantidade_integral_publicada", quantidade.integral if quantidade else None),
         ("quantidade_parcial_publicada", quantidade.parcial if quantidade else None),
+        ("valor_passagem_publicado", valor_passagem.valor),
+        ("valor_passagem_inconsistente", valor_passagem.inconsistente),
     ]
 
 
@@ -765,9 +841,21 @@ def aplicar_decisoes(
         publicadas_por_identidade: set[str] = set()
         for oc, identidade in zip(revisao.ocorrencias, identidades_atuais):
             if identidade not in decisao.obs_publicaveis:
-                nao_publicaveis.append(OcorrenciaNaoPublicavel(ocorrencia=oc, decisao=decisao))
+                nao_publicaveis.append(
+                    OcorrenciaNaoPublicavel(
+                        ocorrencia=oc,
+                        decisao=decisao,
+                        categoria=CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA,
+                    )
+                )
             elif identidade in publicadas_por_identidade:
-                nao_publicaveis.append(OcorrenciaNaoPublicavel(ocorrencia=oc, decisao=decisao))
+                nao_publicaveis.append(
+                    OcorrenciaNaoPublicavel(
+                        ocorrencia=oc,
+                        decisao=decisao,
+                        categoria=CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA,
+                    )
+                )
             else:
                 candidatos_publicaveis.append(
                     CandidatoNormal(ocorrencia=oc, registros_controle=oc.registros_controle)

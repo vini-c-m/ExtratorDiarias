@@ -75,6 +75,23 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
     };
   }, []);
 
+  // Micro-sprint UX operacional (item 3) — mesmo critério de
+  // `caminhoConfiguracaoTemplate` acima: caminho da configuração persistida
+  // de Base OB/Controle DIMCAC (infraestrutura interna, nunca exibida),
+  // repassado para `PainelEntrada` (única tela que seleciona essas fontes).
+  const [caminhoConfiguracaoFontes, setCaminhoConfiguracaoFontes] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    if (typeof window.api?.obterCaminhoConfiguracaoFontesRelatorioTransparencia !== "function") return;
+    window.api.obterCaminhoConfiguracaoFontesRelatorioTransparencia().then((caminho) => {
+      if (!cancelado) setCaminhoConfiguracaoFontes(caminho);
+    });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
+
   function aoPreparar(parametros: ParametrosPreparacao, autorInformado: string) {
     setAutor(autorInformado);
     if (!caminhoDecisoes) return;
@@ -118,6 +135,7 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
           erro={estado.erro}
           preparando={preparando}
           caminhoDecisoesResolvido={caminhoDecisoes !== null}
+          caminhoConfiguracaoFontes={caminhoConfiguracaoFontes}
           onPreparar={aoPreparar}
         />
       )}

@@ -53,7 +53,23 @@ export type StatusTemplateRelatorioTransparenciaUI =
 
 export type FaseGeracaoRelatorioTransparencia =
   | { fase: "ocioso" }
-  | { fase: "sucesso"; caminhoArquivo: string; caminhoPasta: string; totalOcorrencias: number }
+  | {
+      fase: "sucesso";
+      caminhoArquivo: string;
+      caminhoPasta: string;
+      totalOcorrencias: number;
+      // Sprint 5 — resumo do XLSX operacional (mesma geração, mesmo
+      // ResultadoRevisado do oficial). `naoPublicadasGerado=false` cobre
+      // dois cenários que a UI precisa distinguir: nenhuma diária a
+      // reportar (`totalNaoPublicadas === 0`, `erroNaoPublicadas === null`)
+      // ou uma falha na escrita do operacional depois do oficial já salvo
+      // (`erroNaoPublicadas` preenchido) — nunca tratados como o mesmo
+      // "sucesso completo".
+      naoPublicadasGerado: boolean;
+      caminhoArquivoNaoPublicadas: string | null;
+      totalNaoPublicadas: number;
+      erroNaoPublicadas: string | null;
+    }
   | { fase: "erro"; mensagem: string };
 
 export interface EstadoUseGerarRelatorioTransparencia {
@@ -67,6 +83,7 @@ export interface EstadoUseGerarRelatorioTransparencia {
   erroAcaoPosGeracao: string | null;
   abrirRelatorio: () => Promise<void>;
   abrirPasta: () => Promise<void>;
+  abrirArquivoNaoPublicadas: () => Promise<void>;
 }
 
 /** Micro-sprint 3H — máquina de estados da geração final do XLSX (mesmo
@@ -179,6 +196,10 @@ export function useGerarRelatorioTransparencia(
           caminhoArquivo: resultado.caminho_arquivo,
           caminhoPasta: pastaDoArquivo(resultado.caminho_arquivo),
           totalOcorrencias: resultado.total_ocorrencias,
+          naoPublicadasGerado: resultado.nao_publicadas_gerado,
+          caminhoArquivoNaoPublicadas: resultado.caminho_arquivo_nao_publicadas,
+          totalNaoPublicadas: resultado.total_nao_publicadas,
+          erroNaoPublicadas: resultado.erro_nao_publicadas,
         });
       } catch (erroCaptura) {
         setEstadoGeracao({
@@ -221,6 +242,28 @@ export function useGerarRelatorioTransparencia(
     }
   }, [estadoGeracao]);
 
+  // Sprint 5 — mesmo mecanismo genérico de `abrirRelatorio`/`abrirPasta`
+  // (`window.api.abrirArquivo` → `shell.openPath`), nenhum IPC novo. Só age
+  // quando o operacional foi de fato gerado nesta execução.
+  const abrirArquivoNaoPublicadas = useCallback(async () => {
+    if (estadoGeracao.fase !== "sucesso" || !estadoGeracao.caminhoArquivoNaoPublicadas) return;
+    const caminho = estadoGeracao.caminhoArquivoNaoPublicadas;
+    setErroAcaoPosGeracao(null);
+    if (typeof window.api?.abrirArquivo !== "function") {
+      setErroAcaoPosGeracao(
+        "Não foi possível abrir a planilha de diárias não publicadas. Localize-a manualmente na pasta de destino.",
+      );
+      return;
+    }
+    try {
+      await window.api.abrirArquivo(caminho);
+    } catch {
+      setErroAcaoPosGeracao(
+        "Não foi possível abrir a planilha de diárias não publicadas. Localize-a manualmente na pasta de destino.",
+      );
+    }
+  }, [estadoGeracao]);
+
   return {
     statusTemplate,
     carregarStatusTemplate,
@@ -232,5 +275,6 @@ export function useGerarRelatorioTransparencia(
     erroAcaoPosGeracao,
     abrirRelatorio,
     abrirPasta,
+    abrirArquivoNaoPublicadas,
   };
 }

@@ -23,6 +23,14 @@ const NOME_ARQUIVO_DECISOES = "relatorio_transparencia_decisoes.json";
 // Conferência.
 const NOME_ARQUIVO_CONFIGURACAO_TEMPLATE = "relatorio_transparencia_template_configuracao.json";
 
+// Micro-sprint UX operacional — mesmo raciocínio de
+// `NOME_ARQUIVO_CONFIGURACAO_TEMPLATE`, mas para a persistência dos
+// caminhos de Base de Ordens Bancárias e Controle DIMCAC (`app/consulta/
+// configuracao_fontes_relatorio_transparencia.py`): infraestrutura interna,
+// nunca um campo digitado pelo usuário. Arquivo próprio, nunca reaproveita
+// nenhum dos dois arquivos acima.
+const NOME_ARQUIVO_CONFIGURACAO_FONTES = "relatorio_transparencia_fontes_configuracao.json";
+
 export function registrarIpcRelatorioTransparencia(): void {
   ipcMain.handle("relatorio-transparencia:obter-caminho-decisoes", () =>
     path.join(app.getPath("userData"), NOME_ARQUIVO_DECISOES),
@@ -30,6 +38,10 @@ export function registrarIpcRelatorioTransparencia(): void {
 
   ipcMain.handle("relatorio-transparencia:obter-caminho-configuracao-template", () =>
     path.join(app.getPath("userData"), NOME_ARQUIVO_CONFIGURACAO_TEMPLATE),
+  );
+
+  ipcMain.handle("relatorio-transparencia:obter-caminho-configuracao-fontes", () =>
+    path.join(app.getPath("userData"), NOME_ARQUIVO_CONFIGURACAO_FONTES),
   );
 
   // Micro-sprint 3H — diálogo nativo "Salvar como" para o XLSX final. Ao

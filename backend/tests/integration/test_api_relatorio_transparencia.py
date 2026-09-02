@@ -6,8 +6,12 @@ import os
 import threading
 from datetime import date
 
+import openpyxl
 import pytest
 from fastapi.testclient import TestClient
+from odf.opendocument import OpenDocumentSpreadsheet
+from odf.table import Table, TableCell, TableRow
+from odf.text import P
 from openpyxl import Workbook
 
 from app.main import app
@@ -480,16 +484,187 @@ def test_post_gerar_produz_arquivo(tmp_path):
     corpo = resposta.json()
     assert corpo["total_ocorrencias"] == 1
     assert caminho_destino.exists()
+    # Sprint 5 — retrocompatibilidade: sem nenhuma não publicada, o corpo
+    # segue descrevendo só o oficial nos campos novos.
+    assert corpo["nao_publicadas_gerado"] is False
+    assert corpo["caminho_arquivo_nao_publicadas"] is None
+    assert corpo["total_nao_publicadas"] == 0
 
-    # Item 16 (teste ponta a ponta) — confirma que o arquivo tem a
-    # estrutura mínima esperada: mesma aba do template, cabeçalho
-    # preservado, e a linha de dados escrita de fato.
-    from openpyxl import load_workbook
 
-    workbook = load_workbook(str(caminho_destino))
-    assert "Controle de Diárias" in workbook.sheetnames
-    ws = workbook["Controle de Diárias"]
-    assert ws["A7"].value == "2026OB000001"
+# ============================================================================
+# Sprint 5 — geração conjunta via HTTP: `POST /gerar` passa a devolver também
+# o resumo do XLSX operacional (`Diarias_Nao_Publicadas_<competencia>.xlsx`),
+# gerado a partir do MESMO `ResultadoRevisado` do oficial.
+# ============================================================================
+
+
+def test_post_gerar_com_nao_publicadas_via_http_devolve_os_dois_arquivos(tmp_path):
+    linhas = [
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    corpo_preparar = client.post(
+        f"{_BASE_URL}/preparar", json=_payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    ).json()
+    identidade = corpo_preparar["revisoes"][0]["identidade_grupo"]
+
+    payload_decisao = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+    payload_decisao.update({"acao": "publicar", "autor": "servidor.teste", "obs_selecionadas": ["2026OB000001"]})
+    resposta_decisao = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload_decisao)
+    assert resposta_decisao.status_code == 200
+
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida.xlsx"
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["total_ocorrencias"] == 1
+    assert caminho_destino.exists()
+    assert corpo["nao_publicadas_gerado"] is True
+    assert corpo["total_nao_publicadas"] == 1
+    assert corpo["total_categoria_a"] == 1
+    assert corpo["total_categoria_b"] == 0
+    assert corpo["erro_nao_publicadas"] is None
+    caminho_operacional = corpo["caminho_arquivo_nao_publicadas"]
+    assert caminho_operacional is not None
+    assert os.path.basename(caminho_operacional) == "Diarias_Nao_Publicadas_Maio_2026.xlsx"
+    assert os.path.exists(caminho_operacional)
+    # Nunca exposto ao usuário na resposta HTTP — mesma garantia já testada
+    # para `/preparar` (linha ~130): nenhum conceito técnico de fingerprint.
+    assert "fingerprint" not in resposta.text.lower()
+
+
+# ============================================================================
+# Sprint 3 (HOMO-RT-06), fechamento — wiring real da 3ª fonte (Planilha de
+# Passagens) pelo fluxo HTTP normal: `/preparar` e `/gerar` aceitam
+# `caminho_planilha_passagens` (opcional, retrocompatível) via
+# `ParametrosRelatorioBase`, o mesmo schema compartilhado por todas as
+# operações do módulo.
+# ============================================================================
+
+
+def _criar_planilha_passagens_ods(caminho, linhas, *, cabecalho=("Ordem Bancária", "Transporte", "Valor da Passagem")):
+    def _celula(valor):
+        if isinstance(valor, (int, float)):
+            c = TableCell(valuetype="float", value=float(valor))
+        else:
+            c = TableCell()
+        if valor is not None:
+            c.addElement(P(text=str(valor)))
+        return c
+
+    documento = OpenDocumentSpreadsheet()
+    tabela = Table(name="Controle de Diárias")
+    linha_cabecalho = TableRow()
+    for rotulo in cabecalho:
+        linha_cabecalho.addElement(_celula(rotulo))
+    tabela.addElement(linha_cabecalho)
+    for linha in linhas:
+        tr = TableRow()
+        for valor in linha:
+            tr.addElement(_celula(valor))
+        tabela.addElement(tr)
+    documento.spreadsheet.addElement(tabela)
+    documento.save(str(caminho))
+
+
+def test_post_gerar_com_planilha_passagens_publica_valor_real_via_http(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000042", valor=100.0)]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida.xlsx"
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(caminho_passagens, [["2026OB000042", "AVIÃO", 1657.76]])
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 200
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["J7"].value == 1657.76
+
+
+def test_post_gerar_sem_planilha_passagens_preserva_comportamento_anterior_via_http(tmp_path):
+    """Controle — `caminho_planilha_passagens` omitido do payload (nunca
+    enviado): retrocompatibilidade total, célula vazia."""
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida.xlsx"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload)
+
+    assert resposta.status_code == 200
+    wb = openpyxl.load_workbook(caminho_destino)
+    ws = wb["Controle de Diárias"]
+    assert ws["J7"].value is None
+
+
+def test_post_preparar_planilha_passagens_arquivo_nao_encontrado_404(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_planilha_passagens=str(tmp_path / "nunca_existiu.ods"),
+    )
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload)
+
+    assert resposta.status_code == 404
+
+
+def test_post_preparar_planilha_passagens_estrutura_invalida_422(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_passagens = tmp_path / "passagens_invalida.ods"
+    _criar_planilha_passagens_ods(
+        caminho_passagens, [["2026OB000001", "AVIÃO"]], cabecalho=("Ordem Bancária", "Transporte")
+    )  # cabeçalho sem a coluna "Valor da Passagem"
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload)
+
+    assert resposta.status_code == 422
+
+
+def test_post_preparar_planilha_passagens_nao_altera_rn01_rn07_via_http(tmp_path):
+    linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    caminho_passagens = tmp_path / "passagens.ods"
+    _criar_planilha_passagens_ods(caminho_passagens, [["2026OB000001", "AVIÃO", 100.0]])
+
+    payload = dict(
+        _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes),
+        caminho_planilha_passagens=str(caminho_passagens),
+    )
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload)
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["total_candidatos_normais"] == 1
+    assert corpo["total_revisoes"] == 0
+    assert corpo["pode_gerar_relatorio"] is True
 
 
 def test_post_gerar_bloqueia_com_revisao_pendente_409(tmp_path):
@@ -565,6 +740,128 @@ def test_post_gerar_duas_requisicoes_http_simultaneas_mesmo_destino_apenas_uma_2
     status = sorted(r.status_code for r in respostas.values())
     assert status == [200, 409], f"esperado [200, 409], obtido {status}"
     assert caminho_destino.exists()
+
+
+# ============================================================================
+# QA Codex (BUG-01/BUG-02) — reproduz os dois cenários na camada HTTP
+# completa (FastAPI thread pool incluído), não só nas funções internas de
+# `persistencia_decisoes.py`/`configuracao_fontes_relatorio_transparencia.py`
+# (já cobertas em `tests/unit/`). Mesmo padrão de `threading.Barrier` do
+# teste de `/gerar` concorrente acima.
+# ============================================================================
+
+
+def test_post_decisao_duas_revisoes_diferentes_simultaneas_ambas_200_e_persistidas(tmp_path):
+    """Duas requisições `POST /revisoes/{id}/decisao` para GRUPOS DIFERENTES
+    da mesma competência, disparadas ao mesmo tempo — antes da correção do
+    BUG-01, uma das duas decisões podia ser perdida silenciosamente (ou a
+    requisição falhar com erro de E/S). Esperado: as duas concluem com 200
+    e as duas decisões aparecem no histórico."""
+    linhas = [
+        _linha_ob(
+            dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19,
+            trecho="RECIFE - ARCOVERDE", periodo_inicial=date(2026, 5, 11), periodo_final=date(2026, 5, 11),
+        ),
+        _linha_ob(
+            dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19,
+            trecho="RECIFE - ARCOVERDE", periodo_inicial=date(2026, 5, 11), periodo_final=date(2026, 5, 11),
+        ),
+        _linha_ob(
+            dh="2026DH000004", ob="2026OB000004", cpf=33333333333, valor=200.00,
+            trecho="RECIFE - CARUARU", periodo_inicial=date(2026, 5, 12), periodo_final=date(2026, 5, 12),
+        ),
+        _linha_ob(
+            dh="2026DH000005", ob="2026OB000005", cpf=33333333333, valor=200.00,
+            trecho="RECIFE - CARUARU", periodo_inicial=date(2026, 5, 12), periodo_final=date(2026, 5, 12),
+        ),
+    ]
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload_fontes = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
+
+    corpo = client.post(f"{_BASE_URL}/preparar", json=payload_fontes).json()
+    assert corpo["total_revisoes"] == 2
+
+    def _revisao_do_grupo(corpo, obs_esperadas):
+        return next(r for r in corpo["revisoes"] if {oc["ob"] for oc in r["ocorrencias"]} == obs_esperadas)
+
+    obs_grupo_1 = {"2026OB000002", "2026OB000003"}
+    obs_grupo_2 = {"2026OB000004", "2026OB000005"}
+    identidade_1 = _revisao_do_grupo(corpo, obs_grupo_1)["identidade_grupo"]
+    identidade_2 = _revisao_do_grupo(corpo, obs_grupo_2)["identidade_grupo"]
+
+    payload_decisao_1 = dict(payload_fontes, acao="publicar", autor="servidor.a", obs_selecionadas=sorted(obs_grupo_1))
+    payload_decisao_2 = dict(payload_fontes, acao="publicar", autor="servidor.b", obs_selecionadas=sorted(obs_grupo_2))
+
+    liberar_barreira = threading.Barrier(2, timeout=10)
+    respostas: dict[str, object] = {}
+
+    def _chamar(chave, identidade, payload):
+        liberar_barreira.wait()
+        respostas[chave] = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload)
+
+    t1 = threading.Thread(target=_chamar, args=("1", identidade_1, payload_decisao_1))
+    t2 = threading.Thread(target=_chamar, args=("2", identidade_2, payload_decisao_2))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    assert respostas["1"].status_code == 200, respostas["1"].text
+    assert respostas["2"].status_code == 200, respostas["2"].text
+
+    corpo_final = client.get(f"{_BASE_URL}/revisoes", params=payload_fontes).json()
+    estados = {r["identidade_grupo"]: r["estado"] for r in corpo_final["revisoes"]}
+    assert estados[identidade_1] == "decidida"  # nenhuma das duas decisões foi perdida
+    assert estados[identidade_2] == "decidida"
+
+
+def test_post_fontes_dois_campos_diferentes_simultaneos_ambos_200_e_mesclados(tmp_path):
+    """Duas requisições `POST /fontes` concorrentes, cada uma atualizando um
+    campo diferente (Base OB / Controle DIMCAC) — antes da correção do
+    BUG-02, uma podia descartar a outra (lost update) ou corromper o JSON.
+    Esperado: as duas concluem com 200 e a configuração final tem os DOIS
+    campos.
+
+    Caminhos precisam apontar para arquivos que existem de verdade: a
+    resposta de `/fontes` só expõe `caminho` quando `disponivel` é `True`
+    (`_status_arquivo_fonte_resposta` — nunca reporta um caminho morto),
+    então o teste cria dois arquivos vazios reais em `tmp_path`."""
+    caminho_configuracao_fontes = str(tmp_path / "fontes_configuracao.json")
+    caminho_ob = str(tmp_path / "ob.xlsx")
+    caminho_dimcac = str(tmp_path / "dimcac.xlsx")
+    (tmp_path / "ob.xlsx").write_bytes(b"")
+    (tmp_path / "dimcac.xlsx").write_bytes(b"")
+    payload_a = {
+        "caminho_configuracao_fontes": caminho_configuracao_fontes,
+        "caminho_base_ordens_bancarias": caminho_ob,
+    }
+    payload_b = {
+        "caminho_configuracao_fontes": caminho_configuracao_fontes,
+        "caminho_controle_dimcac": caminho_dimcac,
+    }
+
+    liberar_barreira = threading.Barrier(2, timeout=10)
+    respostas: dict[str, object] = {}
+
+    def _chamar(chave, payload):
+        liberar_barreira.wait()
+        respostas[chave] = client.post(f"{_BASE_URL}/fontes", json=payload)
+
+    t1 = threading.Thread(target=_chamar, args=("a", payload_a))
+    t2 = threading.Thread(target=_chamar, args=("b", payload_b))
+    t1.start()
+    t2.start()
+    t1.join(timeout=30)
+    t2.join(timeout=30)
+
+    assert respostas["a"].status_code == 200, respostas["a"].text
+    assert respostas["b"].status_code == 200, respostas["b"].text
+
+    corpo_final = client.get(
+        f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
+    ).json()
+    assert corpo_final["base_ordens_bancarias"]["caminho"] == caminho_ob
+    assert corpo_final["controle_dimcac"]["caminho"] == caminho_dimcac
 
 
 def test_post_gerar_sem_template_configurado_404(tmp_path):
@@ -936,3 +1233,173 @@ def test_decisoes_validas_continuam_funcionando_apos_a_correcao(tmp_path):
     resposta_revisoes = client.get(f"{_BASE_URL}/revisoes", params=payload_fontes)
     assert resposta_revisoes.status_code == 200
     assert resposta_revisoes.json()["revisoes"][0]["estado"] == "decidida"
+
+
+# --- Micro-sprint UX operacional: GET/POST /fontes — persistência dos
+# caminhos de Base de Ordens Bancárias e Controle DIMCAC (nunca validação de
+# conteúdo aqui — só lembra onde o usuário apontou da última vez).
+
+
+def test_get_fontes_nao_configurado(tmp_path):
+    caminho_configuracao_fontes = str(tmp_path / "nunca_configurado.json")
+
+    resposta = client.get(
+        f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
+    )
+
+    assert resposta.status_code == 200
+    assert resposta.json() == {
+        "base_ordens_bancarias": {"configurado": False, "disponivel": False, "caminho": None},
+        "controle_dimcac": {"configurado": False, "disponivel": False, "caminho": None},
+        "planilha_passagens": {"configurado": False, "disponivel": False, "caminho": None},
+    }
+
+
+def test_post_fontes_configura_ambas_e_get_reflete(tmp_path):
+    caminho_configuracao_fontes = str(tmp_path / "fontes_configuracao.json")
+    caminho_ob = tmp_path / "ob.xlsx"
+    caminho_ob.write_bytes(b"conteudo ficticio")
+    caminho_dimcac = tmp_path / "dimcac.xlsx"
+    caminho_dimcac.write_bytes(b"conteudo ficticio")
+
+    resposta_post = client.post(
+        f"{_BASE_URL}/fontes",
+        json={
+            "caminho_configuracao_fontes": caminho_configuracao_fontes,
+            "caminho_base_ordens_bancarias": str(caminho_ob),
+            "caminho_controle_dimcac": str(caminho_dimcac),
+        },
+    )
+    assert resposta_post.status_code == 200
+    corpo_post = resposta_post.json()
+    assert corpo_post["base_ordens_bancarias"] == {
+        "configurado": True,
+        "disponivel": True,
+        "caminho": str(caminho_ob),
+    }
+    assert corpo_post["controle_dimcac"] == {
+        "configurado": True,
+        "disponivel": True,
+        "caminho": str(caminho_dimcac),
+    }
+
+    resposta_get = client.get(
+        f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
+    )
+    assert resposta_get.status_code == 200
+    assert resposta_get.json() == corpo_post
+
+
+def test_post_fontes_configura_apenas_base_ob_preserva_controle(tmp_path):
+    caminho_configuracao_fontes = str(tmp_path / "fontes_configuracao.json")
+    caminho_ob_v1 = tmp_path / "ob_v1.xlsx"
+    caminho_ob_v1.write_bytes(b"x")
+    caminho_dimcac = tmp_path / "dimcac.xlsx"
+    caminho_dimcac.write_bytes(b"x")
+
+    client.post(
+        f"{_BASE_URL}/fontes",
+        json={
+            "caminho_configuracao_fontes": caminho_configuracao_fontes,
+            "caminho_base_ordens_bancarias": str(caminho_ob_v1),
+            "caminho_controle_dimcac": str(caminho_dimcac),
+        },
+    )
+
+    caminho_ob_v2 = tmp_path / "ob_v2.xlsx"
+    caminho_ob_v2.write_bytes(b"x")
+    resposta = client.post(
+        f"{_BASE_URL}/fontes",
+        json={
+            "caminho_configuracao_fontes": caminho_configuracao_fontes,
+            "caminho_base_ordens_bancarias": str(caminho_ob_v2),
+        },
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["base_ordens_bancarias"]["caminho"] == str(caminho_ob_v2)
+    assert corpo["controle_dimcac"]["caminho"] == str(caminho_dimcac)
+
+
+# --- Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — terceira fonte
+# persistida (Planilha de Passagens), mesmo mecanismo já homologado acima para
+# Base OB/Controle DIMCAC: atualização parcial, independente das outras duas.
+
+
+def test_post_fontes_configura_apenas_passagens_preserva_base_ob_e_controle(tmp_path):
+    caminho_configuracao_fontes = str(tmp_path / "fontes_configuracao.json")
+    caminho_ob = tmp_path / "ob.xlsx"
+    caminho_ob.write_bytes(b"x")
+    caminho_dimcac = tmp_path / "dimcac.xlsx"
+    caminho_dimcac.write_bytes(b"x")
+    client.post(
+        f"{_BASE_URL}/fontes",
+        json={
+            "caminho_configuracao_fontes": caminho_configuracao_fontes,
+            "caminho_base_ordens_bancarias": str(caminho_ob),
+            "caminho_controle_dimcac": str(caminho_dimcac),
+        },
+    )
+
+    caminho_passagens = tmp_path / "passagens.ods"
+    caminho_passagens.write_bytes(b"x")
+    resposta = client.post(
+        f"{_BASE_URL}/fontes",
+        json={
+            "caminho_configuracao_fontes": caminho_configuracao_fontes,
+            "caminho_planilha_passagens": str(caminho_passagens),
+        },
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["planilha_passagens"] == {
+        "configurado": True,
+        "disponivel": True,
+        "caminho": str(caminho_passagens),
+    }
+    assert corpo["base_ordens_bancarias"]["caminho"] == str(caminho_ob)
+    assert corpo["controle_dimcac"]["caminho"] == str(caminho_dimcac)
+
+    resposta_get = client.get(
+        f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
+    )
+    assert resposta_get.json() == corpo
+
+
+def test_get_fontes_configurado_mas_arquivo_sumiu(tmp_path):
+    caminho_configuracao_fontes = str(tmp_path / "fontes_configuracao.json")
+    caminho_ob = tmp_path / "ob.xlsx"
+    caminho_ob.write_bytes(b"x")
+
+    client.post(
+        f"{_BASE_URL}/fontes",
+        json={
+            "caminho_configuracao_fontes": caminho_configuracao_fontes,
+            "caminho_base_ordens_bancarias": str(caminho_ob),
+        },
+    )
+    caminho_ob.unlink()
+
+    resposta = client.get(
+        f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    # Configurado continua `True` (o usuário JÁ escolheu um arquivo) — só
+    # "disponivel" reflete que ele não existe mais, nunca some
+    # silenciosamente do estado (mesmo critério do Template Oficial).
+    assert corpo["base_ordens_bancarias"] == {"configurado": True, "disponivel": False, "caminho": None}
+
+
+def test_get_fontes_json_corrompido_503_amigavel(tmp_path):
+    caminho_configuracao_fontes = tmp_path / "corrompido.json"
+    caminho_configuracao_fontes.write_text("{ invalido", encoding="utf-8")
+
+    resposta = client.get(
+        f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": str(caminho_configuracao_fontes)}
+    )
+
+    assert resposta.status_code == 503

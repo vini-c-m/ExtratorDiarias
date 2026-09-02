@@ -3,26 +3,41 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.consulta.configuracao_fontes_relatorio_transparencia import (
+    ConfiguracaoFontesCorrompida,
+    ConfiguracaoFontesEmUso,
+    carregar_configuracao_fontes,
+    persistir_configuracao_fontes,
+)
 from app.consulta.configuracao_template_relatorio_transparencia import (
     ConfiguracaoTemplateCorrompida,
+    ConfiguracaoTemplateEmUso,
     TemplateOficialInvalido,
     carregar_configuracao_template,
     persistir_configuracao_template,
 )
-from app.consulta.persistencia_decisoes import PersistenciaDecisoesCorrompida, VersaoEsquemaIncompativel
+from app.consulta.persistencia_decisoes import (
+    PersistenciaDecisoesCorrompida,
+    PersistenciaDecisoesEmUso,
+    VersaoEsquemaIncompativel,
+)
 from app.domain.relatorio_transparencia.decisao import AcaoDecisao
 from app.schemas.relatorio_transparencia import (
     ListaRevisoesResposta,
     OcorrenciaResposta,
+    ParametrosConfiguracaoFontesQuery,
     ParametrosConfiguracaoTemplateQuery,
     ParametrosRelatorioQuery,
     RelatorioGeradoResposta,
+    RequisicaoConfigurarFontes,
     RequisicaoConfigurarTemplate,
     RequisicaoGerarRelatorio,
     RequisicaoPrepararRelatorio,
     RequisicaoRegistrarDecisao,
     ResumoRelatorioResposta,
     RevisaoResposta,
+    StatusArquivoFonteResposta,
+    StatusFontesResposta,
     StatusTemplateResposta,
 )
 from app.services.relatorio_transparencia_service import (
@@ -32,8 +47,10 @@ from app.services.relatorio_transparencia_service import (
     DestinoJaExiste,
     EstruturaBaseOBInvalida,
     EstruturaControleInvalida,
+    EstruturaPlanilhaPassagensInvalida,
     GeracaoConcorrenteEmAndamento,
     OcorrenciaResumo,
+    PlanilhaPassagensNaoEncontrada,
     RelatorioBloqueadoPorPendencias,
     ResumoRelatorio,
     RevisaoNaoEncontrada,
@@ -107,17 +124,19 @@ def _levantar_erro_de_fontes(erro: Exception) -> None:
     de `app/api/regularizacao_dh.py`/`app/api/analitica.py` (cada exceção
     de domínio/serviço vira um `HTTPException` com status semanticamente
     específico, nunca um 500 genérico escondendo a causa)."""
-    if isinstance(erro, (BaseOBNaoEncontrada, ControleDimcacNaoEncontrado)):
+    if isinstance(erro, (BaseOBNaoEncontrada, ControleDimcacNaoEncontrado, PlanilhaPassagensNaoEncontrada)):
         raise HTTPException(status_code=404, detail=str(erro)) from erro
-    if isinstance(erro, (EstruturaBaseOBInvalida, EstruturaControleInvalida)):
+    if isinstance(erro, (EstruturaBaseOBInvalida, EstruturaControleInvalida, EstruturaPlanilhaPassagensInvalida)):
         raise HTTPException(status_code=422, detail=str(erro)) from erro
     if isinstance(erro, VersaoEsquemaIncompativel):
         raise HTTPException(status_code=503, detail=str(erro)) from erro
-    if isinstance(erro, PersistenciaDecisoesCorrompida):
+    if isinstance(erro, (PersistenciaDecisoesCorrompida, PersistenciaDecisoesEmUso)):
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     if isinstance(erro, TemplateOficialIndisponivel):
         raise HTTPException(status_code=404, detail=str(erro)) from erro
     if isinstance(erro, ConfiguracaoTemplateCorrompida):
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+    if isinstance(erro, ConfiguracaoFontesCorrompida):
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     raise erro
 
@@ -131,12 +150,15 @@ def preparar(requisicao: RequisicaoPrepararRelatorio) -> ResumoRelatorioResposta
             ano_exercicio=requisicao.ano_exercicio,
             mes_referencia=requisicao.mes_referencia,
             caminho_decisoes=requisicao.caminho_decisoes,
+            caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
         )
     except (
         BaseOBNaoEncontrada,
         ControleDimcacNaoEncontrado,
+        PlanilhaPassagensNaoEncontrada,
         EstruturaBaseOBInvalida,
         EstruturaControleInvalida,
+        EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
     ) as erro:
@@ -159,6 +181,7 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
             caminho_decisoes=requisicao.caminho_decisoes,
             caminho_configuracao_template=requisicao.caminho_configuracao_template,
             caminho_destino=requisicao.caminho_destino,
+            caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
         )
     except RelatorioBloqueadoPorPendencias as erro:
         raise HTTPException(status_code=409, detail=str(erro)) from erro
@@ -171,8 +194,10 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
     except (
         BaseOBNaoEncontrada,
         ControleDimcacNaoEncontrado,
+        PlanilhaPassagensNaoEncontrada,
         EstruturaBaseOBInvalida,
         EstruturaControleInvalida,
+        EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
         TemplateOficialIndisponivel,
@@ -181,12 +206,18 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
         _levantar_erro_de_fontes(erro)
 
     return RelatorioGeradoResposta(
-        caminho_arquivo=resultado.caminho_arquivo,
-        total_ocorrencias=resultado.total_ocorrencias,
-        total_valor_diarias=resultado.total_valor_diarias,
-        primeira_linha_dados=resultado.primeira_linha_dados,
-        ultima_linha_dados=resultado.ultima_linha_dados,
-        linha_total=resultado.linha_total,
+        caminho_arquivo=resultado.oficial.caminho_arquivo,
+        total_ocorrencias=resultado.oficial.total_ocorrencias,
+        total_valor_diarias=resultado.oficial.total_valor_diarias,
+        primeira_linha_dados=resultado.oficial.primeira_linha_dados,
+        ultima_linha_dados=resultado.oficial.ultima_linha_dados,
+        linha_total=resultado.oficial.linha_total,
+        caminho_arquivo_nao_publicadas=resultado.caminho_arquivo_nao_publicadas,
+        total_nao_publicadas=resultado.total_nao_publicadas,
+        total_categoria_a=resultado.total_categoria_a,
+        total_categoria_b=resultado.total_categoria_b,
+        nao_publicadas_gerado=resultado.nao_publicadas_gerado,
+        erro_nao_publicadas=resultado.erro_nao_publicadas,
     )
 
 
@@ -199,12 +230,15 @@ def revisoes(parametros: Annotated[ParametrosRelatorioQuery, Query()]) -> ListaR
             ano_exercicio=parametros.ano_exercicio,
             mes_referencia=parametros.mes_referencia,
             caminho_decisoes=parametros.caminho_decisoes,
+            caminho_planilha_passagens=parametros.caminho_planilha_passagens,
         )
     except (
         BaseOBNaoEncontrada,
         ControleDimcacNaoEncontrado,
+        PlanilhaPassagensNaoEncontrada,
         EstruturaBaseOBInvalida,
         EstruturaControleInvalida,
+        EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
     ) as erro:
@@ -227,6 +261,7 @@ def decidir(identidade: str, requisicao: RequisicaoRegistrarDecisao) -> ResumoRe
             obs_selecionadas=requisicao.obs_selecionadas,
             autor=requisicao.autor,
             observacao=requisicao.observacao,
+            caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
         )
     except RevisaoNaoEncontrada as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
@@ -235,10 +270,13 @@ def decidir(identidade: str, requisicao: RequisicaoRegistrarDecisao) -> ResumoRe
     except (
         BaseOBNaoEncontrada,
         ControleDimcacNaoEncontrado,
+        PlanilhaPassagensNaoEncontrada,
         EstruturaBaseOBInvalida,
         EstruturaControleInvalida,
+        EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
+        PersistenciaDecisoesEmUso,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -282,5 +320,65 @@ def configurar_template(requisicao: RequisicaoConfigurarTemplate) -> StatusTempl
         )
     except TemplateOficialInvalido as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
+    except ConfiguracaoTemplateEmUso as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
 
     return _status_template_resposta(configuracao)
+
+
+# --- Micro-sprint UX operacional: persistência dos caminhos de Base de
+# Ordens Bancárias e Controle DIMCAC (ver `app/consulta/
+# configuracao_fontes_relatorio_transparencia.py`). `caminho_configuracao_
+# fontes` é infraestrutura interna (resolvida pelo Electron via IPC, mesmo
+# padrão de `caminho_decisoes`/`caminho_configuracao_template`) — nunca um
+# campo que o usuário digita. Ao contrário do Template Oficial, nenhuma
+# validação de conteúdo é feita aqui: só se lembra do caminho escolhido; a
+# validação de verdade continua acontecendo em `preparar_relatorio`.
+
+
+def _status_arquivo_fonte_resposta(caminho: str | None) -> StatusArquivoFonteResposta:
+    if caminho is None:
+        return StatusArquivoFonteResposta(configurado=False, disponivel=False, caminho=None)
+    disponivel = os.path.isfile(caminho)
+    return StatusArquivoFonteResposta(configurado=True, disponivel=disponivel, caminho=caminho if disponivel else None)
+
+
+@router.get("/fontes", response_model=StatusFontesResposta)
+def obter_status_fontes(parametros: Annotated[ParametrosConfiguracaoFontesQuery, Query()]) -> StatusFontesResposta:
+    try:
+        configuracao = carregar_configuracao_fontes(parametros.caminho_configuracao_fontes)
+    except ConfiguracaoFontesCorrompida as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+
+    return StatusFontesResposta(
+        base_ordens_bancarias=_status_arquivo_fonte_resposta(
+            configuracao.caminho_base_ordens_bancarias if configuracao else None
+        ),
+        controle_dimcac=_status_arquivo_fonte_resposta(
+            configuracao.caminho_controle_dimcac if configuracao else None
+        ),
+        planilha_passagens=_status_arquivo_fonte_resposta(
+            configuracao.caminho_planilha_passagens if configuracao else None
+        ),
+    )
+
+
+@router.post("/fontes", response_model=StatusFontesResposta)
+def configurar_fontes(requisicao: RequisicaoConfigurarFontes) -> StatusFontesResposta:
+    try:
+        configuracao = persistir_configuracao_fontes(
+            requisicao.caminho_configuracao_fontes,
+            caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
+            caminho_controle_dimcac=requisicao.caminho_controle_dimcac,
+            caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
+        )
+    except ConfiguracaoFontesCorrompida as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+    except ConfiguracaoFontesEmUso as erro:
+        raise HTTPException(status_code=503, detail=str(erro)) from erro
+
+    return StatusFontesResposta(
+        base_ordens_bancarias=_status_arquivo_fonte_resposta(configuracao.caminho_base_ordens_bancarias),
+        controle_dimcac=_status_arquivo_fonte_resposta(configuracao.caminho_controle_dimcac),
+        planilha_passagens=_status_arquivo_fonte_resposta(configuracao.caminho_planilha_passagens),
+    )

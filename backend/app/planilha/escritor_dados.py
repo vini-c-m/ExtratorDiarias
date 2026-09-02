@@ -13,12 +13,13 @@ já homologado pela correção P0 de integridade financeira.
 
 import os
 import re
-import threading
+import time
 import unicodedata
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 
+import filelock
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -73,7 +74,49 @@ _COLUNA_LINHA_LIVRE = COLUNA_CPF
 # linha, e a segunda a promover apagaria a primeira (nenhuma delas seria
 # duplicidade de CPF, então a checagem de duplicidade sozinha não pega esse
 # caso).
-_LOCK_ESCRITA_DADOS = threading.Lock()
+#
+# QA Codex (revalidação cross-process) — `threading.Lock()` (correção
+# anterior) só protege threads do MESMO processo; insuficiente sob
+# `WEB_CONCURRENCY`/múltiplos workers Uvicorn (comprovado por QA). Trocado
+# por `filelock.FileLock`, trava real do SO — protege threads E processos
+# com o mesmo mecanismo (ver `app/consulta/persistencia_decisoes.py` para
+# a análise completa da escolha e da garantia de não deixar lock órfão
+# após um crash). Ao contrário dos módulos de configuração/decisões (que
+# levantam uma exceção de domínio em caso de timeout), esta função já tem
+# o próprio contrato de "nunca levanta, sempre devolve
+# `ResultadoCadastroDados`" — um timeout de trava vira
+# `EstadoCadastro.NAO_SALVO`, mesma forma que qualquer outra falha
+# conhecida desta função, preservando esse contrato sem alteração.
+_TIMEOUT_TRAVA_ESCRITA_DADOS_S = 10
+
+
+def _trava_escrita_dados(caminho_planilha: str) -> filelock.FileLock:
+    return filelock.FileLock(f"{caminho_planilha}.lock", timeout=_TIMEOUT_TRAVA_ESCRITA_DADOS_S)
+
+
+# Achado real durante a homologação (volume alto de requisições HTTP
+# concorrentes, servidor Uvicorn multi-worker de verdade) — mesma classe de
+# `PermissionError: [WinError 5]` documentada em
+# `app/consulta/persistencia_decisoes.py` (leitor×escritor no `os.replace`
+# do Windows — aqui, tipicamente outra leitura da Planilha Oficial por
+# outro serviço, ex. Central de Conferência). Mesmo remédio já homologado
+# em `base_local_sqlite._substituir_com_retry`, reaproveitado aqui.
+_TENTATIVAS_REPLACE = 3
+_INTERVALO_BASE_RETRY_REPLACE_S = 0.05
+
+
+def _substituir_com_retry(caminho_tmp: str, caminho_destino: str) -> None:
+    ultimo_erro: PermissionError | None = None
+    for tentativa in range(_TENTATIVAS_REPLACE):
+        try:
+            os.replace(caminho_tmp, caminho_destino)
+            return
+        except PermissionError as erro:
+            ultimo_erro = erro
+            if tentativa < _TENTATIVAS_REPLACE - 1:
+                time.sleep(_INTERVALO_BASE_RETRY_REPLACE_S * (tentativa + 1))
+    assert ultimo_erro is not None
+    raise ultimo_erro
 
 
 class EstadoCadastro(str, Enum):
@@ -107,27 +150,19 @@ def cadastrar_servidor(
     arquivo temporário no mesmo diretório (mesmo volume, para o
     `os.replace` final ser atômico de verdade), validado, e só então
     promovido sobre o original. Qualquer falha antes da promoção deixa o
-    original intocado — nunca um cadastro parcial."""
+    original intocado — nunca um cadastro parcial.
+
+    QA Codex (correção cross-process) — se a trava (`_trava_escrita_dados`)
+    não for obtida dentro do timeout, o contrato desta função (nunca
+    levanta, sempre devolve `ResultadoCadastroDados`) é preservado: vira
+    `EstadoCadastro.NAO_SALVO`, mesma forma que qualquer outra falha
+    conhecida aqui — nunca uma exceção técnica vazando ao chamador."""
     cpf_normalizado = _cpf_normalizado(cpf)
 
-    with _LOCK_ESCRITA_DADOS:
-        workbook = load_workbook(caminho_planilha)
-        try:
-            aba_dados = workbook[NOME_ABA]
-
-            linha_existente = _cpf_ja_cadastrado(aba_dados, cpf_normalizado)
-            if linha_existente is not None:
-                return ResultadoCadastroDados(
-                    estado=EstadoCadastro.DUPLICADO,
-                    linha=linha_existente,
-                    cpf_normalizado=cpf_normalizado,
-                    mensagem="Este CPF já está cadastrado na aba Dados.",
-                )
-
-            linha = _localizar_proxima_linha_livre_dados(aba_dados)
-            _escrever_linha_dados(
-                aba_dados,
-                linha,
+    try:
+        with _trava_escrita_dados(caminho_planilha):
+            return _cadastrar_servidor_protegido(
+                caminho_planilha,
                 cpf_normalizado=cpf_normalizado,
                 nome=nome,
                 matricula=matricula,
@@ -137,66 +172,116 @@ def cadastrar_servidor(
                 regime_previdencia=regime_previdencia,
                 situacao=situacao,
             )
+    except filelock.Timeout:
+        return ResultadoCadastroDados(
+            estado=EstadoCadastro.NAO_SALVO,
+            cpf_normalizado=cpf_normalizado,
+            mensagem="Não foi possível salvar o cadastro — a Planilha Oficial está sendo usada por outro "
+            "processo. Tente novamente em instantes.",
+        )
 
-            # Ordena a região cadastral real (2..`linha`, nunca o cabeçalho
-            # nem nada além) por NOME (coluna C), A→Z, movendo a LINHA
-            # INTEIRA — item 4 do pedido "Ajuste Funcional + UX". Sempre
-            # ANTES da captura de cache abaixo: como a aba `Dados` em si
-            # nunca tem fórmula nenhuma (só `Controle de Diárias` tem, e
-            # aquelas fazem VLOOKUP por VALOR de CPF, nunca por posição de
-            # linha — reordenar `Dados` não invalida nenhum cache
-            # capturado ali), a ordem entre os dois passos não afeta a
-            # integridade do cache, só precisa vir antes da validação
-            # abaixo (que agora procura o CPF em vez de assumir uma linha
-            # fixa, já que a reordenação pode ter movido a linha nova).
-            _reordenar_dados_por_nome(aba_dados, PRIMEIRA_LINHA_DADOS, linha)
 
-            # Lê o cache de TODA fórmula pré-existente (qualquer aba) do
-            # ORIGINAL, ainda intocado no disco neste ponto — mesma
-            # sequência já homologada em `escritor_planilha.preencher`.
-            cache_formulas = _capturar_cache_formulas(workbook, caminho_planilha)
+def _cadastrar_servidor_protegido(
+    caminho_planilha: str,
+    *,
+    cpf_normalizado: str,
+    nome: str,
+    matricula: str,
+    cargo: str,
+    previdencia: str | None,
+    orgao_origem: str | None,
+    regime_previdencia: str | None,
+    situacao: str | None,
+) -> ResultadoCadastroDados:
+    """Corpo de `cadastrar_servidor` já dentro da trava — extraído só para
+    manter a função pública enxuta (adquirir a trava + traduzir timeout),
+    nenhuma mudança de comportamento em relação à versão anterior."""
+    workbook = load_workbook(caminho_planilha)
+    try:
+        aba_dados = workbook[NOME_ABA]
 
-            caminho_tmp = _caminho_temporario(caminho_planilha)
-            try:
-                workbook.save(caminho_tmp)
-            except Exception:
-                _remover_tmp_se_existir(caminho_tmp)
-                return ResultadoCadastroDados(
-                    estado=EstadoCadastro.NAO_SALVO,
-                    cpf_normalizado=cpf_normalizado,
-                    mensagem="Não foi possível salvar o cadastro na Planilha Oficial.",
-                )
-        finally:
-            workbook.close()
+        linha_existente = _cpf_ja_cadastrado(aba_dados, cpf_normalizado)
+        if linha_existente is not None:
+            return ResultadoCadastroDados(
+                estado=EstadoCadastro.DUPLICADO,
+                linha=linha_existente,
+                cpf_normalizado=cpf_normalizado,
+                mensagem="Este CPF já está cadastrado na aba Dados.",
+            )
 
+        linha = _localizar_proxima_linha_livre_dados(aba_dados)
+        _escrever_linha_dados(
+            aba_dados,
+            linha,
+            cpf_normalizado=cpf_normalizado,
+            nome=nome,
+            matricula=matricula,
+            cargo=cargo,
+            previdencia=previdencia,
+            orgao_origem=orgao_origem,
+            regime_previdencia=regime_previdencia,
+            situacao=situacao,
+        )
+
+        # Ordena a região cadastral real (2..`linha`, nunca o cabeçalho
+        # nem nada além) por NOME (coluna C), A→Z, movendo a LINHA
+        # INTEIRA — item 4 do pedido "Ajuste Funcional + UX". Sempre
+        # ANTES da captura de cache abaixo: como a aba `Dados` em si
+        # nunca tem fórmula nenhuma (só `Controle de Diárias` tem, e
+        # aquelas fazem VLOOKUP por VALOR de CPF, nunca por posição de
+        # linha — reordenar `Dados` não invalida nenhum cache
+        # capturado ali), a ordem entre os dois passos não afeta a
+        # integridade do cache, só precisa vir antes da validação
+        # abaixo (que agora procura o CPF em vez de assumir uma linha
+        # fixa, já que a reordenação pode ter movido a linha nova).
+        _reordenar_dados_por_nome(aba_dados, PRIMEIRA_LINHA_DADOS, linha)
+
+        # Lê o cache de TODA fórmula pré-existente (qualquer aba) do
+        # ORIGINAL, ainda intocado no disco neste ponto — mesma
+        # sequência já homologada em `escritor_planilha.preencher`.
+        cache_formulas = _capturar_cache_formulas(workbook, caminho_planilha)
+
+        caminho_tmp = _caminho_temporario(caminho_planilha)
         try:
-            _reinjetar_cache_formulas(caminho_tmp, cache_formulas)
+            workbook.save(caminho_tmp)
         except Exception:
             _remover_tmp_se_existir(caminho_tmp)
             return ResultadoCadastroDados(
                 estado=EstadoCadastro.NAO_SALVO,
                 cpf_normalizado=cpf_normalizado,
-                mensagem="Não foi possível preservar os valores calculados da Planilha Oficial durante o cadastro.",
+                mensagem="Não foi possível salvar o cadastro na Planilha Oficial.",
             )
+    finally:
+        workbook.close()
 
-        linha_final = _validar_tmp(caminho_tmp, cpf_normalizado, cache_formulas)
-        if linha_final is None:
-            _remover_tmp_se_existir(caminho_tmp)
-            return ResultadoCadastroDados(
-                estado=EstadoCadastro.NAO_SALVO,
-                cpf_normalizado=cpf_normalizado,
-                mensagem="A validação do cadastro falhou antes de substituir a Planilha Oficial.",
-            )
+    try:
+        _reinjetar_cache_formulas(caminho_tmp, cache_formulas)
+    except Exception:
+        _remover_tmp_se_existir(caminho_tmp)
+        return ResultadoCadastroDados(
+            estado=EstadoCadastro.NAO_SALVO,
+            cpf_normalizado=cpf_normalizado,
+            mensagem="Não foi possível preservar os valores calculados da Planilha Oficial durante o cadastro.",
+        )
 
-        try:
-            os.replace(caminho_tmp, caminho_planilha)
-        except OSError:
-            _remover_tmp_se_existir(caminho_tmp)
-            return ResultadoCadastroDados(
-                estado=EstadoCadastro.NAO_SALVO,
-                cpf_normalizado=cpf_normalizado,
-                mensagem="Não foi possível substituir a Planilha Oficial pelo arquivo atualizado.",
-            )
+    linha_final = _validar_tmp(caminho_tmp, cpf_normalizado, cache_formulas)
+    if linha_final is None:
+        _remover_tmp_se_existir(caminho_tmp)
+        return ResultadoCadastroDados(
+            estado=EstadoCadastro.NAO_SALVO,
+            cpf_normalizado=cpf_normalizado,
+            mensagem="A validação do cadastro falhou antes de substituir a Planilha Oficial.",
+        )
+
+    try:
+        _substituir_com_retry(caminho_tmp, caminho_planilha)
+    except OSError:
+        _remover_tmp_se_existir(caminho_tmp)
+        return ResultadoCadastroDados(
+            estado=EstadoCadastro.NAO_SALVO,
+            cpf_normalizado=cpf_normalizado,
+            mensagem="Não foi possível substituir a Planilha Oficial pelo arquivo atualizado.",
+        )
 
     return ResultadoCadastroDados(estado=EstadoCadastro.SALVO, linha=linha_final, cpf_normalizado=cpf_normalizado)
 

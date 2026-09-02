@@ -17,9 +17,11 @@ import logging
 import os
 import shutil
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
+import filelock
 from openpyxl import load_workbook
 
 from app import diagnostico_complemento_temp as diag  # DIAGNÓSTICO TEMPORÁRIO — remover após causa raiz confirmada/corrigida
@@ -53,6 +55,22 @@ _logger = logging.getLogger(__name__)
 # já em andamento" nesse caso) e a aquisição interna daqui coexistam na
 # MESMA thread sem deadlock, já que os dois acquires acontecem em
 # sequência síncrona na mesma call stack.
+#
+# QA Codex (revalidação cross-process) — este `RLock` continua existindo,
+# mas seu papel MUDOU: ele NÃO é mais, sozinho, a proteção real do arquivo
+# em disco (um `RLock` só protege threads do MESMO processo — sob
+# `WEB_CONCURRENCY`/múltiplos workers, dois processos distintos têm cada
+# um a sua própria instância e não se enxergam). Ele continua vivo só como
+# um sinal RÁPIDO, em memória, para `executar_sincronizacao_manual` poder
+# devolver "sincronização já em andamento" instantaneamente numa checagem
+# não-bloqueante (UX de resposta imediata ao clique duplo, sem round-trip
+# nenhum) — a proteção real e cross-process do arquivo em si passou a ser
+# `_trava_sincronizacao_arquivo` (`filelock.FileLock`, abaixo), adquirida
+# DENTRO de `sincronizar()`. Como os dois primitivos protegem concerns
+# diferentes (RLock = "sinal rápido em memória", FileLock = "exclusão
+# mútua real sobre o arquivo"), não há aquisição aninhada do MESMO
+# primitivo — nenhuma dependência da reentrância do `RLock` foi removida,
+# mas também nenhuma nova reentrância precisou ser assumida do `FileLock`.
 LOCK_SINCRONIZACAO = threading.RLock()
 
 # Tempo máximo de espera pelo lock para os chamadores automáticos
@@ -62,8 +80,52 @@ LOCK_SINCRONIZACAO = threading.RLock()
 # alguns segundos são folga suficiente sem arriscar prender uma requisição
 # HTTP indefinidamente se algo ficar preso. Se o tempo esgotar, a
 # sincronização desta chamada é pulada (nunca promove nada) — Last Known
-# Good preservado; a próxima sincronização bem-sucedida recupera.
+# Good preservado; a próxima sincronização bem-sucedida recupera. Mesmo
+# valor reaproveitado para o timeout do `FileLock` cross-process abaixo —
+# um único número, um único significado ("quanto tempo é razoável esperar
+# antes de desistir e preservar o Last Known Good"), nunca dois prazos
+# divergentes para o mesmo tipo de decisão.
 TIMEOUT_LOCK_SINCRONIZACAO_S = 10.0
+
+
+def _trava_sincronizacao_arquivo(destino: Path) -> filelock.FileLock:
+    """QA Codex (correção cross-process) — trava real do SO sobre o
+    destino da Base Local (`<destino>.lock`), protegendo a cópia `.xlsx` +
+    a reconstrução SQLite contra qualquer OUTRO PROCESSO fazendo a mesma
+    coisa ao mesmo tempo (não só outras threads do mesmo processo, que já
+    eram cobertas por `LOCK_SINCRONIZACAO` antes desta correção). Ver
+    `app/consulta/persistencia_decisoes.py` para a análise completa da
+    escolha de `filelock.FileLock` e da garantia de não deixar lock órfão
+    após um crash."""
+    return filelock.FileLock(f"{destino}.lock", timeout=TIMEOUT_LOCK_SINCRONIZACAO_S)
+
+
+# Achado real durante a homologação (volume alto de requisições HTTP
+# concorrentes, servidor Uvicorn multi-worker de verdade) — mesma classe de
+# `PermissionError: [WinError 5]` documentada em
+# `app/consulta/persistencia_decisoes.py` (leitor×escritor no `os.replace`
+# do Windows). A etapa SQLite (abaixo) já reaproveita
+# `base_local_sqlite._substituir_com_retry` — este é o mesmo remédio para a
+# cópia `.xlsx` desta função (não pode importar `base_local_sqlite` no topo
+# do módulo por causa do import circular já documentado — `base_local_
+# sqlite` importa este módulo —, então replica a mesma lógica pequena, já
+# testada, em vez de reestruturar os imports).
+_TENTATIVAS_REPLACE = 3
+_INTERVALO_BASE_RETRY_REPLACE_S = 0.05
+
+
+def _substituir_com_retry(caminho_tmp: Path, caminho_destino: Path) -> None:
+    ultimo_erro: PermissionError | None = None
+    for tentativa in range(_TENTATIVAS_REPLACE):
+        try:
+            os.replace(caminho_tmp, caminho_destino)
+            return
+        except PermissionError as erro:
+            ultimo_erro = erro
+            if tentativa < _TENTATIVAS_REPLACE - 1:
+                time.sleep(_INTERVALO_BASE_RETRY_REPLACE_S * (tentativa + 1))
+    assert ultimo_erro is not None
+    raise ultimo_erro
 
 
 def _diretorio_dados_usuario() -> Path:
@@ -119,17 +181,24 @@ def sincronizar(
     falhe (contrato intacto — `test_base_local.py::
     test_sincronizar_planilha_sem_abas_esperadas_nao_quebra_copia_xlsx`).
 
-    ETAPA 2 (Auditoria P0, 2026-08-09) — a etapa SQLite agora roda sob
-    `LOCK_SINCRONIZACAO` (`RLock` de módulo, acima), fechando a lacuna
-    confirmada por reprodução executável: antes, só o caminho manual
-    (`executar_sincronizacao_manual`) usava um lock, então duas
-    reconstruções automáticas (ou uma automática + uma manual) podiam
-    correr ao mesmo tempo sobre o mesmo `.sqlite.tmp`/destino, sem nenhuma
-    coordenação — reproduzido gerando `PermissionError`/`WinError 32` real.
-    Chamadores automáticos (processamento/complemento/configuração)
-    esperam até `TIMEOUT_LOCK_SINCRONIZACAO_S`; se não conseguirem o lock
-    nesse tempo, a sincronização desta chamada é pulada (nunca promove
-    nada — Last Known Good preservado) em vez de travar a requisição.
+    ETAPA 2 (Auditoria P0, 2026-08-09) — a etapa SQLite agora roda sob uma
+    trava, fechando a lacuna confirmada por reprodução executável: antes,
+    só o caminho manual (`executar_sincronizacao_manual`) usava um lock,
+    então duas reconstruções automáticas (ou uma automática + uma manual)
+    podiam correr ao mesmo tempo sobre o mesmo `.sqlite.tmp`/destino, sem
+    nenhuma coordenação — reproduzido gerando `PermissionError`/
+    `WinError 32` real. Chamadores automáticos (processamento/complemento/
+    configuração) esperam até `TIMEOUT_LOCK_SINCRONIZACAO_S`; se não
+    conseguirem o lock nesse tempo, a sincronização desta chamada é pulada
+    (nunca promove nada — Last Known Good preservado) em vez de travar a
+    requisição.
+
+    QA Codex (revalidação cross-process) — a trava real desta etapa é
+    `_trava_sincronizacao_arquivo(destino)` (`filelock.FileLock`, protege
+    threads E processos — ver o comentário de `LOCK_SINCRONIZACAO` acima
+    para por que o `RLock` sozinho deixou de ser suficiente). O
+    comportamento observável no timeout não muda: mesma mensagem, mesmo
+    `ao_falhar_sqlite`, mesmo retorno de `destino` sem levantar.
 
     `ao_falhar_sqlite` (ETAPA 2) — callback opcional, chamado (nunca
     levantado) quando a etapa SQLite falha por qualquer motivo (exceção
@@ -157,7 +226,10 @@ def sincronizar(
     destino = caminho_base_local(diretorio_base=diretorio_base)
     destino.parent.mkdir(parents=True, exist_ok=True)
 
-    if not LOCK_SINCRONIZACAO.acquire(timeout=TIMEOUT_LOCK_SINCRONIZACAO_S):
+    try:
+        _trava_arquivo = _trava_sincronizacao_arquivo(destino)
+        _trava_arquivo.acquire()
+    except filelock.Timeout:
         erro_lock = TimeoutError(
             "Não foi possível obter o lock de sincronização da Base Local em "
             f"{TIMEOUT_LOCK_SINCRONIZACAO_S}s — outra sincronização em "
@@ -184,7 +256,7 @@ def sincronizar(
         # propaga.
         temporario = destino.with_suffix(destino.suffix + ".tmp")
         shutil.copyfile(caminho_planilha_preenchida, temporario)
-        os.replace(temporario, destino)
+        _substituir_com_retry(temporario, destino)
 
         try:
             # Import local para evitar import circular: `base_local_sqlite`
@@ -246,6 +318,6 @@ def sincronizar(
             if ao_falhar_sqlite is not None:
                 ao_falhar_sqlite(erro)
     finally:
-        LOCK_SINCRONIZACAO.release()
+        _trava_arquivo.release()
 
     return destino

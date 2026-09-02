@@ -164,6 +164,22 @@ def caminho_pdf_destino_pj_bom_jardim() -> str:
     )
 
 
+@pytest.fixture
+def caminho_pdf_rodape_sobreposto() -> str:
+    """Processo fictício (Caso 6 — Sprint de Correção Crítica, reprodução
+    sintética do processo real 19.20.100000001.0016125/2026-70): a mesma
+    Solicitação de Diária é reanexada ao processo — a segunda (páginas 3-4)
+    é a vigente, nunca a primeira — e, nas páginas dela, o rodapé do
+    documento anterior é gravado por engano sobre o rodapé correto, na MESMA
+    posição física da página, produzindo texto ilegível ali (nunca no corpo
+    do formulário). Inclui também, na página 2, uma citação em prosa a outro
+    número SEI sem o sufixo "/ pg. N" (documento anexado, não a fonte do
+    processo)."""
+    return os.path.join(
+        FIXTURES_DIR_PADROES_DOCUMENTAIS, "SEI_19.20.0001.0000117_2026_17.pdf"
+    )
+
+
 _CABECALHO_PLANILHA = [
     "DH",
     "SEI",

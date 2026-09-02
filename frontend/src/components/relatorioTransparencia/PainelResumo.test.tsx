@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PainelResumo from "./PainelResumo";
@@ -281,6 +281,12 @@ describe("PainelResumo — template pronto: geração final", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 11,
       linha_total: 12,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
     renderComGeracao();
 
@@ -297,6 +303,103 @@ describe("PainelResumo — template pronto: geração final", () => {
       caminho_configuracao_template: CAMINHO_CONFIGURACAO_TEMPLATE,
       caminho_destino: "C:\\fake\\pasta\\Relatorio.xlsx",
     });
+  });
+
+  // --- Sprint 5 — resumo pós-geração dos dois artefatos ---------------------
+
+  it("com diárias não publicadas: mostra a contagem e o botão para abrir a planilha operacional", async () => {
+    const usuario = userEvent.setup();
+    (window.api.escolherDestinoRelatorioTransparencia as ReturnType<typeof vi.fn>).mockResolvedValue(
+      "C:\\fake\\pasta\\Relatorio.xlsx",
+    );
+    gerarMock.mockResolvedValue({
+      caminho_arquivo: "C:\\fake\\pasta\\Relatorio.xlsx",
+      total_ocorrencias: 5,
+      total_valor_diarias: 1000,
+      primeira_linha_dados: 7,
+      ultima_linha_dados: 11,
+      linha_total: 12,
+      caminho_arquivo_nao_publicadas: "C:\\fake\\pasta\\Diarias_Nao_Publicadas_Agosto_2026.xlsx",
+      total_nao_publicadas: 3,
+      total_categoria_a: 2,
+      total_categoria_b: 1,
+      nao_publicadas_gerado: true,
+      erro_nao_publicadas: null,
+    });
+    renderComGeracao();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeEnabled());
+    await usuario.click(screen.getByRole("button", { name: "Gerar Relatório" }));
+
+    await waitFor(() => expect(screen.getByText("Relatório gerado com sucesso.")).toBeInTheDocument());
+    const linhaResumoOperacional = screen.getByText(/Diárias para investigação/).closest("p");
+    expect(linhaResumoOperacional).toHaveTextContent("Diárias para investigação: 3");
+    const botaoOperacional = screen.getByRole("button", { name: "Abrir planilha de não publicadas" });
+    expect(botaoOperacional).toBeInTheDocument();
+
+    await usuario.click(botaoOperacional);
+    expect(window.api.abrirArquivo).toHaveBeenCalledWith("C:\\fake\\pasta\\Diarias_Nao_Publicadas_Agosto_2026.xlsx");
+  });
+
+  it("sem diárias não publicadas: mostra a mensagem informativa, sem botão de abrir operacional", async () => {
+    const usuario = userEvent.setup();
+    (window.api.escolherDestinoRelatorioTransparencia as ReturnType<typeof vi.fn>).mockResolvedValue(
+      "C:\\fake\\pasta\\Relatorio.xlsx",
+    );
+    gerarMock.mockResolvedValue({
+      caminho_arquivo: "C:\\fake\\pasta\\Relatorio.xlsx",
+      total_ocorrencias: 5,
+      total_valor_diarias: 1000,
+      primeira_linha_dados: 7,
+      ultima_linha_dados: 11,
+      linha_total: 12,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
+    });
+    renderComGeracao();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeEnabled());
+    await usuario.click(screen.getByRole("button", { name: "Gerar Relatório" }));
+
+    await waitFor(() => expect(screen.getByText("Relatório gerado com sucesso.")).toBeInTheDocument());
+    expect(screen.getByText("Não há diárias não publicadas para investigação.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir planilha de não publicadas" })).not.toBeInTheDocument();
+  });
+
+  it("falha na geração do operacional: mostra aviso de estado parcial, nunca some com o sucesso do oficial", async () => {
+    const usuario = userEvent.setup();
+    (window.api.escolherDestinoRelatorioTransparencia as ReturnType<typeof vi.fn>).mockResolvedValue(
+      "C:\\fake\\pasta\\Relatorio.xlsx",
+    );
+    gerarMock.mockResolvedValue({
+      caminho_arquivo: "C:\\fake\\pasta\\Relatorio.xlsx",
+      total_ocorrencias: 5,
+      total_valor_diarias: 1000,
+      primeira_linha_dados: 7,
+      ultima_linha_dados: 11,
+      linha_total: 12,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 2,
+      total_categoria_a: 2,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: "Já existe um arquivo no destino.",
+    });
+    renderComGeracao();
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Gerar Relatório" })).toBeEnabled());
+    await usuario.click(screen.getByRole("button", { name: "Gerar Relatório" }));
+
+    await waitFor(() => expect(screen.getByText("Relatório gerado com sucesso.")).toBeInTheDocument());
+    expect(screen.getByText(/não foi possível gerar a planilha de diárias não publicadas/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Abrir relatório" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Abrir planilha de não publicadas" })).not.toBeInTheDocument();
+    // Nunca expõe a mensagem técnica crua do backend (ex.: caminho de arquivo/causa interna).
+    expect(screen.queryByText("Já existe um arquivo no destino.")).not.toBeInTheDocument();
   });
 
   it("clique duplo no botão 'Gerar Relatório' dispara o diálogo de destino uma única vez", async () => {
@@ -381,6 +484,12 @@ describe("PainelResumo — template pronto: geração final", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 7,
       linha_total: 8,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
     renderComGeracao();
 
@@ -407,6 +516,12 @@ describe("PainelResumo — template pronto: geração final", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 7,
       linha_total: 8,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
     (window.api.abrirArquivo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("ENOENT"));
     renderComGeracao();
@@ -437,6 +552,12 @@ describe("PainelResumo — template pronto: geração final", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 7,
       linha_total: 8,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
     (window.api.abrirArquivo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("ENOENT"));
     renderComGeracao();
@@ -464,6 +585,12 @@ describe("PainelResumo — template pronto: geração final", () => {
       primeira_linha_dados: 7,
       ultima_linha_dados: 7,
       linha_total: 8,
+      caminho_arquivo_nao_publicadas: null,
+      total_nao_publicadas: 0,
+      total_categoria_a: 0,
+      total_categoria_b: 0,
+      nao_publicadas_gerado: false,
+      erro_nao_publicadas: null,
     });
     renderComGeracao();
 
@@ -499,7 +626,7 @@ describe("PainelResumo — histórico de decisões (micro-sprint corretiva HOMO-
     expect(screen.getByRole("button", { name: "Ocultar histórico de decisões" })).toBeInTheDocument();
   });
 
-  it("mostra responsável e decisão (OB publicável) de cada revisão já decidida", async () => {
+  it("mostra responsável de cada revisão já decidida na linha, e a OB publicável no detalhe ('Ver decisão')", async () => {
     const usuario = userEvent.setup();
     render(
       <PainelResumo
@@ -513,8 +640,18 @@ describe("PainelResumo — histórico de decisões (micro-sprint corretiva HOMO-
 
     await usuario.click(screen.getByRole("button", { name: "Ver histórico de decisões" }));
 
-    expect(screen.getByText("2026OB000001")).toBeInTheDocument();
-    expect(screen.getByText("2026OB000002")).toBeInTheDocument();
+    // Micro-sprint UX operacional — a OB publicável agora fica no detalhe
+    // ("Ver decisão"), não mais direto na linha resumida.
+    const botoesVerDecisao = screen.getAllByRole("button", { name: "Ver decisão" });
+    expect(botoesVerDecisao).toHaveLength(2);
+
+    await usuario.click(botoesVerDecisao[0]);
+    expect(within(screen.getByRole("dialog")).getByText("2026OB000001")).toBeInTheDocument();
+
+    await usuario.click(screen.getByRole("button", { name: "Fechar" }));
+    await usuario.click(botoesVerDecisao[1]);
+    expect(within(screen.getByRole("dialog")).getByText("2026OB000002")).toBeInTheDocument();
+
     // revisão pendente nunca decidida: responsável aparece como "—", nunca inventado
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });

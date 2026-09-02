@@ -12,10 +12,12 @@ from datetime import date, datetime
 import openpyxl
 import pytest
 
+from app.domain.entities.linha_passagem import EstadoPassagem, LinhaPassagem
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.entities.registro_controle import ClassificacaoSei, RegistroControle
 from app.domain.relatorio_transparencia.decisao import (
     AcaoDecisao,
+    CategoriaNaoPublicada,
     DecisaoHumana,
     EstadoRevisao,
     OcorrenciaNaoPublicavel,
@@ -108,11 +110,19 @@ def _registro(*, dh="2026DH000001", linha=2, integral=0, parcial=1, cargo=None, 
     )
 
 
-def _candidato(*, registros_controle=None, **kwargs_ordem) -> CandidatoNormal:
+def _candidato(*, registros_controle=None, passagem=None, **kwargs_ordem) -> CandidatoNormal:
     ordem = _ordem(**kwargs_ordem)
     registros = registros_controle if registros_controle is not None else [_registro(dh=ordem.dh, integral=0, parcial=1)]
-    ocorrencia = OcorrenciaFinanceira(dh=ordem.dh, ordem_bancaria=ordem, registros_controle=registros)
+    ocorrencia = OcorrenciaFinanceira(
+        dh=ordem.dh, ordem_bancaria=ordem, registros_controle=registros, passagem=passagem
+    )
     return CandidatoNormal(ocorrencia=ocorrencia, registros_controle=registros)
+
+
+def _linha_passagem(*, ob="2026OB000001", estado, valor=None, transporte="AVIÃO", bruto=None, linha=10):
+    """Sprint 3 (HOMO-RT-06) — mesmo formato de `LinhaPassagem` da Sprint 1,
+    para testar a coluna J do XLSX oficial com cada estado real."""
+    return LinhaPassagem(linha=linha, ob=ob, transporte=transporte, estado=estado, valor=valor, bruto=bruto)
 
 
 def _resultado(*, candidatos=None, nao_publicaveis=None, revisoes=None) -> ResultadoRevisado:
@@ -489,9 +499,114 @@ def test_uma_ocorrencia_e_escrita_corretamente(tmp_path, template):
     linha = _PRIMEIRA_LINHA_DADOS
     assert ws[f"A{linha}"].value == "2026OB000042"
     assert ws[f"M{linha}"].value == 321.55
-    assert ws[f"J{linha}"].value == "-"
+    # Sprint 3 (HOMO-RT-06) — sem `passagem` anexada (estado E, OB sem
+    # correspondência na Planilha de Passagens), a coluna J é célula vazia
+    # (`None`), nunca mais o placeholder fixo "-" do histórico pré-Sprint 3.
+    assert ws[f"J{linha}"].value is None
     assert resultado_gerado.total_valor_diarias == 321.55
     assert ws[f"A{linha + 1}"].value.startswith("Total")
+
+
+# --- Sprint 3 (HOMO-RT-06) — coluna J (Valor da Passagem) por estado ------
+
+
+def test_coluna_j_estado_numerico_publica_o_valor(tmp_path, template):
+    passagem = _linha_passagem(ob="2026OB000042", estado=EstadoPassagem.NUMERICO, valor=1657.76)
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value == 1657.76
+
+
+def test_coluna_j_valor_monetario_sem_perda_de_precisao(tmp_path, template):
+    """Confirma que o valor chega à célula exatamente como veio da fonte —
+    nenhum arredondamento/truncamento no caminho leitor -> escritor."""
+    passagem = _linha_passagem(ob="2026OB000042", estado=EstadoPassagem.NUMERICO, valor=4964.32)
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value == 4964.32
+
+
+@pytest.mark.parametrize(
+    "estado",
+    [EstadoPassagem.AUSENTE, EstadoPassagem.NAO_SE_APLICA],
+)
+def test_coluna_j_estados_b_e_c_ficam_vazios(tmp_path, template, estado):
+    passagem = _linha_passagem(ob="2026OB000042", estado=estado, bruto="qualquer coisa")
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    # Nunca o texto literal da fonte (ex. "NÃO SE APLICA"), nunca "-", nunca 0.
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value is None
+
+
+def test_coluna_j_estado_e_sem_correspondencia_fica_vazio(tmp_path, template):
+    """`passagem=None` é literalmente o estado E — OB da Base OB sem
+    correspondência na Planilha de Passagens."""
+    candidato = _candidato(ob="2026OB000042", passagem=None)
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value is None
+
+
+# --- Fechamento HOMO-RT-06 (decisão de produto final) — estado D NUNCA
+# bloqueia a geração: célula vazia, igual a B/C/E, mas o estado INVALIDO
+# permanece preservado no domínio (testado em test_decisao.py/
+# test_linha_publicavel.py, não aqui — este arquivo testa só a saída XLSX).
+
+
+def test_coluna_j_estado_d_invalido_produz_celula_vazia_sem_bloquear(tmp_path, template):
+    """Estado D (INVALIDO, ex. "#VALOR!") nunca vira "-", 0 ou o texto bruto
+    da fonte — célula vazia, e a geração conclui normalmente (decisão de
+    produto final: D não bloqueia)."""
+    passagem = _linha_passagem(ob="2026OB000042", estado=EstadoPassagem.INVALIDO, bruto="#VALOR!")
+    candidato = _candidato(ob="2026OB000042", passagem=passagem)
+    destino = str(tmp_path / "saida.xlsx")
+
+    resultado_gerado = _gerar(_resultado(candidatos=[candidato]), template, destino)
+
+    assert resultado_gerado.total_ocorrencias == 1
+    assert os.path.exists(destino)
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value is None
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value != "#VALOR!"
+    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value != 0
+
+
+def test_coluna_j_estado_d_nao_impede_publicacao_de_outras_ocorrencias(tmp_path, template):
+    """Uma OB em estado D nunca impede as demais ocorrências (inclusive com
+    passagem numérica válida) de serem publicadas normalmente — nunca
+    publicação parcial nem bloqueio da geração inteira."""
+    passagem_valida = _linha_passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=100.0)
+    passagem_invalida = _linha_passagem(ob="2026OB000002", estado=EstadoPassagem.INVALIDO, bruto="#VALOR!")
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001", passagem=passagem_valida),
+        _candidato(ob="2026OB000002", dh="2026DH000002", passagem=passagem_invalida),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+
+    resultado_gerado = _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    assert resultado_gerado.total_ocorrencias == 2
+    wb = openpyxl.load_workbook(destino)
+    ws = wb[_NOME_ABA_DADOS]
+    valores_j = {ws[f"A{_PRIMEIRA_LINHA_DADOS + i}"].value: ws[f"J{_PRIMEIRA_LINHA_DADOS + i}"].value for i in range(2)}
+    assert valores_j["2026OB000001"] == 100.0
+    assert valores_j["2026OB000002"] is None
 
 
 def test_varias_ocorrencias_uma_linha_por_ob_nunca_agregada(tmp_path, template):
@@ -635,7 +750,13 @@ def test_decisao_de_excluir_ocorrencia_nao_a_publica(tmp_path, template):
     )
     resultado = _resultado(
         candidatos=[_candidato(ob="2026OB000001")],
-        nao_publicaveis=[OcorrenciaNaoPublicavel(ocorrencia=ocorrencia_excluida, decisao=decisao)],
+        nao_publicaveis=[
+            OcorrenciaNaoPublicavel(
+                ocorrencia=ocorrencia_excluida,
+                decisao=decisao,
+                categoria=CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA,
+            )
+        ],
     )
     destino = str(tmp_path / "saida.xlsx")
     resultado_gerado = _gerar(resultado, template, destino)
@@ -930,7 +1051,6 @@ def test_demais_campos_continuam_com_as_fontes_ja_homologadas(tmp_path, template
     assert ws[f"F{_PRIMEIRA_LINHA_DADOS}"].value == datetime(2026, 3, 2)
     assert ws[f"G{_PRIMEIRA_LINHA_DADOS}"].value == "TRECHO DA BASE OB"
     assert ws[f"I{_PRIMEIRA_LINHA_DADOS}"].value == "Motivo da Base OB"
-    assert ws[f"J{_PRIMEIRA_LINHA_DADOS}"].value == "-"
     assert ws[f"M{_PRIMEIRA_LINHA_DADOS}"].value == 999.99
 
 

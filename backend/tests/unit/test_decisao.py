@@ -3,10 +3,12 @@ import itertools
 
 import pytest
 
+from app.domain.entities.linha_passagem import EstadoPassagem, LinhaPassagem
 from app.domain.entities.ordem_bancaria import OrdemBancaria
 from app.domain.entities.registro_controle import ClassificacaoSei, RegistroControle
 from app.domain.relatorio_transparencia.decisao import (
     AcaoDecisao,
+    CategoriaNaoPublicada,
     DecisaoHumana,
     EstadoRevisao,
     _identidade_grupo_legado,
@@ -74,8 +76,15 @@ def _ordem(
     )
 
 
-def _oc(dh="2026DH000001", registros_controle=None, **kwargs) -> OcorrenciaFinanceira:
-    return OcorrenciaFinanceira(dh=dh, ordem_bancaria=_ordem(**kwargs), registros_controle=registros_controle or [])
+def _oc(dh="2026DH000001", registros_controle=None, passagem=None, **kwargs) -> OcorrenciaFinanceira:
+    return OcorrenciaFinanceira(
+        dh=dh, ordem_bancaria=_ordem(**kwargs), registros_controle=registros_controle or [], passagem=passagem
+    )
+
+
+def _passagem(*, ob="2026OB000001", estado, valor=None, bruto=None, transporte="AVIÃO", linha=10) -> LinhaPassagem:
+    """Sprint 3 (HOMO-RT-06) — mesmo formato de `LinhaPassagem` da Sprint 1."""
+    return LinhaPassagem(linha=linha, ob=ob, transporte=transporte, estado=estado, valor=valor, bruto=bruto)
 
 
 def _registro_controle(dh="2026DH000001", linha=2) -> RegistroControle:
@@ -1945,3 +1954,602 @@ def test_contexto_para_exibicao_separa_campos_iguais_e_diferentes():
     assert "ob" in contexto.campos_diferentes
     assert contexto.explicacao == revisao.motivo
     assert contexto.identidade_grupo == identidade_grupo("RN07", ["2026OB000001", "2026OB000002"])
+
+
+# ============================================================================
+# Sprint 3 (HOMO-RT-06, plano "Valor da Passagem no XLSX Oficial + Não
+# Publicadas") — Valor da Passagem passa a integrar a linha efetivamente
+# publicável e, por isso, a identidade/fingerprint. `CAMPOS_EVIDENCIA_
+# MATERIAL` (RN04) permanece INTOCADO — testado explicitamente abaixo.
+# ============================================================================
+
+
+def test_versao_identidade_avancou_para_v4():
+    from app.domain.relatorio_transparencia import decisao as modulo_decisao
+
+    assert modulo_decisao._VERSAO_IDENTIDADE_OCORRENCIA == "v4"
+
+
+# --- Fingerprint sensível a mudança material na Passagem -------------------
+
+
+def test_fingerprint_muda_com_valor_de_passagem_diferente():
+    a = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=1000.0))])
+    b = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=1200.0))])
+    assert a != b
+
+
+def test_fingerprint_muda_de_valor_para_ausencia():
+    a = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=1000.0))])
+    b = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.AUSENTE))])
+    assert a != b
+
+
+def test_fingerprint_muda_de_ausencia_para_valor():
+    a = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.AUSENTE))])
+    b = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=500.0))])
+    assert a != b
+
+
+def test_fingerprint_muda_de_nao_se_aplica_para_valor():
+    a = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NAO_SE_APLICA))]
+    )
+    b = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=500.0))]
+    )
+    assert a != b
+
+
+def test_fingerprint_muda_de_valor_para_nao_se_aplica():
+    a = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=500.0))]
+    )
+    b = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NAO_SE_APLICA))]
+    )
+    assert a != b
+
+
+def test_fingerprint_muda_de_sem_correspondencia_para_valor():
+    """Estado E (`passagem=None`) -> estado A: a Planilha de Passagens
+    passou a ter uma linha para esta OB que antes não existia."""
+    a = calcular_fingerprint([_oc(ob="2026OB000001", passagem=None)])
+    b = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=500.0))])
+    assert a != b
+
+
+def test_fingerprint_muda_para_estado_invalido_mesmo_com_valor_none_igual():
+    """Fechamento HOMO-RT-06 (decisão de produto final): D produz célula
+    pública vazia como B/C/E (todos `valor=None`), e NUNCA bloqueia a
+    geração — mas precisa continuar DISTINTO no fingerprint:
+    `valor_passagem_inconsistente` participa da serialização tanto quanto
+    `valor_passagem_publicado`. B→D, C→D e E→D (e o inverso) sempre mudam o
+    fingerprint — "sem passagem" (dado limpo) e "passagem inconsistente na
+    fonte" (dado suspeito) são circunstâncias administrativas distintas,
+    mesmo quando a célula publicada é idêntica."""
+    ausente = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.AUSENTE))])
+    nao_se_aplica = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NAO_SE_APLICA))]
+    )
+    sem_correspondencia = calcular_fingerprint([_oc(ob="2026OB000001", passagem=None)])
+    invalido = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.INVALIDO, bruto="#VALOR!"))]
+    )
+    assert ausente != invalido  # B -> D
+    assert nao_se_aplica != invalido  # C -> D
+    assert sem_correspondencia != invalido  # E -> D
+
+
+def test_fingerprint_muda_so_com_a_passagem_nada_mais_diferente():
+    """Mudança APENAS na Planilha de Passagens (todo o resto idêntico) já
+    é suficiente para invalidar uma decisão específica anterior — a
+    propriedade central exigida por HOMO-RT-06."""
+    base = dict(ob="2026OB000001", valor=154.09, trecho="RECIFE-GARANHUNS", motivo="Motivo de teste")
+    a = calcular_fingerprint([_oc(passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=1000.0), **base)])
+    b = calcular_fingerprint([_oc(passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=1200.0), **base)])
+    assert a != b
+
+
+def test_fingerprint_ausente_nao_se_aplica_e_sem_correspondencia_sao_equivalentes():
+    """Decisão de produto já tomada (plano): B, C e E produzem a MESMA
+    representação pública (célula vazia) — o fingerprint reflete o que é
+    EFETIVAMENTE publicado (princípio HOMO-RT-05), então os três não são
+    distinguidos entre si. Documentado como comportamento intencional."""
+    ausente = calcular_fingerprint([_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.AUSENTE))])
+    nao_se_aplica = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NAO_SE_APLICA))]
+    )
+    sem_correspondencia = calcular_fingerprint([_oc(ob="2026OB000001", passagem=None)])
+    assert ausente == nao_se_aplica == sem_correspondencia
+
+
+def test_fingerprint_ignora_transporte_divergente_apenas_na_planilha_de_passagens():
+    """O Transporte da PRÓPRIA `LinhaPassagem` nunca é usado por
+    `linha_publicavel`/fingerprint (é só diagnóstico do cruzamento, Sprint
+    2) — só `valor`/`estado` participam."""
+    a = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=100.0, transporte="AVIÃO"))]
+    )
+    b = calcular_fingerprint(
+        [_oc(ob="2026OB000001", passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=100.0, transporte="CARRO"))]
+    )
+    assert a == b
+
+
+def test_fingerprint_com_passagem_independe_da_ordem():
+    a = _oc(ob="2026OB000001", linha=10, passagem=_passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=100.0))
+    b = _oc(ob="2026OB000002", linha=11, dh="2026DH000002", passagem=_passagem(ob="2026OB000002", estado=EstadoPassagem.NUMERICO, valor=200.0))
+    assert calcular_fingerprint([a, b]) == calcular_fingerprint([b, a])
+
+
+# --- RN04/RN07 permanecem intocados (evidência de entrada != linha publicável)
+
+
+def test_campos_evidencia_material_nao_inclui_passagem():
+    from app.domain.relatorio_transparencia.motor_decisao import CAMPOS_EVIDENCIA_MATERIAL
+
+    assert "passagem" not in CAMPOS_EVIDENCIA_MATERIAL
+    assert "valor_passagem" not in CAMPOS_EVIDENCIA_MATERIAL
+    assert "valor_passagem_publicado" not in CAMPOS_EVIDENCIA_MATERIAL
+
+
+def test_repeticao_fisica_nao_vira_rn04_so_por_passagem_diferente():
+    """Mesmo que duas ocorrências físicas da MESMA OB tivessem `passagem`
+    diferente entre si (cenário hipotético — na prática o cruzamento por OB
+    garante que isso nunca acontece de verdade, ver teste de duplicata
+    idêntica abaixo), `_resolver_repeticao_fisica`/`_campos_divergentes`
+    NUNCA avaliam `passagem` — RN04 continua decidindo só sobre a evidência
+    de entrada da Base OB."""
+    from app.domain.relatorio_transparencia.motor_decisao import _campos_divergentes
+
+    ordem_a = _ordem(ob="2026OB000001", linha=10)
+    ordem_b = _ordem(ob="2026OB000001", linha=11)
+    oc_a = OcorrenciaFinanceira(
+        dh="2026DH000001", ordem_bancaria=ordem_a, passagem=_passagem(estado=EstadoPassagem.NUMERICO, valor=100.0)
+    )
+    oc_b = OcorrenciaFinanceira(
+        dh="2026DH000001", ordem_bancaria=ordem_b, passagem=_passagem(estado=EstadoPassagem.INVALIDO, bruto="#VALOR!")
+    )
+
+    assert _campos_divergentes([oc_a, oc_b]) == []
+
+
+# --- Duplicata física idêntica: OB compartilhada garante passagem compartilhada
+
+
+def test_duplicata_fisica_identica_sempre_tem_a_mesma_passagem_e_a_mesma_identidade():
+    """Estrutural, não uma decisão de produto nova: como o cruzamento é
+    SEMPRE por OB (Sprint 2), duas ocorrências físicas da mesma OB
+    recebem, por construção, a MESMA `LinhaPassagem` — nunca podem
+    "passar a ter Valores da Passagem publicáveis diferentes" (preocupação
+    do plano, seção 11) porque a própria chave de cruzamento (OB) já as
+    torna indistinguíveis nesse campo."""
+    passagem_compartilhada = _passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=100.0)
+    ordem_a = _ordem(ob="2026OB000001", linha=10, motivo="Motivo idêntico")
+    ordem_b = _ordem(ob="2026OB000001", linha=11, motivo="Motivo idêntico")
+    oc_a = OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_a, passagem=passagem_compartilhada)
+    oc_b = OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_b, passagem=passagem_compartilhada)
+
+    identidades = identidades_ocorrencias([oc_a, oc_b])
+
+    assert identidades[0] == identidades[1]  # continuam estruturalmente inseparáveis (I11a)
+
+
+# --- Migração conservadora: nenhuma decisão antiga reaplicada às cegas -----
+
+
+def test_decisao_fica_desatualizada_quando_so_a_passagem_muda_fluxo_completo():
+    """Mesmo fluxo completo já homologado por NOVO-RT-08 (RN04 real ->
+    decisão -> só um campo material muda -> reconstrução -> reaplicação ->
+    DESATUALIZADA), agora para Valor da Passagem: prova o exemplo dado no
+    pedido do sprint (R$1.000,00 -> R$1.200,00, mesma OB/mesma evidência
+    RN04)."""
+    ordem_a = _ordem(ob="2026OB000001", linha=10, motivo="Motivo A")
+    ordem_b = _ordem(ob="2026OB000001", linha=11, motivo="Motivo B")
+    passagem_original = _passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=1000.0)
+
+    def _revisao_com_passagem(passagem):
+        return RevisaoNecessaria(
+            regra="RN04",
+            motivo="Divergência material entre linhas físicas da mesma OB.",
+            ocorrencias=[
+                OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_a, passagem=passagem),
+                OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_b, passagem=passagem),
+            ],
+        )
+
+    revisao_original = _revisao_com_passagem(passagem_original)
+    identidade_a = identidades_ocorrencias(revisao_original.ocorrencias)[0]
+    decisao = registrar_decisao(
+        revisao_original, acao=AcaoDecisao.PUBLICAR, autor="servidor.teste", obs_publicaveis=[identidade_a]
+    )
+
+    passagem_alterada = _passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=1200.0)
+    revisao_reconstruida = _revisao_com_passagem(passagem_alterada)
+    resultado = _resultado(revisoes=[revisao_reconstruida])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
+    assert revisado.pode_gerar_relatorio is False
+    assert revisado.candidatos_publicaveis == []
+
+
+def test_decisao_permanece_decidida_quando_passagem_nao_muda_controle_negativo():
+    ordem_a = _ordem(ob="2026OB000001", linha=10, motivo="Motivo A")
+    ordem_b = _ordem(ob="2026OB000001", linha=11, motivo="Motivo B")
+    passagem = _passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=1000.0)
+
+    def _revisao_com_passagem(p):
+        return RevisaoNecessaria(
+            regra="RN04",
+            motivo="Divergência material entre linhas físicas da mesma OB.",
+            ocorrencias=[
+                OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_a, passagem=p),
+                OcorrenciaFinanceira(dh="2026DH000001", ordem_bancaria=ordem_b, passagem=p),
+            ],
+        )
+
+    revisao_original = _revisao_com_passagem(passagem)
+    # HOMO-RT-02 — grupo com repetição física: `obs_publicaveis` precisa ser
+    # a identidade POR OCORRÊNCIA (nunca a OB pura, ambígua entre as duas
+    # ocorrências físicas idênticas), mesmo padrão de
+    # `test_novo_rt08_fluxo_completo_sem_mudanca_permanece_decidida`.
+    identidade_a = identidades_ocorrencias(revisao_original.ocorrencias)[0]
+    decisao = registrar_decisao(
+        revisao_original, acao=AcaoDecisao.PUBLICAR, autor="servidor.teste", obs_publicaveis=[identidade_a]
+    )
+
+    revisao_reconstruida = _revisao_com_passagem(passagem)
+    resultado = _resultado(revisoes=[revisao_reconstruida])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+    assert revisado.pode_gerar_relatorio is True
+
+
+def test_identidade_v3_nao_e_reaplicada_as_cegas_sobre_identidade_v4():
+    """Simula uma decisão gravada quando a identidade por ocorrência ainda
+    usava o formato v3 (antes de Valor da Passagem existir como campo
+    publicável) — nunca reaplicada às cegas sobre a identidade v4 atual;
+    cai em REQUER_NOVA_DECISAO, preservando a decisão antiga só para
+    histórico (nunca descartada)."""
+    ordem_a = _ordem(ob="2026OB000001", linha=10, motivo="Motivo A")
+    ordem_b = _ordem(ob="2026OB000001", linha=11, motivo="Motivo B")
+    revisao = _revisao_rn04_mesma_ob(ordem_a, ordem_b)
+
+    identidade_v4_real = identidades_ocorrencias(revisao.ocorrencias)[0]
+    assert "#v4:" in identidade_v4_real  # confirma o formato atual antes de simular o antigo
+    identidade_v3_simulada = identidade_v4_real.replace("#v4:", "#v3:")
+
+    decisao_antiga = DecisaoHumana(
+        identidade_grupo=identidade_grupo("RN04", ["2026OB000001"]),
+        regra="RN04",
+        obs_envolvidas=frozenset(["2026OB000001"]),
+        fingerprint_evidencias=calcular_fingerprint(revisao.ocorrencias),
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        decidido_em=datetime.now(timezone.utc),
+        obs_publicaveis=frozenset([identidade_v3_simulada]),
+    )
+
+    resultado = _resultado(revisoes=[revisao])
+    revisado = aplicar_decisoes(resultado, {decisao_antiga.identidade_grupo: decisao_antiga})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
+    assert revisado.revisoes[0].decisao == decisao_antiga  # nunca descartada, só marcada ambígua
+
+
+# ============================================================================
+# Sprint 4 (plano "XLSX Operacional de Diárias Não Publicadas") —
+# `OcorrenciaNaoPublicavel.categoria`, calculada exatamente onde
+# `aplicar_decisoes` já construía o dataclass (nenhuma lógica nova, só um
+# rótulo no que já existia). Duas categorias homologadas:
+#   A — NAO_PUBLICADA_POR_DECISAO_HUMANA
+#   B — DUPLICATA_FISICA_IDENTICA_SUPRIMIDA
+#
+# Achado de investigação (documentado no relatório do sprint): Categoria B
+# só é alcançável com 3+ repetições físicas da MESMA OB onde um SUBCONJUNTO
+# é byte-idêntico entre si e outro diverge (o que dispara RN04 para o grupo
+# inteiro) — duas ocorrências que disparam RN04 sozinhas SEMPRE têm hashes
+# diferentes entre si (é exatamente por divergirem que RN04 disparou), então
+# nunca colidem em identidade. `_tres_fisicas_mesma_ob` abaixo reproduz esse
+# cenário real: A1/A2 idênticas (mesma OB, mesmo DH, todo campo material e
+# publicável igual, só `linha` difere — excluída do fingerprint por design),
+# B diverge em `motivo`.
+# ============================================================================
+
+
+def _grupo_ab(regra="RN07", ob_a="2026OB000001", ob_b="2026OB000002") -> RevisaoNecessaria:
+    """[A,B] — duas OBs DISTINTAS (nunca a mesma), mesmo padrão de `_revisao`
+    default — usado nos casos de "publicar A", "publicar B", "publicar A+B",
+    "publicar zero", "adiar"."""
+    return RevisaoNecessaria(
+        regra=regra,
+        motivo="Duas OBs distintas.",
+        ocorrencias=[_oc(ob=ob_a, dh="2026DH000001"), _oc(ob=ob_b, dh="2026DH000002")],
+    )
+
+
+def _tres_fisicas_mesma_ob(ob="2026OB000001", dh="2026DH000001"):
+    """[A,A,B] — 3 ocorrências físicas da MESMA OB: A1/A2 byte-idênticas
+    entre si (mesmo `dh`, mesmo `motivo`, só `linha` difere), B diverge em
+    `motivo` (o suficiente para disparar RN04 para o grupo inteiro).
+    Devolve `(revisao, identidade_a, identidade_b)` — as identidades REAIS
+    calculadas por `identidades_ocorrencias`, nunca inventadas à mão."""
+    ordem_a1 = _ordem(ob=ob, linha=10, motivo="Motivo idêntico")
+    ordem_a2 = _ordem(ob=ob, linha=11, motivo="Motivo idêntico")
+    ordem_b = _ordem(ob=ob, linha=12, motivo="Motivo DIFERENTE")
+    ocorrencias = [
+        OcorrenciaFinanceira(dh=dh, ordem_bancaria=ordem_a1),
+        OcorrenciaFinanceira(dh=dh, ordem_bancaria=ordem_a2),
+        OcorrenciaFinanceira(dh=dh, ordem_bancaria=ordem_b),
+    ]
+    revisao = RevisaoNecessaria(
+        regra="RN04",
+        motivo="3 ocorrências físicas da mesma OB, 2 idênticas + 1 divergente.",
+        ocorrencias=ocorrencias,
+    )
+    identidades = identidades_ocorrencias(ocorrencias)
+    assert identidades[0] == identidades[1]  # sanity check do próprio cenário: A1 == A2
+    assert identidades[0] != identidades[2]  # e B é de fato distinta
+    return revisao, identidades[0], identidades[2]
+
+
+def _decidir(revisao, *, obs_publicaveis=(), acao=AcaoDecisao.PUBLICAR) -> dict[str, DecisaoHumana]:
+    decisao = registrar_decisao(revisao, acao=acao, autor="servidor.teste", obs_publicaveis=obs_publicaveis)
+    return {decisao.identidade_grupo: decisao}
+
+
+# --- [A,B] — publicar A / publicar B / publicar A+B / publicar zero / adiar
+
+
+def test_ab_publica_a_b_vira_categoria_a():
+    revisao = _grupo_ab()
+    decisoes = _decidir(revisao, obs_publicaveis=["2026OB000001"])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis} == {"2026OB000001"}
+    assert len(revisado.ocorrencias_nao_publicaveis) == 1
+    nao_publicada = revisado.ocorrencias_nao_publicaveis[0]
+    assert nao_publicada.ocorrencia.ordem_bancaria.ob == "2026OB000002"
+    assert nao_publicada.categoria is CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA
+
+
+def test_ab_publica_b_a_vira_categoria_a():
+    revisao = _grupo_ab()
+    decisoes = _decidir(revisao, obs_publicaveis=["2026OB000002"])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis} == {"2026OB000002"}
+    nao_publicada = revisado.ocorrencias_nao_publicaveis[0]
+    assert nao_publicada.ocorrencia.ordem_bancaria.ob == "2026OB000001"
+    assert nao_publicada.categoria is CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA
+
+
+def test_ab_publica_ambas_nenhuma_categoria_a():
+    revisao = _grupo_ab()
+    decisoes = _decidir(revisao, obs_publicaveis=["2026OB000001", "2026OB000002"])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert len(revisado.candidatos_publicaveis) == 2
+    assert revisado.ocorrencias_nao_publicaveis == []
+
+
+def test_ab_publicar_zero_ambas_viram_categoria_a():
+    revisao = _grupo_ab()
+    decisoes = _decidir(revisao, obs_publicaveis=[])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert revisado.candidatos_publicaveis == []
+    obs_nao_publicadas = {c.ocorrencia.ordem_bancaria.ob for c in revisado.ocorrencias_nao_publicaveis}
+    assert obs_nao_publicadas == {"2026OB000001", "2026OB000002"}
+    assert all(
+        c.categoria is CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA
+        for c in revisado.ocorrencias_nao_publicaveis
+    )
+
+
+def test_ab_adiar_nao_produz_categoria_a():
+    revisao = _grupo_ab()
+    decisoes = _decidir(revisao, acao=AcaoDecisao.ADIAR)
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.ADIADA
+    assert revisado.ocorrencias_nao_publicaveis == []
+    assert revisado.candidatos_publicaveis == []
+
+
+def test_ab_pendente_nao_produz_categoria_a():
+    """Nenhuma decisão registrada — grupo fica PENDENTE."""
+    revisao = _grupo_ab()
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.PENDENTE
+    assert revisado.ocorrencias_nao_publicaveis == []
+
+
+def test_ab_desatualizada_nao_produz_categoria_a():
+    revisao_original = _grupo_ab()
+    decisoes = _decidir(revisao_original, obs_publicaveis=["2026OB000001"])
+    # Reconstrói com evidência DIFERENTE (mesmas OBs, `regra` igual, mas o
+    # conteúdo mudou o suficiente para invalidar o fingerprint gravado).
+    revisao_reconstruida = RevisaoNecessaria(
+        regra="RN07",
+        motivo="Duas OBs distintas.",
+        ocorrencias=[
+            _oc(ob="2026OB000001", dh="2026DH000001", motivo="Motivo mudou"),
+            _oc(ob="2026OB000002", dh="2026DH000002"),
+        ],
+    )
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao_reconstruida]), decisoes)
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
+    assert revisado.ocorrencias_nao_publicaveis == []
+
+
+def test_ab_requer_nova_decisao_nao_produz_categoria_a_nem_b():
+    """Decisão v3-simulada (mesmo teste de `test_identidade_v3_nao_e_...`),
+    agora conferindo que `REQUER_NOVA_DECISAO` também não produz nenhuma
+    entrada em `ocorrencias_nao_publicaveis`."""
+    ordem_a = _ordem(ob="2026OB000001", linha=10, motivo="Motivo A")
+    ordem_b = _ordem(ob="2026OB000001", linha=11, motivo="Motivo B")
+    revisao = _revisao_rn04_mesma_ob(ordem_a, ordem_b)
+    identidade_real = identidades_ocorrencias(revisao.ocorrencias)[0]
+    identidade_simulada_v3 = identidade_real.replace("#v4:", "#v3:")
+    decisao = DecisaoHumana(
+        identidade_grupo=identidade_grupo("RN04", ["2026OB000001"]),
+        regra="RN04",
+        obs_envolvidas=frozenset(["2026OB000001"]),
+        fingerprint_evidencias=calcular_fingerprint(revisao.ocorrencias),
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        decidido_em=datetime.now(timezone.utc),
+        obs_publicaveis=frozenset([identidade_simulada_v3]),
+    )
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {decisao.identidade_grupo: decisao})
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
+    assert revisado.ocorrencias_nao_publicaveis == []
+
+
+# --- [A,A,B] — 3 ocorrências físicas da mesma OB (achado: única forma real
+# de a Categoria B ser alcançável)
+
+
+def test_aab_publica_a_uma_oficial_outra_categoria_b_b_categoria_a():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[identidade_a])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert len(revisado.candidatos_publicaveis) == 1  # uma A oficial
+    assert len(revisado.ocorrencias_nao_publicaveis) == 2  # outra A (categoria B) + B (categoria A)
+    categorias = {c.categoria for c in revisado.ocorrencias_nao_publicaveis}
+    assert categorias == {
+        CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA,
+        CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA,
+    }
+
+
+def test_aab_publica_a_mais_b_uma_a_oficial_outra_categoria_b_b_oficial():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[identidade_a, identidade_b])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert len(revisado.candidatos_publicaveis) == 2  # uma A + B oficiais
+    assert len(revisado.ocorrencias_nao_publicaveis) == 1  # só a segunda A
+    assert (
+        revisado.ocorrencias_nao_publicaveis[0].categoria
+        is CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA
+    )
+
+
+def test_aab_publicar_zero_todas_categoria_a_nunca_b_falsa():
+    """Semântica cuidadosa (item 16 do pedido): nenhuma foi selecionada —
+    as 3 ocorrências (as duas A E a B) caem em NAO_PUBLICADA_POR_DECISAO_
+    HUMANA; NUNCA inventar supressão de duplicata como se uma A tivesse
+    sido publicada quando na verdade nenhuma foi."""
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert revisado.candidatos_publicaveis == []
+    assert len(revisado.ocorrencias_nao_publicaveis) == 3
+    assert all(
+        c.categoria is CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA
+        for c in revisado.ocorrencias_nao_publicaveis
+    )
+
+
+# --- Invariantes explícitos (item 17 do pedido) ----------------------------
+
+
+def _todas_as_identidades_publicadas(revisado, revisao) -> set[str]:
+    identidades = identidades_ocorrencias(revisao.ocorrencias)
+    obs_publicadas = {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis}
+    return {
+        ident
+        for oc, ident in zip(revisao.ocorrencias, identidades)
+        if oc.ordem_bancaria.ob in obs_publicadas
+    }
+
+
+def test_invariante_ocorrencia_oficial_nunca_aparece_como_nao_publicavel():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[identidade_a, identidade_b])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    ids_oficiais = {id(c.ocorrencia) for c in revisado.candidatos_publicaveis}
+    ids_nao_publicaveis = {id(c.ocorrencia) for c in revisado.ocorrencias_nao_publicaveis}
+    assert ids_oficiais.isdisjoint(ids_nao_publicaveis)
+
+
+def test_invariante_no_maximo_uma_representante_por_identidade():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[identidade_a, identidade_b])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    identidades = identidades_ocorrencias(revisao.ocorrencias)
+    mapa_identidade = dict(zip((id(oc) for oc in revisao.ocorrencias), identidades))
+    identidades_publicadas = [mapa_identidade[id(c.ocorrencia)] for c in revisado.candidatos_publicaveis]
+    assert len(identidades_publicadas) == len(set(identidades_publicadas))  # nenhuma repetida
+
+
+def test_invariante_categoria_b_so_existe_se_identidade_foi_publicada():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[identidade_a])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    identidades = identidades_ocorrencias(revisao.ocorrencias)
+    mapa_identidade = dict(zip((id(oc) for oc in revisao.ocorrencias), identidades))
+    ids_publicados = {mapa_identidade[id(c.ocorrencia)] for c in revisado.candidatos_publicaveis}
+    for c in revisado.ocorrencias_nao_publicaveis:
+        if c.categoria is CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA:
+            assert mapa_identidade[id(c.ocorrencia)] in ids_publicados
+
+
+def test_invariante_publicar_zero_nunca_produz_categoria_b():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, obs_publicaveis=[])
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert not any(
+        c.categoria is CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA
+        for c in revisado.ocorrencias_nao_publicaveis
+    )
+
+
+def test_invariante_adiar_nunca_produz_nao_publicaveis():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+    decisoes = _decidir(revisao, acao=AcaoDecisao.ADIAR)
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+
+    assert revisado.ocorrencias_nao_publicaveis == []
+
+
+def test_invariante_pendente_nunca_produz_nao_publicaveis():
+    revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
+
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {})  # nenhuma decisão registrada
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.PENDENTE
+    assert revisado.ocorrencias_nao_publicaveis == []
+    assert revisado.pode_gerar_relatorio is False
