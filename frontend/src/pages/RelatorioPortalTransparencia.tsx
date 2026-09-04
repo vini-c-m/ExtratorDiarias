@@ -28,7 +28,9 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
     preparando,
     enviandoDecisao,
     parametrosFontesAtuais,
+    coberturaInsuficiente,
     preparar,
+    repetirComCoberturaParcial,
     iniciarRevisao,
     confirmarDecisao,
     adiarCaso,
@@ -118,8 +120,8 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
         <div>
           <h2 className={TIPOGRAFIA.titulo}>Relatório do Portal da Transparência</h2>
           <p className={`mt-1.5 max-w-xl ${TIPOGRAFIA.texto}`}>
-            Concilia a Base de Ordens Bancárias do Portal da Transparência com o Controle DIMCAC e
-            resolve casos atípicos antes da geração do relatório.
+            Concilia a Base E-Fisco com o Controle DIMCAC e resolve casos atípicos antes da geração
+            do relatório.
           </p>
         </div>
       </div>
@@ -136,7 +138,9 @@ export default function RelatorioPortalTransparencia({ backendOnline }: Props) {
           preparando={preparando}
           caminhoDecisoesResolvido={caminhoDecisoes !== null}
           caminhoConfiguracaoFontes={caminhoConfiguracaoFontes}
+          coberturaInsuficiente={coberturaInsuficiente}
           onPreparar={aoPreparar}
+          onPrepararComCoberturaParcial={repetirComCoberturaParcial}
         />
       )}
 

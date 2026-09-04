@@ -25,7 +25,7 @@ const NOME_ARQUIVO_CONFIGURACAO_TEMPLATE = "relatorio_transparencia_template_con
 
 // Micro-sprint UX operacional — mesmo raciocínio de
 // `NOME_ARQUIVO_CONFIGURACAO_TEMPLATE`, mas para a persistência dos
-// caminhos de Base de Ordens Bancárias e Controle DIMCAC (`app/consulta/
+// caminhos de Base E-Fisco e Controle DIMCAC (`app/consulta/
 // configuracao_fontes_relatorio_transparencia.py`): infraestrutura interna,
 // nunca um campo digitado pelo usuário. Arquivo próprio, nunca reaproveita
 // nenhum dos dois arquivos acima.

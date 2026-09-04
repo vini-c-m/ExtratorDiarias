@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CoberturaEfiscoInsuficienteError,
   ErroRelatorioTransparenciaIndisponivel,
   configurarFontesRelatorioTransparencia,
   gerarRelatorioTransparencia,
@@ -13,7 +14,7 @@ import {
 // Dados 100% fictícios (nenhum CPF/OB/DH/SEI real) — mesmo critério dos
 // mockups da investigação UX 3E.
 const PARAMETROS_FONTES = {
-  caminho_base_ordens_bancarias: "C:\\fake\\OB_Transparencia_2026_08.xlsx",
+  caminho_base_efisco: "C:\\fake\\OB_Transparencia_2026_08.xlsx",
   caminho_controle_dimcac: "C:\\fake\\Controle_DIMCAC_2026.xlsx",
   ano_exercicio: 2026,
   mes_referencia: 8,
@@ -34,6 +35,23 @@ function resposta503() {
 
 function resposta422(detail: string) {
   return { ok: false, status: 422, json: async () => ({ detail }) };
+}
+
+// Sprint D.1 (P2, cobertura parcial E-Fisco) — reproduz o 422 ESTRUTURADO
+// de `CoberturaInsuficienteEfisco` (`app/api/relatorio_transparencia.py::
+// _levantar_erro_de_fontes`), nunca só texto.
+function resposta422CoberturaInsuficiente(coberturaPagaAte: string | null) {
+  return {
+    ok: false,
+    status: 422,
+    json: async () => ({
+      detail: {
+        tipo: "cobertura_efisco_insuficiente",
+        mensagem: "A Base E-Fisco não tem cobertura comprovada até o fim da competência solicitada.",
+        cobertura_paga_ate: coberturaPagaAte,
+      },
+    }),
+  };
 }
 
 afterEach(() => {
@@ -64,14 +82,14 @@ describe("prepararRelatorioTransparencia", () => {
     expect(JSON.parse((opcoes as RequestInit).body as string)).toEqual(PARAMETROS_FONTES);
   });
 
-  it("404 de Base OB não encontrada vira mensagem amigável, nunca expõe o caminho absoluto", async () => {
+  it("404 de Base E-Fisco não encontrada vira mensagem amigável, nunca expõe o caminho absoluto", async () => {
     const fetchMock = vi.fn(async () =>
-      resposta404("Base de Ordens Bancárias não encontrada: C:\\fake\\OB_Transparencia_2026_08.xlsx"),
+      resposta404("Base E-Fisco não encontrada: C:\\fake\\OB_Transparencia_2026_08.xlsx"),
     );
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(prepararRelatorioTransparencia(PARAMETROS_FONTES)).rejects.toThrow(
-      /Não encontramos o arquivo da Base de Ordens Bancárias/,
+      /Não encontramos o arquivo da Base E-Fisco/,
     );
     await expect(prepararRelatorioTransparencia(PARAMETROS_FONTES)).rejects.not.toThrow(/C:\\fake/);
   });
@@ -103,6 +121,90 @@ describe("prepararRelatorioTransparencia", () => {
     await expect(prepararRelatorioTransparencia(PARAMETROS_FONTES)).rejects.toThrow(
       "Aba 'Dados' não encontrada na planilha",
     );
+  });
+
+  // Sprint D.1 (P2, cobertura parcial E-Fisco) — o 422 estruturado de
+  // `CoberturaInsuficienteEfisco` nunca pode cair no tratamento genérico de
+  // 422 (que só devolveria texto) — precisa virar `CoberturaEfiscoInsuficienteError`,
+  // com `coberturaPagaAte` extraído do corpo, para a tela oferecer as duas
+  // ações sem reparsear a mensagem.
+  it("422 de cobertura E-Fisco insuficiente vira CoberturaEfiscoInsuficienteError com a data-limite", async () => {
+    const fetchMock = vi.fn(async () => resposta422CoberturaInsuficiente("2026-07-31"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const erro = await prepararRelatorioTransparencia(PARAMETROS_FONTES).catch((e) => e);
+
+    expect(erro).toBeInstanceOf(CoberturaEfiscoInsuficienteError);
+    expect((erro as CoberturaEfiscoInsuficienteError).coberturaPagaAte).toBe("2026-07-31");
+    expect((erro as Error).message).toMatch(/cobertura comprovada/);
+  });
+
+  it("422 de cobertura E-Fisco insuficiente sem NENHUM pagamento confirmado vem com coberturaPagaAte nulo", async () => {
+    const fetchMock = vi.fn(async () => resposta422CoberturaInsuficiente(null));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const erro = await prepararRelatorioTransparencia(PARAMETROS_FONTES).catch((e) => e);
+
+    expect(erro).toBeInstanceOf(CoberturaEfiscoInsuficienteError);
+    expect((erro as CoberturaEfiscoInsuficienteError).coberturaPagaAte).toBeNull();
+  });
+
+  it("envia aceitar_cobertura_parcial=true quando o chamador pede para prosseguir sob cobertura parcial", async () => {
+    const resumoParcial = {
+      total_candidatos_normais: 1799,
+      total_revisoes: 0,
+      total_pendentes: 0,
+      total_decididas: 0,
+      total_adiadas: 0,
+      total_desatualizadas: 0,
+      total_requer_nova_decisao: 0,
+      total_ocorrencias_nao_publicaveis: 0,
+      pode_gerar_relatorio: true,
+      revisoes: [],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: true,
+      cobertura_efisco_ate: "2026-07-31",
+    };
+    const fetchMock = vi.fn(async (_url: string, _opcoes?: RequestInit) => respostaOk(resumoParcial));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const resultado = await prepararRelatorioTransparencia({ ...PARAMETROS_FONTES, aceitar_cobertura_parcial: true });
+
+    expect(resultado).toEqual(resumoParcial);
+    const [, opcoes] = fetchMock.mock.calls[0];
+    const corpoEnviado = JSON.parse((opcoes as RequestInit).body as string);
+    expect(corpoEnviado.aceitar_cobertura_parcial).toBe(true);
+  });
+
+  it("nunca envia aceitar_cobertura_parcial quando o chamador não pede cobertura parcial (comportamento padrão preservado)", async () => {
+    const fetchMock = vi.fn(async (_url: string, _opcoes?: RequestInit) =>
+      respostaOk({
+        total_candidatos_normais: 0,
+        total_revisoes: 0,
+        total_pendentes: 0,
+        total_decididas: 0,
+        total_adiadas: 0,
+        total_desatualizadas: 0,
+        total_requer_nova_decisao: 0,
+        total_ocorrencias_nao_publicaveis: 0,
+        pode_gerar_relatorio: true,
+        revisoes: [],
+        avisos_qualidade_fonte: [],
+        diagnosticos_qualidade_fonte: [],
+        total_decisoes_reaproveitadas: 0,
+        cobertura_parcial: false,
+        cobertura_efisco_ate: null,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await prepararRelatorioTransparencia(PARAMETROS_FONTES);
+
+    const [, opcoes] = fetchMock.mock.calls[0];
+    const corpoEnviado = JSON.parse((opcoes as RequestInit).body as string);
+    expect(corpoEnviado.aceitar_cobertura_parcial).toBeUndefined();
   });
 });
 
@@ -288,7 +390,7 @@ function resposta503FontesCorrompidas() {
 describe("obterStatusFontesRelatorioTransparencia", () => {
   it("envia o caminho de configuração na query e devolve o status das duas fontes", async () => {
     const statusFontes = {
-      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "C:\\fake\\ob.xlsx" },
+      base_efisco: { configurado: true, disponivel: true, caminho: "C:\\fake\\ob.xlsx" },
       controle_dimcac: { configurado: false, disponivel: false, caminho: null },
       planilha_passagens: { configurado: false, disponivel: false, caminho: null },
     };
@@ -309,7 +411,7 @@ describe("obterStatusFontesRelatorioTransparencia", () => {
 
     await expect(
       obterStatusFontesRelatorioTransparencia("C:\\fake\\AppData\\fontes_configuracao.json"),
-    ).rejects.toThrow(/Base de Ordens Bancárias.*corrompido/i);
+    ).rejects.toThrow(/Base E-Fisco.*corrompido/i);
   });
 
   it("503 sem relação com fontes continua caindo no erro genérico já existente", async () => {
@@ -325,7 +427,7 @@ describe("obterStatusFontesRelatorioTransparencia", () => {
 describe("configurarFontesRelatorioTransparencia", () => {
   it("envia a requisição no corpo e devolve o status atualizado das duas fontes", async () => {
     const statusFontes = {
-      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "C:\\fake\\ob.xlsx" },
+      base_efisco: { configurado: true, disponivel: true, caminho: "C:\\fake\\ob.xlsx" },
       controle_dimcac: { configurado: true, disponivel: true, caminho: "C:\\fake\\dimcac.xlsx" },
       planilha_passagens: { configurado: false, disponivel: false, caminho: null },
     };
@@ -334,7 +436,7 @@ describe("configurarFontesRelatorioTransparencia", () => {
 
     const resultado = await configurarFontesRelatorioTransparencia({
       caminho_configuracao_fontes: "C:\\fake\\AppData\\fontes_configuracao.json",
-      caminho_base_ordens_bancarias: "C:\\fake\\ob.xlsx",
+      caminho_base_efisco: "C:\\fake\\ob.xlsx",
     });
 
     expect(resultado).toEqual(statusFontes);
@@ -342,7 +444,7 @@ describe("configurarFontesRelatorioTransparencia", () => {
     expect(opcoes.method).toBe("POST");
     expect(JSON.parse(opcoes.body as string)).toEqual({
       caminho_configuracao_fontes: "C:\\fake\\AppData\\fontes_configuracao.json",
-      caminho_base_ordens_bancarias: "C:\\fake\\ob.xlsx",
+      caminho_base_efisco: "C:\\fake\\ob.xlsx",
     });
   });
 
@@ -352,6 +454,6 @@ describe("configurarFontesRelatorioTransparencia", () => {
 
     await expect(
       configurarFontesRelatorioTransparencia({ caminho_configuracao_fontes: "C:\\fake\\fontes.json" }),
-    ).rejects.toThrow(/Base de Ordens Bancárias.*corrompido/i);
+    ).rejects.toThrow(/Base E-Fisco.*corrompido/i);
   });
 });

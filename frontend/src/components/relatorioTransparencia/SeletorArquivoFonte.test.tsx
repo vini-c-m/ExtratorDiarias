@@ -25,7 +25,7 @@ afterEach(() => {
 describe("SeletorArquivoFonte", () => {
   it("nenhum arquivo selecionado: mostra 'Nenhum arquivo selecionado'", () => {
     render(
-      <SeletorArquivoFonte rotulo="Base de Ordens Bancárias" caminhoSelecionado={null} onSelecionar={vi.fn()} />,
+      <SeletorArquivoFonte rotulo="Base E-Fisco" caminhoSelecionado={null} onSelecionar={vi.fn()} />,
     );
 
     expect(screen.getByText("Nenhum arquivo selecionado")).toBeInTheDocument();
@@ -34,7 +34,7 @@ describe("SeletorArquivoFonte", () => {
   it("arquivo selecionado: mostra só o NOME do arquivo, nunca o caminho absoluto", () => {
     render(
       <SeletorArquivoFonte
-        rotulo="Base de Ordens Bancárias"
+        rotulo="Base E-Fisco"
         caminhoSelecionado="G:\\Meu Drive\\DIMCAC\\OB_2026_08.xlsx"
         onSelecionar={vi.fn()}
       />,
@@ -82,10 +82,10 @@ describe("SeletorArquivoFonte", () => {
 
   it("nenhum arquivo selecionado ainda: botão convida a selecionar, nunca 'Alterar'", () => {
     render(
-      <SeletorArquivoFonte rotulo="Base de Ordens Bancárias" caminhoSelecionado={null} onSelecionar={vi.fn()} />,
+      <SeletorArquivoFonte rotulo="Base E-Fisco" caminhoSelecionado={null} onSelecionar={vi.fn()} />,
     );
 
-    expect(screen.getByTitle("Selecionar Base de Ordens Bancárias")).toHaveTextContent(
+    expect(screen.getByTitle("Selecionar Base E-Fisco")).toHaveTextContent(
       "Selecionar arquivo",
     );
   });
@@ -93,13 +93,13 @@ describe("SeletorArquivoFonte", () => {
   it("arquivo já selecionado: botão convida a ALTERAR, nunca a 'Selecionar arquivo' de novo", () => {
     render(
       <SeletorArquivoFonte
-        rotulo="Base de Ordens Bancárias"
+        rotulo="Base E-Fisco"
         caminhoSelecionado="G:\\Meu Drive\\DIMCAC\\OB_2026_08.xlsx"
         onSelecionar={vi.fn()}
       />,
     );
 
-    expect(screen.getByTitle("Selecionar Base de Ordens Bancárias")).toHaveTextContent(
+    expect(screen.getByTitle("Selecionar Base E-Fisco")).toHaveTextContent(
       "Alterar",
     );
   });

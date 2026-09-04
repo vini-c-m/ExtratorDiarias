@@ -28,7 +28,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-// Micro-sprint UX operacional (item 3) — a Base de Ordens Bancárias e o
+// Micro-sprint UX operacional (item 3) — a Base E-Fisco e o
 // Controle DIMCAC, uma vez selecionados, devem persistir e reaparecer já
 // pré-selecionados ao reabrir o módulo. Este hook orquestra `GET/POST
 // /fontes`; estes testes cobrem o carregamento inicial, a configuração de
@@ -36,7 +36,7 @@ afterEach(() => {
 describe("useFontesRelatorioTransparencia", () => {
   beforeEach(() => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: NAO_CONFIGURADO,
+      base_efisco: NAO_CONFIGURADO,
       controle_dimcac: NAO_CONFIGURADO,
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -58,7 +58,7 @@ describe("useFontesRelatorioTransparencia", () => {
 
   it("fonte configurada e disponível: fase 'pronto', com o NOME do arquivo (nunca o caminho técnico exposto à UI)", async () => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "C:\\fake\\OB_Agosto.xlsx" },
+      base_efisco: { configurado: true, disponivel: true, caminho: "C:\\fake\\OB_Agosto.xlsx" },
       controle_dimcac: NAO_CONFIGURADO,
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -76,7 +76,7 @@ describe("useFontesRelatorioTransparencia", () => {
 
   it("fonte configurada mas arquivo sumiu: fase 'indisponivel' (nunca falha silenciosamente)", async () => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: NAO_CONFIGURADO,
+      base_efisco: NAO_CONFIGURADO,
       controle_dimcac: { configurado: true, disponivel: false, caminho: null },
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -88,7 +88,7 @@ describe("useFontesRelatorioTransparencia", () => {
 
   it("configurarBaseOB chama a API e atualiza só o status da Base OB, sem tocar no Controle DIMCAC", async () => {
     configurarMock.mockResolvedValue({
-      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "C:\\fake\\NovaOB.xlsx" },
+      base_efisco: { configurado: true, disponivel: true, caminho: "C:\\fake\\NovaOB.xlsx" },
       controle_dimcac: NAO_CONFIGURADO,
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -100,7 +100,7 @@ describe("useFontesRelatorioTransparencia", () => {
 
     expect(configurarMock).toHaveBeenCalledWith({
       caminho_configuracao_fontes: CAMINHO_CONFIGURACAO_FONTES,
-      caminho_base_ordens_bancarias: "C:\\fake\\NovaOB.xlsx",
+      caminho_base_efisco: "C:\\fake\\NovaOB.xlsx",
     });
     await waitFor(() =>
       expect(result.current.statusBaseOB).toEqual({
@@ -113,7 +113,7 @@ describe("useFontesRelatorioTransparencia", () => {
 
   it("configurarControleDimcac chama a API e atualiza só o status do Controle DIMCAC", async () => {
     configurarMock.mockResolvedValue({
-      base_ordens_bancarias: NAO_CONFIGURADO,
+      base_efisco: NAO_CONFIGURADO,
       controle_dimcac: { configurado: true, disponivel: true, caminho: "C:\\fake\\NovoControle.xlsx" },
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -152,7 +152,7 @@ describe("useFontesRelatorioTransparencia", () => {
   // persistida, mesmo mecanismo independente das duas acima.
   it("configurarPlanilhaPassagens chama a API e atualiza só o status da Planilha de Passagens", async () => {
     configurarMock.mockResolvedValue({
-      base_ordens_bancarias: NAO_CONFIGURADO,
+      base_efisco: NAO_CONFIGURADO,
       controle_dimcac: NAO_CONFIGURADO,
       planilha_passagens: { configurado: true, disponivel: true, caminho: "C:\\fake\\passagens.ods" },
     });

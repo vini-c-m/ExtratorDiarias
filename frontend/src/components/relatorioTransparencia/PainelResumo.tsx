@@ -1,5 +1,6 @@
-import { AlertTriangle, CheckCircle2, FolderOpen, History } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FolderOpen, History, UserCheck } from "lucide-react";
 import { type ChangeEvent, useState } from "react";
+import { formatarDataBr } from "../../lib/datas";
 import { SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import { useGerarRelatorioTransparencia } from "../../hooks/useGerarRelatorioTransparencia";
@@ -9,6 +10,25 @@ import Botao from "../ui/Botao";
 import Cartao from "../ui/Cartao";
 import HistoricoDecisoes from "./HistoricoDecisoes";
 import type { ParametrosFontesRelatorioTransparencia, ResumoRelatorioTransparencia } from "../../types/relatorioTransparencia";
+
+/** Sprint D.1 (P2, cobertura parcial E-Fisco) — aviso PERSISTENTE (nunca só
+ * no momento em que o backend rejeitou a preparação, ver `PainelEntrada.tsx`):
+ * enquanto `resumo.cobertura_parcial` for `true`, quem está revisando ou
+ * prestes a gerar o relatório precisa ver, sempre, até quando os dados
+ * realmente vão. Nunca um fluxo silencioso — mesmo aviso nas duas variantes
+ * desta tela (com e sem pendências).*/
+function AvisoCoberturaParcial({ resumo }: { resumo: ResumoRelatorioTransparencia }) {
+  if (!resumo.cobertura_parcial) return null;
+  return (
+    <div className="mb-5">
+      <Alerta variante="aviso">
+        Este relatório considera pagamentos confirmados na Base E-Fisco somente até{" "}
+        <strong>{resumo.cobertura_efisco_ate ? formatarDataBr(resumo.cobertura_efisco_ate) : "data indeterminada"}</strong>{" "}
+        — gerado sob cobertura parcial, mediante confirmação explícita na Tela 1.
+      </Alerta>
+    </div>
+  );
+}
 
 interface Props {
   resumo: ResumoRelatorioTransparencia;
@@ -200,6 +220,13 @@ export default function PainelResumo({
   // para o texto da tela ("N Casos"). O resultado (`pode_gerar_relatorio`)
   // continua vindo do backend, nunca recalculado.
   const casosPendentes = resumo.revisoes.filter((revisao) => revisao.estado !== "decidida").length;
+  // Sprint D.1 (QA manual — "decisão anterior reaplicada invisível") —
+  // `resumo.total_decididas + resumo.total_adiadas` é o total de decisões
+  // hoje EM VIGOR (mesmo critério de `_ESTADOS_RESOLVIDOS` no backend);
+  // subtraindo as reaproveitadas de outra execução sobra exatamente quantas
+  // foram decididas NESTA preparação — nunca confundidas entre si.
+  const decisoesNestaExecucao =
+    resumo.total_decididas + resumo.total_adiadas - resumo.total_decisoes_reaproveitadas;
   // Micro-sprint corretiva HOMO-RT-02 — histórico de decisões: reaproveita
   // `resumo.revisoes` (já veio do backend com autor/decidido_em/observacao
   // por grupo), sem chamada nova. Fechado por padrão — só ocupa espaço na
@@ -209,6 +236,8 @@ export default function PainelResumo({
   if (resumo.pode_gerar_relatorio) {
     return (
       <div>
+        <AvisoCoberturaParcial resumo={resumo} />
+
         <div className={`${SUPERFICIE_BASE} mb-7 p-12 text-center`}>
           <span className="inline-flex h-16 w-16 items-center justify-center rounded-[20px] bg-emerald-500/10 text-emerald-400">
             <CheckCircle2 aria-hidden="true" className="h-8 w-8" />
@@ -217,10 +246,20 @@ export default function PainelResumo({
           <p className={`mt-2 ${TIPOGRAFIA.texto}`}>Relatório pronto para geração.</p>
         </div>
 
-        <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <Cartao rotulo="Pagamentos prontos" valor={resumo.total_candidatos_normais} tamanho="compacto" />
           <Cartao rotulo="Casos revisados" valor={resumo.total_revisoes} cor="info" tamanho="compacto" />
           <Cartao rotulo="Decisões registradas" valor={resumo.total_decididas} cor="info" tamanho="compacto" />
+          {/* Sprint D.1 — separado do total acima: quanto foi decidido AGORA
+           * vs. reaproveitado de uma competência anterior (G06), nunca
+           * apresentado como um único número indistinto. */}
+          <Cartao rotulo="Decisões nesta execução" valor={decisoesNestaExecucao} cor="info" tamanho="compacto" />
+          <Cartao
+            rotulo="Decisões reaproveitadas"
+            valor={resumo.total_decisoes_reaproveitadas}
+            cor="info"
+            tamanho="compacto"
+          />
           <Cartao
             rotulo="Não serão publicados"
             valor={resumo.total_ocorrencias_nao_publicaveis}
@@ -252,16 +291,27 @@ export default function PainelResumo({
 
   return (
     <div>
+      <AvisoCoberturaParcial resumo={resumo} />
+
       <div className="mb-7">
         <Alerta variante="aviso">Existem casos que precisam ser analisados antes da geração.</Alerta>
       </div>
 
       {/* Hierarquia visual: a pendência (2ª cartão) é a informação
        * operacional principal — cor de atenção (âmbar) e posição central,
-       * enquanto "pagamentos prontos" (neutro/sucesso) e "reaproveitadas"
-       * (informativo) ficam discretas ao redor (correção aprovada na
-       * investigação UX 3E, item 5). */}
-      <div className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-3">
+       * enquanto "pagamentos prontos" (neutro/sucesso) e as duas contagens
+       * de decisão (informativas) ficam discretas ao redor (correção
+       * aprovada na investigação UX 3E, item 5).
+       *
+       * Sprint D.1 (QA manual — "decisão anterior reaplicada invisível") —
+       * antes desta correção, este cartão mostrava `total_decididas`
+       * (TODAS as decisões em vigor, nesta execução OU reaproveitadas de
+       * outra) sob o rótulo "reaproveitadas" — as duas contagens nunca
+       * podem ficar misturadas num único número. Separado em dois
+       * cartões: quantas foram decididas AGORA e quantas vieram
+       * reaproveitadas de uma competência anterior (G06 preservado — nunca
+       * força nova decisão, só torna a origem visível). */}
+      <div className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         <Cartao rotulo="Pagamentos prontos" valor={resumo.total_candidatos_normais} icone={CheckCircle2} />
         <Cartao
           rotulo="Casos precisam de revisão"
@@ -270,8 +320,14 @@ export default function PainelResumo({
           icone={AlertTriangle}
         />
         <Cartao
-          rotulo="Decisões anteriores reaproveitadas"
-          valor={resumo.total_decididas}
+          rotulo="Decisões tomadas nesta execução"
+          valor={decisoesNestaExecucao}
+          cor="info"
+          icone={UserCheck}
+        />
+        <Cartao
+          rotulo="Decisões anteriores reaplicadas"
+          valor={resumo.total_decisoes_reaproveitadas}
           cor="info"
           icone={History}
         />

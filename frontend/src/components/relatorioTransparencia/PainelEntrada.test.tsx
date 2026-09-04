@@ -47,7 +47,7 @@ beforeEach(() => {
     getPathForFile: (arquivo: File) => `G:\\Meu Drive\\DIMCAC\\${arquivo.name}`,
   };
   statusMock.mockResolvedValue({
-    base_ordens_bancarias: NAO_CONFIGURADO,
+    base_efisco: NAO_CONFIGURADO,
     controle_dimcac: NAO_CONFIGURADO,
     planilha_passagens: NAO_CONFIGURADO,
   });
@@ -60,12 +60,12 @@ beforeEach(() => {
     async (
       requisicao: RequisicaoConfigurarFontesRelatorioTransparencia,
     ): Promise<StatusFontesRelatorioTransparencia> => {
-      if (requisicao.caminho_base_ordens_bancarias) {
+      if (requisicao.caminho_base_efisco) {
         return {
-          base_ordens_bancarias: {
+          base_efisco: {
             configurado: true,
             disponivel: true,
-            caminho: requisicao.caminho_base_ordens_bancarias,
+            caminho: requisicao.caminho_base_efisco,
           },
           controle_dimcac: NAO_CONFIGURADO,
           planilha_passagens: NAO_CONFIGURADO,
@@ -73,7 +73,7 @@ beforeEach(() => {
       }
       if (requisicao.caminho_planilha_passagens) {
         return {
-          base_ordens_bancarias: NAO_CONFIGURADO,
+          base_efisco: NAO_CONFIGURADO,
           controle_dimcac: NAO_CONFIGURADO,
           planilha_passagens: {
             configurado: true,
@@ -83,7 +83,7 @@ beforeEach(() => {
         };
       }
       return {
-        base_ordens_bancarias: NAO_CONFIGURADO,
+        base_efisco: NAO_CONFIGURADO,
         controle_dimcac: {
           configurado: true,
           disponivel: true,
@@ -116,6 +116,8 @@ describe("PainelEntrada", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -131,6 +133,8 @@ describe("PainelEntrada", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -148,6 +152,8 @@ describe("PainelEntrada", () => {
         caminhoDecisoesResolvido={false}
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -166,6 +172,8 @@ describe("PainelEntrada", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={onPreparar}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -177,7 +185,7 @@ describe("PainelEntrada", () => {
     expect(parametros).toEqual({
       ano_exercicio: expect.any(Number),
       mes_referencia: expect.any(Number),
-      caminho_base_ordens_bancarias: "G:\\Meu Drive\\DIMCAC\\OB_2026_08.xlsx",
+      caminho_base_efisco: "G:\\Meu Drive\\DIMCAC\\OB_2026_08.xlsx",
       caminho_controle_dimcac: "G:\\Meu Drive\\DIMCAC\\Controle_DIMCAC_2026.xlsx",
     });
     expect(autor).toBe("servidor.teste");
@@ -192,6 +200,8 @@ describe("PainelEntrada", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -209,6 +219,8 @@ describe("PainelEntrada", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -218,16 +230,18 @@ describe("PainelEntrada", () => {
   it("erro: mostra o alerta com a mensagem recebida", () => {
     render(
       <PainelEntrada
-        erro="Não encontramos o arquivo da Base de Ordens Bancárias selecionado."
+        erro="Não encontramos o arquivo da Base E-Fisco selecionado."
         preparando={false}
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
     expect(
-      screen.getByText("Não encontramos o arquivo da Base de Ordens Bancárias selecionado."),
+      screen.getByText("Não encontramos o arquivo da Base E-Fisco selecionado."),
     ).toBeInTheDocument();
   });
 });
@@ -241,7 +255,7 @@ describe("PainelEntrada", () => {
 describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)", () => {
   it("reabrir com fontes já configuradas: aparecem pré-selecionadas, sem exigir nova seleção", async () => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: { configurado: true, disponivel: true, caminho: "G:\\Salvo\\OB_anterior.xlsx" },
+      base_efisco: { configurado: true, disponivel: true, caminho: "G:\\Salvo\\OB_anterior.xlsx" },
       controle_dimcac: { configurado: true, disponivel: true, caminho: "G:\\Salvo\\Controle_anterior.xlsx" },
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -253,6 +267,8 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -264,7 +280,7 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
 
   it("selecionar uma fonte persiste (chama a API) e o outro campo, se já configurado, permanece intacto", async () => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: NAO_CONFIGURADO,
+      base_efisco: NAO_CONFIGURADO,
       controle_dimcac: { configurado: true, disponivel: true, caminho: "G:\\Salvo\\Controle_anterior.xlsx" },
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -277,6 +293,8 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -286,7 +304,7 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
 
     expect(configurarMock).toHaveBeenCalledWith({
       caminho_configuracao_fontes: CAMINHO_CONFIGURACAO_FONTES,
-      caminho_base_ordens_bancarias: "G:\\Meu Drive\\DIMCAC\\OB_nova.xlsx",
+      caminho_base_efisco: "G:\\Meu Drive\\DIMCAC\\OB_nova.xlsx",
     });
     expect(await screen.findByText("OB_nova.xlsx")).toBeInTheDocument();
     // Controle DIMCAC nunca foi reenviado nem some da tela.
@@ -295,7 +313,7 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
 
   it("fonte persistida mas arquivo sumiu: mostra aviso de indisponível, nunca falha silenciosamente", async () => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: { configurado: true, disponivel: false, caminho: null },
+      base_efisco: { configurado: true, disponivel: false, caminho: null },
       controle_dimcac: NAO_CONFIGURADO,
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -307,6 +325,8 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -315,7 +335,7 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
 
   it("'Alterar' um arquivo já indisponível continua funcionando (nova seleção substitui)", async () => {
     statusMock.mockResolvedValue({
-      base_ordens_bancarias: { configurado: true, disponivel: false, caminho: null },
+      base_efisco: { configurado: true, disponivel: false, caminho: null },
       controle_dimcac: NAO_CONFIGURADO,
       planilha_passagens: NAO_CONFIGURADO,
     });
@@ -328,6 +348,8 @@ describe("PainelEntrada — persistência das fontes (Base OB / Controle DIMCAC)
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -353,6 +375,8 @@ describe("PainelEntrada — terceira fonte (Planilha de Passagens)", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -369,6 +393,8 @@ describe("PainelEntrada — terceira fonte (Planilha de Passagens)", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={vi.fn()}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -395,6 +421,8 @@ describe("PainelEntrada — terceira fonte (Planilha de Passagens)", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={onPreparar}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 
@@ -408,7 +436,7 @@ describe("PainelEntrada — terceira fonte (Planilha de Passagens)", () => {
     expect(parametros).toEqual({
       ano_exercicio: expect.any(Number),
       mes_referencia: expect.any(Number),
-      caminho_base_ordens_bancarias: "G:\\Meu Drive\\DIMCAC\\OB_2026_08.xlsx",
+      caminho_base_efisco: "G:\\Meu Drive\\DIMCAC\\OB_2026_08.xlsx",
       caminho_controle_dimcac: "G:\\Meu Drive\\DIMCAC\\Controle_DIMCAC_2026.xlsx",
       caminho_planilha_passagens: "G:\\Meu Drive\\DIMCAC\\passagens_julho.ods",
     });
@@ -424,6 +452,8 @@ describe("PainelEntrada — terceira fonte (Planilha de Passagens)", () => {
         caminhoDecisoesResolvido
         caminhoConfiguracaoFontes={CAMINHO_CONFIGURACAO_FONTES}
         onPreparar={onPreparar}
+        coberturaInsuficiente={null}
+        onPrepararComCoberturaParcial={vi.fn()}
       />,
     );
 

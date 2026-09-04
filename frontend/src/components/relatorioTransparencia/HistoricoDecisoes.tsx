@@ -147,6 +147,22 @@ function DetalheDecisao({ revisao, onFechar }: PropsDetalhe) {
           <Badge variante={varianteEstado(revisao.estado)}>{ROTULO_ESTADO[revisao.estado]}</Badge>
         </div>
 
+        {/* Sprint D.1 (QA manual — "decisão anterior reaplicada invisível")
+         * — quando `autor`/"Data/hora" abaixo vêm de uma decisão de uma
+         * competência/execução DIFERENTE da atual (reaproveitada porque a
+         * evidência continua válida, G06), isto precisa ficar explícito
+         * ANTES dos próprios campos — nunca apresentado como se a decisão
+         * tivesse acabado de acontecer agora. */}
+        {revisao.reaplicada_de_execucao_anterior && (
+          <div className="mt-4">
+            <Badge variante="info">Decisão anterior reaplicada</Badge>
+            <p className={`mt-1.5 ${TIPOGRAFIA.legenda}`}>
+              Responsável e data/hora abaixo são da decisão ORIGINAL — reaproveitada aqui porque a evidência não
+              mudou, sem exigir nova decisão.
+            </p>
+          </div>
+        )}
+
         <dl className="mt-5 space-y-3.5">
           <div>
             <dt className={TIPOGRAFIA.legenda}>Regra</dt>
@@ -157,11 +173,11 @@ function DetalheDecisao({ revisao, onFechar }: PropsDetalhe) {
             <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{obs.join(", ")}</dd>
           </div>
           <div>
-            <dt className={TIPOGRAFIA.legenda}>Responsável</dt>
+            <dt className={TIPOGRAFIA.legenda}>{revisao.reaplicada_de_execucao_anterior ? "Responsável original" : "Responsável"}</dt>
             <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{revisao.autor ?? "—"}</dd>
           </div>
           <div>
-            <dt className={TIPOGRAFIA.legenda}>Data/hora</dt>
+            <dt className={TIPOGRAFIA.legenda}>{revisao.reaplicada_de_execucao_anterior ? "Data/hora original" : "Data/hora"}</dt>
             <dd className={`mt-0.5 ${TIPOGRAFIA.texto}`}>{formatarDataHora(revisao.decidido_em)}</dd>
           </div>
           <div>
@@ -231,7 +247,13 @@ function TabelaRevisoes({ revisoes, onVerDecisao }: PropsTabela) {
                   {obsDoGrupo(revisao).join(", ")}
                 </td>
                 <td className="border-b border-white/10 px-4 py-3">
-                  <Badge variante={varianteEstado(revisao.estado)}>{ROTULO_ESTADO[revisao.estado]}</Badge>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variante={varianteEstado(revisao.estado)}>{ROTULO_ESTADO[revisao.estado]}</Badge>
+                    {/* Sprint D.1 (QA manual) — nunca deixar uma decisão
+                     * reaproveitada de outra competência passar por "decidida
+                     * agora mesmo" na leitura rápida da tabela. */}
+                    {revisao.reaplicada_de_execucao_anterior && <Badge variante="info">Reaplicada</Badge>}
+                  </div>
                 </td>
                 <td className="border-b border-white/10 px-4 py-3 text-[13px] text-slate-300">
                   {revisao.autor ?? "—"}

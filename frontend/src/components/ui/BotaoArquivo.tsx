@@ -1,4 +1,4 @@
-import type { ChangeEvent, ReactNode } from "react";
+import { forwardRef, type ChangeEvent, type ReactNode } from "react";
 import { EFEITO_RIPPLE } from "../../theme/estilos";
 
 interface Props {
@@ -18,14 +18,17 @@ interface Props {
 // pulava direto por cima dele). Vira um componente único aqui: o input passa
 // a ser `sr-only` (visualmente escondido, mas alcançável via Tab) e o anel
 // de foco aparece no rótulo via `has-[:focus-visible]`.
-export default function BotaoArquivo({
-  children,
-  accept,
-  multiplo = false,
-  desabilitado = false,
-  titulo,
-  onChange,
-}: Props) {
+// Sprint D.1 (P2, cobertura parcial E-Fisco) — `ref` encaminhada até o
+// `<input type=file>` real: permite a um pai (ex.: o aviso de "Atualizar
+// Base E-Fisco" em `PainelEntrada.tsx`) abrir o mesmo diálogo nativo desta
+// seleção programaticamente (`ref.current.click()`), sem duplicar nenhum
+// mecanismo de seleção — chamado de dentro do `onClick` de um botão real
+// (mesmo "gesto do usuário"), nunca de forma assíncrona/fora de um handler
+// de clique (o navegador/Electron bloqueia diálogos de arquivo sem gesto).
+export default forwardRef<HTMLInputElement, Props>(function BotaoArquivo(
+  { children, accept, multiplo = false, desabilitado = false, titulo, onChange },
+  ref,
+) {
   return (
     <label
       title={titulo}
@@ -37,6 +40,7 @@ export default function BotaoArquivo({
     >
       {children}
       <input
+        ref={ref}
         type="file"
         accept={accept}
         multiple={multiplo}
@@ -46,4 +50,4 @@ export default function BotaoArquivo({
       />
     </label>
   );
-}
+});

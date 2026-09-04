@@ -987,17 +987,22 @@ export class ErroRelatorioTransparenciaIndisponivel extends Error {
 }
 
 /** Os 404 de `preparar_relatorio`/`listar_revisoes`/`registrar_decisao_revisao`
- * (`BaseOBNaoEncontrada`, `ControleDimcacNaoEncontrado`,
+ * (`BaseEfiscoNaoEncontrada`, `ControleDimcacNaoEncontrado`,
  * `RevisaoNaoEncontrada`) vêm do backend com o CAMINHO ABSOLUTO do arquivo
  * embutido na mensagem (`app/services/relatorio_transparencia_service.py`)
  * — apropriado para um log técnico, não para a tela (item 3/19 da
  * investigação UX 3E: nunca mostrar caminho interno desnecessário). Reescrita
  * puramente de apresentação por prefixo de texto, mesmo espírito de
  * `PADROES_TECNICOS` em `lib/mensagens.ts` — não interpreta nem classifica
- * o erro, só troca como ele é exibido. */
+ * o erro, só troca como ele é exibido.
+ *
+ * Sprint E (Plano de Migração E-Fisco, limpeza do legado Base OB/ClickView)
+ * — o backend nunca mais emite o prefixo "Base de Ordens Bancárias não
+ * encontrada" (aposentado desde a Sprint C); a checagem abaixo passou a
+ * refletir a mensagem real e atual (`BaseEfiscoNaoEncontrada`). */
 function mensagemFonteOuRevisaoNaoEncontrada(detail: string): string {
-  if (detail.startsWith("Base de Ordens Bancárias não encontrada")) {
-    return "Não encontramos o arquivo da Base de Ordens Bancárias selecionado. Verifique se ele ainda existe no local indicado e selecione novamente.";
+  if (detail.startsWith("Base E-Fisco não encontrada")) {
+    return "Não encontramos o arquivo da Base E-Fisco selecionado. Verifique se ele ainda existe no local indicado e selecione novamente.";
   }
   if (detail.startsWith("Controle DIMCAC não encontrado")) {
     return "Não encontramos o arquivo do Controle DIMCAC selecionado. Verifique se ele ainda existe no local indicado e selecione novamente.";
@@ -1061,14 +1066,50 @@ function mensagem503RelatorioTransparencia(detail: string): Error {
   }
   // Micro-sprint UX operacional — mesmo critério acima (Confronto QA Codex /
   // QA-RT-03), agora para o arquivo irmão de configuração das fontes
-  // persistidas (Base OB/Controle DIMCAC): sem este caso, cairia no erro
-  // genérico "dados de decisões", enganoso para este arquivo.
+  // persistidas (Base E-Fisco/Controle DIMCAC): sem este caso, cairia no
+  // erro genérico "dados de decisões", enganoso para este arquivo.
   if (detail.startsWith("Configuração das fontes corrompida")) {
     return new Error(
-      "Não foi possível ler a configuração salva de Base de Ordens Bancárias/Controle DIMCAC — o arquivo está corrompido. Selecione os arquivos novamente.",
+      "Não foi possível ler a configuração salva de Base E-Fisco/Controle DIMCAC — o arquivo está corrompido. Selecione os arquivos novamente.",
     );
   }
   return new ErroRelatorioTransparenciaIndisponivel();
+}
+
+/** Sprint D.1 (Plano de Migração E-Fisco, P2 — cobertura parcial) — 422
+ * ESTRUTURADO (não só texto) de `CoberturaInsuficienteEfisco`
+ * (`app/api/relatorio_transparencia.py::_levantar_erro_de_fontes`):
+ * `{tipo: "cobertura_efisco_insuficiente", mensagem, cobertura_paga_ate}`.
+ * Distinta de `Error` genérico para a tela poder oferecer "Atualizar Base
+ * E-Fisco"/"Gerar com cobertura parcial" sem reparsear texto — `tipo` é o
+ * discriminador estável (a mensagem pode mudar de texto no futuro sem
+ * quebrar quem lê isto). `coberturaPagaAte` é `null` só quando não há
+ * NENHUM pagamento confirmado na fonte inteira (nada para oferecer como
+ * "cobertura parcial", só o erro). */
+export class CoberturaEfiscoInsuficienteError extends Error {
+  coberturaPagaAte: string | null;
+
+  constructor(mensagem: string, coberturaPagaAte: string | null) {
+    super(mensagem);
+    this.name = "CoberturaEfiscoInsuficienteError";
+    this.coberturaPagaAte = coberturaPagaAte;
+  }
+}
+
+function erroCoberturaInsuficienteOuNulo(corpo: unknown): CoberturaEfiscoInsuficienteError | null {
+  const detail = (corpo as { detail?: unknown } | null)?.detail;
+  if (
+    typeof detail === "object" &&
+    detail !== null &&
+    (detail as { tipo?: unknown }).tipo === "cobertura_efisco_insuficiente"
+  ) {
+    const estruturado = detail as { mensagem?: unknown; cobertura_paga_ate?: unknown };
+    return new CoberturaEfiscoInsuficienteError(
+      typeof estruturado.mensagem === "string" ? estruturado.mensagem : "Cobertura da Base E-Fisco insuficiente.",
+      typeof estruturado.cobertura_paga_ate === "string" ? estruturado.cobertura_paga_ate : null,
+    );
+  }
+  return null;
 }
 
 const CAMINHO_BASE_RELATORIO_TRANSPARENCIA = `${BACKEND_URL}/api/v1/relatorio-transparencia`;
@@ -1094,7 +1135,7 @@ export async function prepararRelatorioTransparencia(
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
-    throw new Error(mensagemDoErro422(corpo, resposta.status));
+    throw erroCoberturaInsuficienteOuNulo(corpo) ?? new Error(mensagemDoErro422(corpo, resposta.status));
   }
 
   return resposta.json();
@@ -1120,7 +1161,7 @@ export async function listarRevisoesRelatorioTransparencia(
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
-    throw new Error(mensagemDoErro422(corpo, resposta.status));
+    throw erroCoberturaInsuficienteOuNulo(corpo) ?? new Error(mensagemDoErro422(corpo, resposta.status));
   }
 
   return resposta.json();
@@ -1152,7 +1193,7 @@ export async function registrarDecisaoRevisaoRelatorioTransparencia(
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
-    throw new Error(mensagemDoErro422(corpo, resposta.status));
+    throw erroCoberturaInsuficienteOuNulo(corpo) ?? new Error(mensagemDoErro422(corpo, resposta.status));
   }
 
   return resposta.json();
@@ -1205,9 +1246,9 @@ export async function configurarTemplateRelatorioTransparencia(
 }
 
 /** Micro-sprint UX operacional — `GET /fontes`: status persistido dos
- * caminhos de Base de Ordens Bancárias e Controle DIMCAC (item 3 da
- * micro-sprint — o usuário não deveria precisar reselecionar os dois
- * arquivos a cada vez). Mesmo critério de erro amigável do Template
+ * caminhos de Base E-Fisco e Controle DIMCAC (item 3 da micro-sprint — o
+ * usuário não deveria precisar reselecionar os dois arquivos a cada vez).
+ * Mesmo critério de erro amigável do Template
  * Oficial: 503 só quando o próprio arquivo de configuração está
  * corrompido, nunca quando as fontes simplesmente não foram configuradas
  * ainda (isso é `configurado: false`, resposta 200 normal). */
@@ -1286,7 +1327,7 @@ export async function gerarRelatorioTransparencia(
   }
   if (!resposta.ok) {
     const corpo = await resposta.json().catch(() => null);
-    throw new Error(mensagem422Gerar(corpo, resposta.status));
+    throw erroCoberturaInsuficienteOuNulo(corpo) ?? new Error(mensagem422Gerar(corpo, resposta.status));
   }
 
   return resposta.json();

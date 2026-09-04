@@ -74,6 +74,7 @@ function revisao(identidade: string, estado: "pendente" | "decidida") {
     decidido_em: null,
     observacao: null,
     obs_publicaveis: null,
+    reaplicada_de_execucao_anterior: false,
   };
 }
 
@@ -97,7 +98,7 @@ beforeEach(() => {
     caminho_template: "C:\\fake\\Modelo_Oficial.xlsx",
   });
   statusFontesMock.mockResolvedValue({
-    base_ordens_bancarias: FONTE_NAO_CONFIGURADA,
+    base_efisco: FONTE_NAO_CONFIGURADA,
     controle_dimcac: FONTE_NAO_CONFIGURADA,
     planilha_passagens: FONTE_NAO_CONFIGURADA,
   });
@@ -108,12 +109,12 @@ beforeEach(() => {
     async (
       requisicao: RequisicaoConfigurarFontesRelatorioTransparencia,
     ): Promise<StatusFontesRelatorioTransparencia> => {
-      if (requisicao.caminho_base_ordens_bancarias) {
+      if (requisicao.caminho_base_efisco) {
         return {
-          base_ordens_bancarias: {
+          base_efisco: {
             configurado: true,
             disponivel: true,
-            caminho: requisicao.caminho_base_ordens_bancarias,
+            caminho: requisicao.caminho_base_efisco,
           },
           controle_dimcac: FONTE_NAO_CONFIGURADA,
           planilha_passagens: FONTE_NAO_CONFIGURADA,
@@ -121,7 +122,7 @@ beforeEach(() => {
       }
       if (requisicao.caminho_planilha_passagens) {
         return {
-          base_ordens_bancarias: FONTE_NAO_CONFIGURADA,
+          base_efisco: FONTE_NAO_CONFIGURADA,
           controle_dimcac: FONTE_NAO_CONFIGURADA,
           planilha_passagens: {
             configurado: true,
@@ -131,7 +132,7 @@ beforeEach(() => {
         };
       }
       return {
-        base_ordens_bancarias: FONTE_NAO_CONFIGURADA,
+        base_efisco: FONTE_NAO_CONFIGURADA,
         controle_dimcac: {
           configurado: true,
           disponivel: true,
@@ -194,6 +195,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: true,
       revisoes: [],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     expect(screen.getByText("Todas as revisões foram concluídas.")).toBeInTheDocument();
@@ -219,6 +225,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("1", "pendente"), revisao("2", "pendente")],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     await usuario.click(screen.getByRole("button", { name: "Revisar 2 Casos" }));
@@ -235,6 +246,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("1", "decidida"), revisao("2", "pendente")],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     await usuario.click(screen.getAllByRole("checkbox")[0]);
@@ -263,6 +279,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("1", "pendente")],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
     await usuario.click(screen.getByRole("button", { name: "Revisar 1 Caso" }));
 
@@ -307,6 +328,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 1,
       pode_gerar_relatorio: true,
       revisoes: [revisao("1", "decidida")],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
     await usuario.click(screen.getByRole("button", { name: "Confirmar Decisão" }));
     await usuario.click(screen.getByRole("button", { name: "Confirmar decisão" }));
@@ -329,6 +355,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: false,
       revisoes: [revisao("1", "pendente")],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     await usuario.click(screen.getByRole("button", { name: "Revisar 1 Caso" }));
@@ -344,6 +375,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: true,
       revisoes: [revisao("1", "decidida")],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     await usuario.click(screen.getAllByRole("checkbox")[0]);
@@ -367,6 +403,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: true,
       revisoes: [],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     expect(screen.getByText("Todas as revisões foram concluídas.")).toBeInTheDocument();
@@ -424,6 +465,11 @@ describe("RelatorioPortalTransparencia", () => {
       total_ocorrencias_nao_publicaveis: 0,
       pode_gerar_relatorio: true,
       revisoes: [],
+      avisos_qualidade_fonte: [],
+      diagnosticos_qualidade_fonte: [],
+      total_decisoes_reaproveitadas: 0,
+      cobertura_parcial: false,
+      cobertura_efisco_ate: null,
     });
 
     await usuario.click(screen.getByRole("button", { name: "Selecionar outra competência ou fontes" }));

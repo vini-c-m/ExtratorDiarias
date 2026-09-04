@@ -35,7 +35,7 @@ describe("Hub", () => {
     expect(screen.getByText(/Consulte os processos já cadastrados/)).toBeInTheDocument();
 
     expect(screen.getByText("Relatório do Portal da Transparência")).toBeInTheDocument();
-    expect(screen.getByText(/Concilia a Base de Ordens Bancárias/)).toBeInTheDocument();
+    expect(screen.getByText(/Concilia a Base E-Fisco/)).toBeInTheDocument();
   });
 
   it("clicar no card do Relatório do Portal da Transparência aciona só aoSelecionarRelatorioTransparencia", async () => {

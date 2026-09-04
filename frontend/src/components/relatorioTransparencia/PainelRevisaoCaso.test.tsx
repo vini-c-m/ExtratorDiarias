@@ -53,6 +53,7 @@ const REVISAO_PENDENTE: RevisaoRelatorioTransparencia = {
   decidido_em: null,
   observacao: null,
   obs_publicaveis: null,
+  reaplicada_de_execucao_anterior: false,
 };
 
 const REVISAO_DESATUALIZADA: RevisaoRelatorioTransparencia = {

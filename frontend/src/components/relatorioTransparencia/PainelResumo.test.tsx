@@ -29,7 +29,7 @@ const gerarMock = vi.mocked(gerarRelatorioTransparencia);
 const CAMINHO_CONFIGURACAO_TEMPLATE = "C:\\fake\\AppData\\relatorio_transparencia_template_configuracao.json";
 
 const PARAMETROS_FONTES: ParametrosFontesRelatorioTransparencia = {
-  caminho_base_ordens_bancarias: "C:\\fake\\ob.xlsx",
+  caminho_base_efisco: "C:\\fake\\ob.xlsx",
   caminho_controle_dimcac: "C:\\fake\\dimcac.xlsx",
   ano_exercicio: 2026,
   mes_referencia: 8,
@@ -58,6 +58,7 @@ function revisao(
     decidido_em: null,
     observacao: null,
     obs_publicaveis: null,
+    reaplicada_de_execucao_anterior: false,
     ...sobrescritas,
   };
 }
@@ -80,6 +81,11 @@ const RESUMO_COM_PENDENCIAS: ResumoRelatorioTransparencia = {
     revisao("decidida", { autor: "servidor.teste", decidido_em: "2026-08-20T10:00:00Z", obs_publicaveis: ["2026OB000001"] }),
     revisao("decidida", { autor: "servidor.teste", decidido_em: "2026-08-21T10:00:00Z", obs_publicaveis: ["2026OB000002"] }),
   ],
+  avisos_qualidade_fonte: [],
+  diagnosticos_qualidade_fonte: [],
+  total_decisoes_reaproveitadas: 0,
+  cobertura_parcial: false,
+  cobertura_efisco_ate: null,
 };
 
 const RESUMO_SEM_PENDENCIAS: ResumoRelatorioTransparencia = {
@@ -93,6 +99,11 @@ const RESUMO_SEM_PENDENCIAS: ResumoRelatorioTransparencia = {
   total_ocorrencias_nao_publicaveis: 3,
   pode_gerar_relatorio: true,
   revisoes: [revisao("decidida"), revisao("decidida")],
+  avisos_qualidade_fonte: [],
+  diagnosticos_qualidade_fonte: [],
+  total_decisoes_reaproveitadas: 0,
+  cobertura_parcial: false,
+  cobertura_efisco_ate: null,
 };
 
 function renderComGeracao(resumo: ResumoRelatorioTransparencia = RESUMO_SEM_PENDENCIAS) {
@@ -168,6 +179,69 @@ describe("PainelResumo — com pendências (Tela 2)", () => {
     await usuario.click(screen.getByRole("button", { name: "Revisar 4 Casos" }));
 
     expect(onRevisarCasos).toHaveBeenCalledTimes(1);
+  });
+
+  // Sprint D.1 (QA manual — "decisão anterior reaplicada invisível") — o
+  // cartão que antes mostrava `total_decididas` sob o rótulo enganoso
+  // "reaproveitadas" precisa mostrar as DUAS contagens, separadas: quantas
+  // decisões foram tomadas NESTA preparação e quantas vieram reaproveitadas
+  // de uma competência anterior (nunca um único número misturando as duas).
+  it("Sprint D.1 — separa 'Decisões tomadas nesta execução' de 'Decisões anteriores reaplicadas'", () => {
+    const resumo: ResumoRelatorioTransparencia = {
+      ...RESUMO_COM_PENDENCIAS,
+      total_decididas: 6,
+      total_adiadas: 1,
+      total_decisoes_reaproveitadas: 5,
+    };
+    render(
+      <PainelResumo
+        resumo={resumo}
+        parametrosFontes={null}
+        caminhoConfiguracaoTemplate={null}
+        onRevisarCasos={vi.fn()}
+        onVoltarParaEntrada={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Decisões tomadas nesta execução")).toBeInTheDocument();
+    expect(screen.getByText("Decisões anteriores reaplicadas")).toBeInTheDocument();
+    // 6 decididas + 1 adiada - 5 reaproveitadas = 2 tomadas nesta execução.
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+  });
+
+  it("Sprint D.1 — cobertura parcial: mostra o aviso persistente com a data-limite, mesmo com pendências", () => {
+    const resumo: ResumoRelatorioTransparencia = {
+      ...RESUMO_COM_PENDENCIAS,
+      cobertura_parcial: true,
+      cobertura_efisco_ate: "2026-07-31",
+    };
+    render(
+      <PainelResumo
+        resumo={resumo}
+        parametrosFontes={null}
+        caminhoConfiguracaoTemplate={null}
+        onRevisarCasos={vi.fn()}
+        onVoltarParaEntrada={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/pagamentos confirmados na Base E-Fisco somente até/)).toBeInTheDocument();
+    expect(screen.getByText("31/07/2026")).toBeInTheDocument();
+  });
+
+  it("Sprint D.1 — cobertura completa (padrão): nunca mostra o aviso de cobertura parcial", () => {
+    render(
+      <PainelResumo
+        resumo={RESUMO_COM_PENDENCIAS}
+        parametrosFontes={null}
+        caminhoConfiguracaoTemplate={null}
+        onRevisarCasos={vi.fn()}
+        onVoltarParaEntrada={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/pagamentos confirmados na Base E-Fisco somente até/)).not.toBeInTheDocument();
   });
 });
 

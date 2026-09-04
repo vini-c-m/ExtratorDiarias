@@ -5,7 +5,7 @@
 // API (nenhum mapeamento de nome no frontend).
 
 export interface ParametrosFontesRelatorioTransparencia {
-  caminho_base_ordens_bancarias: string;
+  caminho_base_efisco: string;
   caminho_controle_dimcac: string;
   ano_exercicio: number;
   mes_referencia: number;
@@ -18,6 +18,14 @@ export interface ParametrosFontesRelatorioTransparencia {
   // gerar (`useRelatorioTransparencia`/`useGerarRelatorioTransparencia`) —
   // nenhum estado paralelo.
   caminho_planilha_passagens?: string;
+  // Sprint D.1 (Plano de Migração E-Fisco, P2 — cobertura parcial) —
+  // `undefined`/`false` preserva EXATAMENTE o comportamento anterior:
+  // cobertura insuficiente da Base E-Fisco sempre bloqueia (backend devolve
+  // 422 estruturado, ver `CoberturaEfiscoInsuficienteError` em `services/
+  // api.ts`). `true` só depois de o usuário ver o aviso (data-limite
+  // comprovada) e escolher explicitamente "Gerar com cobertura parcial" —
+  // nunca enviado por padrão.
+  aceitar_cobertura_parcial?: boolean;
 }
 
 export interface OcorrenciaRelatorioTransparencia {
@@ -60,6 +68,13 @@ export interface RevisaoRelatorioTransparencia {
   decidido_em: string | null;
   observacao: string | null;
   obs_publicaveis: string[] | null;
+  // Sprint D.1 (QA manual — "decisão anterior reaplicada invisível") —
+  // `true` quando `autor`/`decidido_em` acima vêm de uma decisão tomada
+  // numa competência/execução DIFERENTE da que está sendo preparada agora,
+  // reaplicada porque a evidência continua válida (G06, nunca é preciso
+  // decidir de novo). A tela precisa deixar isso visível — nunca apresentar
+  // como se tivesse acabado de acontecer.
+  reaplicada_de_execucao_anterior: boolean;
 }
 
 export interface ResumoRelatorioTransparencia {
@@ -73,6 +88,23 @@ export interface ResumoRelatorioTransparencia {
   total_ocorrencias_nao_publicaveis: number;
   pode_gerar_relatorio: boolean;
   revisoes: RevisaoRelatorioTransparencia[];
+  // Plano de Migração E-Fisco, Sprint D — diagnóstico de qualidade da Base
+  // E-Fisco: nunca bloqueante por si só (um bloqueio real já vira 422 antes
+  // de existir um resumo, ver `CoberturaEfiscoInsuficienteError`) — só
+  // informativo.
+  avisos_qualidade_fonte: string[];
+  diagnosticos_qualidade_fonte: string[];
+  // Sprint D.1 — quantas das decisões DECIDIDA/ADIADA acima vêm de uma
+  // execução/competência anterior, reaplicada (ver `RevisaoRelatorioTransparencia.
+  // reaplicada_de_execucao_anterior`); nunca afeta `pode_gerar_relatorio`.
+  total_decisoes_reaproveitadas: number;
+  // Sprint D.1 (P2, cobertura parcial) — `true` quando esta preparação
+  // prosseguiu apesar de cobertura insuficiente (o usuário aceitou
+  // explicitamente); `cobertura_efisco_ate` é a última data de pagamento
+  // confirmada USADA — sempre visível enquanto `cobertura_parcial` for
+  // `true`, inclusive na tela imediatamente antes da geração.
+  cobertura_parcial: boolean;
+  cobertura_efisco_ate: string | null;
 }
 
 export interface ListaRevisoesRelatorioTransparencia {
@@ -115,7 +147,7 @@ export interface StatusArquivoFonteRelatorioTransparencia {
 }
 
 export interface StatusFontesRelatorioTransparencia {
-  base_ordens_bancarias: StatusArquivoFonteRelatorioTransparencia;
+  base_efisco: StatusArquivoFonteRelatorioTransparencia;
   controle_dimcac: StatusArquivoFonteRelatorioTransparencia;
   // Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — terceira fonte
   // persistida, mesmo mecanismo das duas acima.
@@ -124,7 +156,7 @@ export interface StatusFontesRelatorioTransparencia {
 
 export interface RequisicaoConfigurarFontesRelatorioTransparencia {
   caminho_configuracao_fontes: string;
-  caminho_base_ordens_bancarias?: string | null;
+  caminho_base_efisco?: string | null;
   caminho_controle_dimcac?: string | null;
   caminho_planilha_passagens?: string | null;
 }

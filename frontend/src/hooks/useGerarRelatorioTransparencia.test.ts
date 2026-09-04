@@ -24,7 +24,7 @@ const configurarMock = vi.mocked(configurarTemplateRelatorioTransparencia);
 const gerarMock = vi.mocked(gerarRelatorioTransparencia);
 
 const PARAMETROS_FONTES = {
-  caminho_base_ordens_bancarias: "C:\\fake\\ob.xlsx",
+  caminho_base_efisco: "C:\\fake\\ob.xlsx",
   caminho_controle_dimcac: "C:\\fake\\dimcac.xlsx",
   ano_exercicio: 2026,
   mes_referencia: 8,

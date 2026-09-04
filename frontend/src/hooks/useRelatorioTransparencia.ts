@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { mensagemAmigavel } from "../lib/mensagens";
 import {
+  CoberturaEfiscoInsuficienteError,
   prepararRelatorioTransparencia,
   registrarDecisaoRevisaoRelatorioTransparencia,
 } from "../services/api";
@@ -8,6 +9,17 @@ import type {
   ParametrosFontesRelatorioTransparencia,
   ResumoRelatorioTransparencia,
 } from "../types/relatorioTransparencia";
+
+/** Sprint D.1 (P2, cobertura parcial E-Fisco) — estado dedicado (fora da
+ * união discriminada de `FaseRelatorioTransparencia`): "preparar" falhou
+ * por um motivo ESTRUTURADO e acionável (não um erro genérico), então a
+ * Tela 1 continua na fase "entrada" mas com informação suficiente para
+ * oferecer as duas ações (atualizar a fonte / prosseguir explicitamente
+ * sob cobertura parcial) sem reparsear texto de erro. */
+export interface CoberturaInsuficienteInfo {
+  mensagem: string;
+  coberturaPagaAte: string | null;
+}
 
 /** Micro-sprint 3E.1 — máquina de estados do módulo "Relatório do Portal da
  * Transparência", mesmo padrão de `useGerarRelatorio.ts` (união
@@ -55,7 +67,19 @@ export interface EstadoUseRelatorioTransparencia {
    * `null` antes de qualquer "Preparar Relatório" bem-sucedido, ou depois
    * de "Selecionar outra competência ou fontes". */
   parametrosFontesAtuais: ParametrosFontesRelatorioTransparencia | null;
+  /** Sprint D.1 (P2) — preenchido quando o último "Preparar Relatório"
+   * falhou especificamente por cobertura insuficiente da Base E-Fisco;
+   * `null` em qualquer outro caso (sucesso, ou outro tipo de erro — esses
+   * continuam em `estado.erro`, mensagem genérica). Nunca os dois ao mesmo
+   * tempo (`preparar` limpa um antes de tentar setar o outro). */
+  coberturaInsuficiente: CoberturaInsuficienteInfo | null;
   preparar: (parametros: ParametrosFontesRelatorioTransparencia) => Promise<void>;
+  /** Sprint D.1 (P2) — reenvia exatamente os últimos parâmetros tentados
+   * (que falharam por cobertura insuficiente), com `aceitar_cobertura_
+   * parcial: true` — nunca pede ao usuário para preencher o formulário de
+   * novo. Não faz nada se não houver uma tentativa anterior de cobertura
+   * insuficiente em aberto. */
+  repetirComCoberturaParcial: () => Promise<void>;
   iniciarRevisao: () => void;
   confirmarDecisao: (
     identidadeGrupo: string,
@@ -78,6 +102,13 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
   const [parametrosFontesAtuais, setParametrosFontesAtuais] =
     useState<ParametrosFontesRelatorioTransparencia | null>(null);
 
+  // Sprint D.1 (P2) — os ÚLTIMOS parâmetros TENTADOS (sucesso ou falha),
+  // distinto de `parametrosFontesRef` (que só guarda os de uma preparação
+  // BEM-SUCEDIDA): "Gerar com cobertura parcial" precisa reenviar
+  // exatamente o que acabou de falhar, com um único campo a mais.
+  const ultimosParametrosTentadosRef = useRef<ParametrosFontesRelatorioTransparencia | null>(null);
+  const [coberturaInsuficiente, setCoberturaInsuficiente] = useState<CoberturaInsuficienteInfo | null>(null);
+
   // Trava síncrona contra reentrância (mesmo padrão de `processandoRef`/
   // `carregandoPreVisualizacaoRef` já homologado no app) — necessária
   // porque a fase não muda enquanto a chamada está em voo, então só o
@@ -91,12 +122,26 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
     if (preparandoRef.current) return;
     preparandoRef.current = true;
     setPreparando(true);
+    ultimosParametrosTentadosRef.current = parametros;
+    setCoberturaInsuficiente(null);
     try {
       const resumo = await prepararRelatorioTransparencia(parametros);
       parametrosFontesRef.current = parametros;
       setParametrosFontesAtuais(parametros);
       setEstado({ fase: "resumo", resumo });
     } catch (erroCaptura) {
+      // Sprint D.1 (P2) — cobertura insuficiente é um resultado ACIONÁVEL
+      // (duas ações claras), nunca um erro genérico de "entrada.erro": a
+      // tela precisa saber a data-limite comprovada para oferecer "Gerar
+      // com cobertura parcial" sem reparsear a mensagem.
+      if (erroCaptura instanceof CoberturaEfiscoInsuficienteError) {
+        setCoberturaInsuficiente({
+          mensagem: erroCaptura.message,
+          coberturaPagaAte: erroCaptura.coberturaPagaAte,
+        });
+        setEstado({ fase: "entrada", erro: null });
+        return;
+      }
       setEstado({
         fase: "entrada",
         erro: mensagemAmigavel(erroCaptura, "Não foi possível preparar o relatório."),
@@ -106,6 +151,11 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
       setPreparando(false);
     }
   }, []);
+
+  const repetirComCoberturaParcial = useCallback(async () => {
+    if (!ultimosParametrosTentadosRef.current) return;
+    await preparar({ ...ultimosParametrosTentadosRef.current, aceitar_cobertura_parcial: true });
+  }, [preparar]);
 
   const iniciarRevisao = useCallback(() => {
     setEstado((atual) => (atual.fase === "resumo" ? { fase: "revisao", resumo: atual.resumo, erro: null } : atual));
@@ -162,7 +212,9 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
 
   const voltarParaEntrada = useCallback(() => {
     parametrosFontesRef.current = null;
+    ultimosParametrosTentadosRef.current = null;
     setParametrosFontesAtuais(null);
+    setCoberturaInsuficiente(null);
     setEstado({ fase: "entrada", erro: null });
   }, []);
 
@@ -171,7 +223,9 @@ export function useRelatorioTransparencia(): EstadoUseRelatorioTransparencia {
     preparando,
     enviandoDecisao,
     parametrosFontesAtuais,
+    coberturaInsuficiente,
     preparar,
+    repetirComCoberturaParcial,
     iniciarRevisao,
     confirmarDecisao,
     adiarCaso,

@@ -38,6 +38,7 @@ function revisao(sobrescritas: Partial<RevisaoRelatorioTransparencia>): RevisaoR
     decidido_em: null,
     observacao: null,
     obs_publicaveis: null,
+    reaplicada_de_execucao_anterior: false,
     ...sobrescritas,
   };
 }
@@ -272,6 +273,95 @@ describe("HistoricoDecisoes", () => {
     await usuario.click(screen.getByRole("button", { name: "Ver decisão" }));
     // badge do estado no cabeçalho do detalhe + resumo "O que foi publicado".
     expect(screen.getAllByText("Adiada").length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Sprint D.1 (QA manual — "decisão anterior reaplicada invisível") — uma
+  // decisão reaproveitada de uma competência/execução anterior (G06,
+  // `reaplicada_de_execucao_anterior`) nunca pode aparecer como se tivesse
+  // sido decidida agora mesmo: precisa de sinalização própria, tanto na
+  // linha resumida quanto no detalhe completo.
+  it("Sprint D.1 — decisão reaplicada de execução anterior ganha o badge 'Reaplicada' na linha, além do estado", () => {
+    render(
+      <HistoricoDecisoes
+        revisoes={[
+          revisao({
+            estado: "decidida",
+            autor: "servidor.julho",
+            decidido_em: "2026-07-10T09:00:00Z",
+            obs_publicaveis: ["2026OB000241"],
+            reaplicada_de_execucao_anterior: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Decidida")).toBeInTheDocument();
+    expect(screen.getByText("Reaplicada")).toBeInTheDocument();
+  });
+
+  it("Sprint D.1 — decisão NÃO reaplicada (desta execução) nunca mostra o badge 'Reaplicada'", () => {
+    render(
+      <HistoricoDecisoes
+        revisoes={[
+          revisao({
+            estado: "decidida",
+            autor: "servidor.teste",
+            obs_publicaveis: ["2026OB000241"],
+            reaplicada_de_execucao_anterior: false,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("Reaplicada")).not.toBeInTheDocument();
+  });
+
+  it("Sprint D.1 — detalhe de uma decisão reaplicada mostra o aviso e rotula responsável/data como 'original', preservando o autor/data REAIS (nunca falsificados)", async () => {
+    const usuario = userEvent.setup();
+    render(
+      <HistoricoDecisoes
+        revisoes={[
+          revisao({
+            estado: "decidida",
+            autor: "servidor.julho",
+            decidido_em: "2026-07-10T09:00:00Z",
+            obs_publicaveis: ["2026OB000241"],
+            reaplicada_de_execucao_anterior: true,
+          }),
+        ]}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: "Ver decisão" }));
+    const dialogo = screen.getByRole("dialog", { name: "Detalhe da decisão" });
+    expect(within(dialogo).getByText("Decisão anterior reaplicada")).toBeInTheDocument();
+    expect(within(dialogo).getByText("Responsável original")).toBeInTheDocument();
+    expect(within(dialogo).getByText("Data/hora original")).toBeInTheDocument();
+    // Autor/data continuam os REAIS da decisão original — nunca substituídos
+    // por um valor genérico só porque foi reaplicada.
+    expect(within(dialogo).getByText("servidor.julho")).toBeInTheDocument();
+  });
+
+  it("Sprint D.1 — detalhe de uma decisão NÃO reaplicada usa os rótulos normais 'Responsável'/'Data/hora', sem o aviso", async () => {
+    const usuario = userEvent.setup();
+    render(
+      <HistoricoDecisoes
+        revisoes={[
+          revisao({
+            estado: "decidida",
+            autor: "servidor.teste",
+            obs_publicaveis: ["2026OB000241"],
+            reaplicada_de_execucao_anterior: false,
+          }),
+        ]}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: "Ver decisão" }));
+    const dialogo = screen.getByRole("dialog", { name: "Detalhe da decisão" });
+    expect(within(dialogo).getByText("Responsável")).toBeInTheDocument();
+    expect(within(dialogo).getByText("Data/hora")).toBeInTheDocument();
+    expect(within(dialogo).queryByText("Decisão anterior reaplicada")).not.toBeInTheDocument();
   });
 });
 

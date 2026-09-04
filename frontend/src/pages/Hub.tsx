@@ -94,7 +94,7 @@ export default function Hub({
       // que já é a cor semântica de aviso/revisão em todo o app.
       titulo: "Relatório do Portal da Transparência",
       descricao:
-        "Concilia a Base de Ordens Bancárias com o Controle DIMCAC e resolve pendências antes da geração do relatório.",
+        "Concilia a Base E-Fisco com o Controle DIMCAC e resolve pendências antes da geração do relatório.",
       icone: Landmark,
       cor: "indigo" as const,
       aoClicar: () => aoSelecionarRelatorioTransparencia?.(),

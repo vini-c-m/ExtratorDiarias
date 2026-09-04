@@ -70,7 +70,7 @@ export function useFontesRelatorioTransparencia(
     setStatusPlanilhaPassagens({ fase: "carregando" });
     try {
       const resultado = await obterStatusFontesRelatorioTransparencia(caminhoConfiguracaoFontes);
-      setStatusBaseOB(statusUIDoResultado(resultado.base_ordens_bancarias));
+      setStatusBaseOB(statusUIDoResultado(resultado.base_efisco));
       setStatusControleDimcac(statusUIDoResultado(resultado.controle_dimcac));
       setStatusPlanilhaPassagens(statusUIDoResultado(resultado.planilha_passagens));
     } catch (erroCaptura) {
@@ -96,13 +96,13 @@ export function useFontesRelatorioTransparencia(
       try {
         const resultado = await configurarFontesRelatorioTransparencia({
           caminho_configuracao_fontes: caminhoConfiguracaoFontes,
-          caminho_base_ordens_bancarias: caminho,
+          caminho_base_efisco: caminho,
         });
-        setStatusBaseOB(statusUIDoResultado(resultado.base_ordens_bancarias));
+        setStatusBaseOB(statusUIDoResultado(resultado.base_efisco));
       } catch (erroCaptura) {
         setStatusBaseOB({
           fase: "erro",
-          mensagem: mensagemAmigavel(erroCaptura, "Não foi possível salvar a Base de Ordens Bancárias selecionada."),
+          mensagem: mensagemAmigavel(erroCaptura, "Não foi possível salvar a Base E-Fisco selecionada."),
         });
       } finally {
         configurandoBaseOBRef.current = false;

@@ -1,7 +1,14 @@
 import { AlertTriangle, CheckCircle2, FolderOpen } from "lucide-react";
-import type { ChangeEvent } from "react";
+import { forwardRef, useImperativeHandle, useRef, type ChangeEvent } from "react";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import BotaoArquivo from "../ui/BotaoArquivo";
+
+/** Sprint D.1 (P2, cobertura parcial E-Fisco) — API imperativa exposta via
+ * `ref` para um pai abrir o diálogo nativo desta seleção sem duplicar
+ * mecanismo (ver `BotaoArquivo.tsx`). */
+export interface SeletorArquivoFonteHandle {
+  abrirSeletor: () => void;
+}
 
 // Micro-sprint 3E.1 — mostra só o NOME do arquivo, nunca o caminho absoluto
 // (item 3 da investigação UX 3E: "NÃO mostrar caminho absoluto
@@ -36,14 +43,16 @@ interface Props {
 // Electron. `accept` filtra o seletor do sistema operacional para o
 // formato esperado de cada fonte (mesmo critério de
 // `configuracao:selecionar-planilha`).
-export default function SeletorArquivoFonte({
-  rotulo,
-  caminhoSelecionado,
-  onSelecionar,
-  desabilitado = false,
-  indisponivel = false,
-  accept = ".xlsx",
-}: Props) {
+export default forwardRef<SeletorArquivoFonteHandle, Props>(function SeletorArquivoFonte(
+  { rotulo, caminhoSelecionado, onSelecionar, desabilitado = false, indisponivel = false, accept = ".xlsx" }: Props,
+  ref,
+) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    abrirSeletor: () => inputRef.current?.click(),
+  }));
+
   function aoEscolherArquivo(evento: ChangeEvent<HTMLInputElement>) {
     const arquivo = evento.target.files?.[0];
     if (!arquivo) return;
@@ -88,10 +97,16 @@ export default function SeletorArquivoFonte({
           </p>
         </div>
       </div>
-      <BotaoArquivo accept={accept} desabilitado={desabilitado} titulo={`Selecionar ${rotulo}`} onChange={aoEscolherArquivo}>
+      <BotaoArquivo
+        ref={inputRef}
+        accept={accept}
+        desabilitado={desabilitado}
+        titulo={`Selecionar ${rotulo}`}
+        onChange={aoEscolherArquivo}
+      >
         <FolderOpen aria-hidden="true" className="h-4 w-4" />
         {jaHouveSelecao ? "Alterar" : "Selecionar arquivo"}
       </BotaoArquivo>
     </div>
   );
-}
+});
