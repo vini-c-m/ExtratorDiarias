@@ -41,11 +41,12 @@ def _linha_ob(
     periodo_final=date(2026, 5, 10),
     trecho="RECIFE - GARANHUNS",
     valor=154.09,
-    data_ob="15/05/2026 09:00:00",
+    data_ob="31/05/2026 09:00:00",
     situacao="Paga",
     restituicao=None,
     duplicidade="Único",
     motivo="Motivo de teste",
+    nome="FULANO DE TAL",
 ):
     return [
         dh,
@@ -54,7 +55,7 @@ def _linha_ob(
         data_ob,
         "19.20.0001.0000001/2026-01",
         cpf,
-        "FULANO DE TAL",
+        nome,
         "Cargo de Teste",
         periodo_inicial,
         periodo_final,
@@ -68,13 +69,43 @@ def _linha_ob(
     ]
 
 
+# Plano de Migração E-Fisco, Sprint C — `_linha_ob` continua sendo a
+# especificação única por linha de teste (mesmo nome/assinatura, nenhum
+# call site precisou mudar); o que muda é que essa especificação agora
+# alimenta DOIS arquivos derivados (E-Fisco + Controle DIMCAC), nunca mais
+# um só "Base OB". Índices fixos abaixo espelham `_CABECALHO_BASE_OB`.
+_IDX_DH, _IDX_OB, _IDX_SITUACAO, _IDX_DATA_OB, _IDX_SEI, _IDX_CPF, _IDX_NOME = range(7)
+_IDX_CARGO, _IDX_PERIODO_INICIAL, _IDX_PERIODO_FINAL, _IDX_TRECHO = range(7, 11)
+_IDX_TRANSPORTE, _IDX_MOTIVO, _IDX_VALOR = range(11, 14)
+
+_CABECALHO_EFISCO = [
+    "Ordem Bancária", "Número do DH", "Situação", "Data da OB", "Data Pagto./Devol.",
+    "Valor Bruto", "Observação", "Código da Natureza de Despesa",
+    "Razão Social do Credor", "Número do documento do Credor",
+]
+
+
 def _criar_base_ob(caminho, linhas):
+    """Escreve a Base E-Fisco derivada das especificações `_linha_ob` —
+    nome da função preservado (histórico, ver `relatorio_transparencia_
+    service.py`) para não exigir mudança em nenhum dos 9 call sites deste
+    arquivo. Natureza sempre "33901400" (nunca precisa de evidência
+    textual, ramo intocado desde a Sprint A) e Situação vem exatamente do
+    spec — nunca forçada para "Paga", para que os testes que
+    deliberadamente usam outra Situação continuem testando o que sempre
+    testaram."""
     wb = Workbook()
     ws = wb.active
-    ws.title = "Sheet1"
-    ws.append(_CABECALHO_BASE_OB)
+    ws.title = "OB"
+    ws.append(_CABECALHO_EFISCO)
     for linha in linhas:
-        ws.append(linha)
+        data_ob_texto = str(linha[_IDX_DATA_OB]).split(" ")[0]
+        cpf_digitos = "".join(ch for ch in str(linha[_IDX_CPF]) if ch.isdigit())
+        ws.append([
+            linha[_IDX_OB], linha[_IDX_DH], linha[_IDX_SITUACAO], data_ob_texto, linha[_IDX_DATA_OB],
+            linha[_IDX_VALOR], "PAGTO TESTE ; UMA DIARIA PARCIAL", "33901400",
+            linha[_IDX_NOME], cpf_digitos,
+        ])
     wb.save(caminho)
 
 
@@ -82,6 +113,31 @@ def _criar_controle_vazio(caminho):
     wb = Workbook()
     ws = wb.active
     ws.title = "Controle de Diárias"
+    wb.save(caminho)
+
+
+def _criar_controle_das_linhas(caminho, linhas):
+    """Deriva o Controle DIMCAC das MESMAS especificações `_linha_ob` — no
+    pipeline produtivo atual (Sprint C), SEI/CARGO/PERÍODO/TRECHO/
+    TRANSPORTE/MOTIVO só existem na `OrdemBancaria` via este arquivo
+    (E-Fisco não tem essas colunas) — testes que dependem desses campos
+    (ex. RN07, que exige trecho+período não-None) precisam de um Controle
+    DIMCAC preenchido, não do `_criar_controle_vazio` que bastava quando
+    esses campos vinham direto da Base OB."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Controle de Diárias"
+    ws.append([
+        "DH", "SEI", "DOC ORIGEM", "CPF", "", "", "CARGO", "PERÍODO INICIAL",
+        "PERÍODO FINAL", "TRECHO", "TRANSPORTE", "MOTIVO", "",
+        "QUANT. DIÁRIA INTEGRAL", "QUANT. DIÁRIA PARCIAL", "VALOR DA DIÁRIA",
+    ])
+    for linha in linhas:
+        ws.append([
+            linha[_IDX_DH], linha[_IDX_SEI], "PJTESTE", linha[_IDX_CPF], None, None, linha[_IDX_CARGO],
+            linha[_IDX_PERIODO_INICIAL], linha[_IDX_PERIODO_FINAL], linha[_IDX_TRECHO], linha[_IDX_TRANSPORTE],
+            linha[_IDX_MOTIVO], None, None, None, linha[_IDX_VALOR],
+        ])
     wb.save(caminho)
 
 
@@ -129,10 +185,10 @@ def _preparar(tmp_path, linhas_ob, *, mes_referencia=5, caminho_decisoes=None):
     caminho_base_ob = tmp_path / "base_ob.xlsx"
     caminho_controle = tmp_path / "controle.xlsx"
     _criar_base_ob(caminho_base_ob, linhas_ob)
-    _criar_controle_vazio(caminho_controle)
+    _criar_controle_das_linhas(caminho_controle, linhas_ob)
     caminho_decisoes = caminho_decisoes or (tmp_path / "decisoes.json")
     return service.preparar_relatorio(
-        caminho_base_ordens_bancarias=str(caminho_base_ob),
+        caminho_base_efisco=str(caminho_base_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=mes_referencia,
@@ -223,18 +279,16 @@ def test_pode_gerar_relatorio_false_com_pendencia(tmp_path):
 def test_listar_revisoes(tmp_path):
     caminho_base_ob = tmp_path / "base_ob.xlsx"
     caminho_controle = tmp_path / "controle.xlsx"
-    _criar_base_ob(
-        caminho_base_ob,
-        [
-            _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
-            _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
-        ],
-    )
-    _criar_controle_vazio(caminho_controle)
+    linhas = [
+        _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+    ]
+    _criar_base_ob(caminho_base_ob, linhas)
+    _criar_controle_das_linhas(caminho_controle, linhas)
     caminho_decisoes = tmp_path / "decisoes.json"
 
     lista = service.listar_revisoes(
-        caminho_base_ordens_bancarias=str(caminho_base_ob),
+        caminho_base_efisco=str(caminho_base_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=5,
@@ -295,7 +349,7 @@ def test_publicar_todas(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -319,7 +373,7 @@ def test_publicar_subconjunto(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -347,7 +401,7 @@ def test_adiar(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -373,7 +427,7 @@ def test_decisao_atualiza_estado_e_todas_decididas_libera(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -392,14 +446,19 @@ def test_decisao_atualiza_estado_e_todas_decididas_libera(tmp_path):
 
 
 def test_decisao_reaproveitada_em_nova_preparacao(tmp_path):
+    # Linha extra só de COBERTURA (CPF/OB/DH próprios, sem duplicata — não
+    # entra em `revisoes`, só eleva a cobertura paga da fonte até agosto):
+    # este teste recarrega a MESMA fonte em `mes_referencia=8` (linha
+    # ~472), e o gate de qualidade E-Fisco bloquearia sem isso.
     linhas = [
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
         _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH999999", ob="2026OB999999", cpf=99999999999, valor=1.0, data_ob="31/08/2026 09:00:00"),
     ]
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -412,7 +471,7 @@ def test_decisao_reaproveitada_em_nova_preparacao(tmp_path):
 
     # "mês seguinte": mesma fonte, mesma decisão persistida
     resumo_de_novo = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=8,
@@ -434,7 +493,7 @@ def test_evidencia_alterada_vira_desatualizada(tmp_path):
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -453,7 +512,7 @@ def test_evidencia_alterada_vira_desatualizada(tmp_path):
     _criar_base_ob(caminho_ob, linhas_alteradas)
 
     resumo_depois = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -478,7 +537,7 @@ def test_evidencia_alterada_em_campo_nao_estrutural_vira_desatualizada(tmp_path)
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -489,14 +548,18 @@ def test_evidencia_alterada_em_campo_nao_estrutural_vira_desatualizada(tmp_path)
         autor="servidor.teste",
     )
 
+    # Plano de Migração E-Fisco, Sprint C — motivo passou a ser autoridade
+    # exclusiva do Controle DIMCAC (nunca mais da fonte financeira): a
+    # "mudança de fonte" que este teste simula precisa reescrever o
+    # Controle, não mais a Base E-Fisco (que continua idêntica).
     linhas_com_motivo_diferente = [
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19, motivo="Motivo B, revisado"),
         _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19, motivo="Motivo A"),
     ]
-    _criar_base_ob(caminho_ob, linhas_com_motivo_diferente)
+    _criar_controle_das_linhas(caminho_controle, linhas_com_motivo_diferente)
 
     resumo_depois = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -518,7 +581,7 @@ def test_grupo_inexistente_levanta_erro(tmp_path):
 
     with pytest.raises(service.RevisaoNaoEncontrada):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -544,7 +607,7 @@ def test_ob_fora_do_grupo_levanta_erro(tmp_path):
 
     with pytest.raises(service.DecisaoInvalida):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -569,7 +632,7 @@ def test_adiar_com_obs_selecionadas_e_payload_ambiguo(tmp_path):
 
     with pytest.raises(service.DecisaoInvalida):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -601,7 +664,7 @@ def test_publicar_zero_obs_sem_observacao_levanta_erro(tmp_path):
 
     with pytest.raises(service.DecisaoInvalida):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -619,7 +682,7 @@ def test_publicar_zero_obs_com_observacao_vazia_levanta_erro(tmp_path):
 
     with pytest.raises(service.DecisaoInvalida):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -637,7 +700,7 @@ def test_publicar_zero_obs_com_observacao_so_espacos_levanta_erro(tmp_path):
 
     with pytest.raises(service.DecisaoInvalida):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -654,7 +717,7 @@ def test_publicar_zero_obs_com_justificativa_valida_e_aceito(tmp_path):
     identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -675,7 +738,7 @@ def test_publicar_uma_ob_sem_observacao_e_aceito(tmp_path):
     identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -699,7 +762,7 @@ def test_publicar_subconjunto_sem_observacao_e_aceito(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -718,7 +781,7 @@ def test_publicar_todas_sem_observacao_e_aceito(tmp_path):
     identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -737,7 +800,7 @@ def test_adiar_sem_observacao_continua_aceito_nao_vira_obrigatorio(tmp_path):
     identidade, caminho_ob, caminho_controle, caminho_decisoes = _preparar_com_uma_revisao(tmp_path)
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -781,9 +844,9 @@ def test_base_ob_inexistente_levanta_erro(tmp_path):
     caminho_controle = tmp_path / "controle.xlsx"
     _criar_controle_vazio(caminho_controle)
 
-    with pytest.raises(service.BaseOBNaoEncontrada):
+    with pytest.raises(service.BaseEfiscoNaoEncontrada):
         service.preparar_relatorio(
-            caminho_base_ordens_bancarias=str(tmp_path / "nao_existe.xlsx"),
+            caminho_base_efisco=str(tmp_path / "nao_existe.xlsx"),
             caminho_controle_dimcac=str(caminho_controle),
             ano_exercicio=2026,
             mes_referencia=5,
@@ -797,7 +860,7 @@ def test_controle_inexistente_levanta_erro(tmp_path):
 
     with pytest.raises(service.ControleDimcacNaoEncontrado):
         service.preparar_relatorio(
-            caminho_base_ordens_bancarias=str(caminho_base_ob),
+            caminho_base_efisco=str(caminho_base_ob),
             caminho_controle_dimcac=str(tmp_path / "nao_existe.xlsx"),
             ano_exercicio=2026,
             mes_referencia=5,
@@ -818,9 +881,9 @@ def test_estrutura_base_ob_invalida_levanta_erro(tmp_path):
     caminho_controle = tmp_path / "controle.xlsx"
     _criar_controle_vazio(caminho_controle)
 
-    with pytest.raises(service.EstruturaBaseOBInvalida):
+    with pytest.raises(service.EstruturaBaseEfiscoInvalida):
         service.preparar_relatorio(
-            caminho_base_ordens_bancarias=str(caminho_base_ob),
+            caminho_base_efisco=str(caminho_base_ob),
             caminho_controle_dimcac=str(caminho_controle),
             ano_exercicio=2026,
             mes_referencia=5,
@@ -839,7 +902,7 @@ def test_estrutura_controle_invalida_levanta_erro(tmp_path):
 
     with pytest.raises(service.EstruturaControleInvalida):
         service.preparar_relatorio(
-            caminho_base_ordens_bancarias=str(caminho_base_ob),
+            caminho_base_efisco=str(caminho_base_ob),
             caminho_controle_dimcac=str(caminho_controle),
             ano_exercicio=2026,
             mes_referencia=5,
@@ -860,7 +923,7 @@ def test_decisao_de_um_grupo_nao_afeta_candidatos_normais_de_outro(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -896,7 +959,7 @@ def test_service_e_stateless_preparar_de_novo_funciona_igual(tmp_path):
     linhas = [_linha_ob(dh="2026DH000001", ob="2026OB000001")]
     resumo_1, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     resumo_2 = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -920,7 +983,7 @@ def test_preparar_nunca_persiste_estado_derivado(tmp_path):
 
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -941,14 +1004,18 @@ def test_preparar_nunca_persiste_estado_derivado(tmp_path):
 
 
 def test_adiar_continua_bloqueando_apos_nova_preparacao(tmp_path):
+    # Linha extra só de COBERTURA — mesmo motivo de
+    # `test_decisao_reaproveitada_em_nova_preparacao` (recarrega em
+    # `mes_referencia=8`).
     linhas = [
         _linha_ob(dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19),
         _linha_ob(dh="2026DH000003", ob="2026OB000003", cpf=22222222222, valor=308.19),
+        _linha_ob(dh="2026DH999999", ob="2026OB999999", cpf=99999999999, valor=1.0, data_ob="31/08/2026 09:00:00"),
     ]
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -959,7 +1026,7 @@ def test_adiar_continua_bloqueando_apos_nova_preparacao(tmp_path):
     )
 
     resumo_2 = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=8,
@@ -983,7 +1050,7 @@ def test_registrar_decisao_nao_loga_autor(tmp_path, caplog):
     autor_sentinela = "servidor.nome.super.especifico.para.o.teste"
     with caplog.at_level("INFO", logger="app.services.relatorio_transparencia_service"):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -1027,7 +1094,7 @@ def test_gerar_relatorio_xlsx_reconstroi_fontes_e_gera_arquivo(tmp_path):
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1053,7 +1120,7 @@ def test_gerar_relatorio_xlsx_bloqueia_com_revisao_pendente(tmp_path):
 
     with pytest.raises(service.RelatorioBloqueadoPorPendencias):
         service.gerar_relatorio_xlsx(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -1074,7 +1141,7 @@ def test_gerar_relatorio_xlsx_sem_template_configurado_levanta_erro_dedicado(tmp
 
     with pytest.raises(service.TemplateOficialIndisponivel):
         service.gerar_relatorio_xlsx(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -1096,7 +1163,7 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1110,7 +1177,7 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1136,10 +1203,19 @@ def test_gerar_relatorio_xlsx_nunca_confia_em_lista_de_obs_do_chamador(tmp_path)
 # selecionável (publicável) de forma independente.
 
 
-def _linhas_rn04_repeticao_fisica(motivo_a="Motivo da ocorrência A", motivo_b="Motivo da ocorrência B"):
+def _linhas_rn04_repeticao_fisica(nome_a="Nome da ocorrência A", nome_b="Nome da ocorrência B"):
+    # Micro-fechamento Sprint C — divergência migrada de MOTIVO (agora
+    # autoridade exclusiva do Controle DIMCAC, resolvida por DH — duas
+    # ocorrências físicas do mesmo DH recebem a MESMA lista de
+    # `RegistroControle` e, portanto, o mesmo motivo) para NOME/CREDOR
+    # (autoridade do E-Fisco, lido linha a linha — cada ocorrência física
+    # mantém seu próprio valor, exatamente como MOTIVO fazia na Base OB).
+    # Mesma propriedade testada (RN04/identidade por ocorrência/decisão
+    # persistida), campo divergente diferente — ver relatório da
+    # Sprint C (item 7) e do micro-fechamento.
     return [
-        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo=motivo_a),
-        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo=motivo_b),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", nome=nome_a),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", nome=nome_b),
     ]
 
 
@@ -1164,7 +1240,7 @@ def test_publicar_somente_ocorrencia_a_de_grupo_rn04(tmp_path):
     identidade_a = revisao.ocorrencias[0].identidade
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1188,7 +1264,7 @@ def test_publicar_somente_ocorrencia_b_de_grupo_rn04(tmp_path):
     identidade_b = revisao.ocorrencias[1].identidade
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1210,7 +1286,7 @@ def test_publicar_ambas_ocorrencias_fisicas_de_grupo_rn04(tmp_path):
     identidades = [oc.identidade for oc in revisao.ocorrencias]
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1236,7 +1312,7 @@ def test_ob_pura_e_rejeitada_para_grupo_rn04_com_repeticao_fisica(tmp_path):
 
     with pytest.raises(service.DecisaoInvalida):
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -1260,7 +1336,7 @@ def test_resumo_de_revisao_expoe_historico_da_decisao(tmp_path):
     assert resumo.revisoes[0].decidido_em is None
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1295,7 +1371,7 @@ def test_decisao_antiga_ambigua_de_grupo_rn04_migra_para_requer_nova_decisao(tmp
     identidade_a = revisao.ocorrencias[0].identidade
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1317,7 +1393,7 @@ def test_decisao_antiga_ambigua_de_grupo_rn04_migra_para_requer_nova_decisao(tmp
         json.dump(dados, arquivo)
 
     resumo_remontado = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1334,18 +1410,18 @@ def test_decisao_antiga_ambigua_de_grupo_rn04_migra_para_requer_nova_decisao(tmp
 
 
 def test_gerar_relatorio_xlsx_publica_exatamente_a_ocorrencia_fisica_escolhida(tmp_path):
-    """Fim a fim: publicar só a ocorrência B (pelo `motivo`, já que a OB é
+    """Fim a fim: publicar só a ocorrência B (pelo `nome`, já que a OB é
     igual nas duas linhas) — o XLSX final deve conter exatamente UMA linha
-    para esta OB, com o `motivo` da ocorrência escolhida, nunca da outra."""
+    para esta OB, com o `nome` da ocorrência escolhida, nunca da outra."""
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
-        tmp_path, _linhas_rn04_repeticao_fisica(motivo_a="Motivo da ocorrência A", motivo_b="Motivo da ocorrência B")
+        tmp_path, _linhas_rn04_repeticao_fisica(nome_a="Nome da ocorrência A", nome_b="Nome da ocorrência B")
     )
     revisao = resumo.revisoes[0]
     identidade_b = revisao.ocorrencias[1].identidade
-    assert revisao.ocorrencias[1].motivo == "Motivo da ocorrência B"
+    assert revisao.ocorrencias[1].beneficiario == "Nome da ocorrência B"
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1359,7 +1435,7 @@ def test_gerar_relatorio_xlsx_publica_exatamente_a_ocorrencia_fisica_escolhida(t
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1374,7 +1450,7 @@ def test_gerar_relatorio_xlsx_publica_exatamente_a_ocorrencia_fisica_escolhida(t
     wb = openpyxl.load_workbook(caminho_destino)
     ws = wb["Controle de Diárias"]
     assert ws["A7"].value == "2026OB000001"
-    assert ws["I7"].value == "Motivo da ocorrência B"
+    assert ws["C7"].value == "Nome da ocorrência B"
 
 
 # --- HOMO-RT-03: identidade estável ponta a ponta, à prova de reordenação -
@@ -1388,15 +1464,15 @@ def test_gerar_relatorio_xlsx_publica_exatamente_a_ocorrencia_fisica_escolhida(t
 def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_reexportar_linhas_trocadas(tmp_path):
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
         tmp_path,
-        _linhas_rn04_repeticao_fisica(motivo_a="Motivo da ocorrência A", motivo_b="Motivo da ocorrência B"),
+        _linhas_rn04_repeticao_fisica(nome_a="Nome da ocorrência A", nome_b="Nome da ocorrência B"),
     )
     revisao = resumo.revisoes[0]
-    # localiza a ocorrência pelo MOTIVO (conteúdo), nunca pela posição na lista
-    ocorrencia_a = next(oc for oc in revisao.ocorrencias if oc.motivo == "Motivo da ocorrência A")
+    # localiza a ocorrência pelo NOME (conteúdo), nunca pela posição na lista
+    ocorrencia_a = next(oc for oc in revisao.ocorrencias if oc.beneficiario == "Nome da ocorrência A")
     identidade_a = ocorrencia_a.identidade
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1412,13 +1488,13 @@ def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_reexportar_linhas_trocad
     _criar_base_ob(
         caminho_ob,
         [
-            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo da ocorrência B"),
-            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo da ocorrência A"),
+            _linha_ob(dh="2026DH000001", ob="2026OB000001", nome="Nome da ocorrência B"),
+            _linha_ob(dh="2026DH000001", ob="2026OB000001", nome="Nome da ocorrência A"),
         ],
     )
 
     resumo_reordenado = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1433,7 +1509,7 @@ def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_reexportar_linhas_trocad
     caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = str(tmp_path / "saida_reordenada.xlsx")
     resultado_xlsx = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1446,59 +1522,36 @@ def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_reexportar_linhas_trocad
 
     wb = openpyxl.load_workbook(caminho_destino)
     ws = wb["Controle de Diárias"]
-    assert ws["I7"].value == "Motivo da ocorrência A"  # NUNCA "Motivo da ocorrência B"
+    assert ws["C7"].value == "Nome da ocorrência A"  # NUNCA "Nome da ocorrência B"
 
 
-# --- HOMO-RT-04: canonicalização estrutural, fim a fim via arquivo real ---
-# `\x1f`/`\x1e` (o contraexemplo exato do Codex) são bytes de controle
-# ILEGAIS em XML — openpyxl rejeita ao gravar (`IllegalCharacterError`),
-# então uma planilha real nunca poderia carregá-los. Mas outros
-# caracteres "perigosos" para um formato ingênuo por separador — vírgula,
-# dois-pontos, aspas, barra invertida, quebra de linha — são texto válido
-# em qualquer célula (MOTIVO/SITUAÇÃO são campos livres). Este teste prova
-# a correção com um desses casos realistas, através do pipeline real de
-# leitura/gravação, não só em objetos de domínio construídos à mão.
-
-
-def test_canonicalizacao_nunca_colide_com_quebra_de_linha_em_motivo_via_planilha_real(tmp_path):
-    resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
-        tmp_path,
-        [
-            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Primeira linha\nSegunda parte", situacao="Paga"),
-            _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Primeira linha", situacao="Segunda parte\nPaga"),
-        ],
-    )
-
-    revisao = resumo.revisoes[0]
-    assert revisao.regra == "RN04"
-    identidades = {oc.identidade for oc in revisao.ocorrencias}
-    assert len(identidades) == 2  # nunca colidem, mesmo com o texto "redistribuído" entre os campos
-
-    identidade_primeira = next(
-        oc.identidade for oc in revisao.ocorrencias if oc.motivo == "Primeira linha\nSegunda parte"
-    )
-    service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
-        caminho_controle_dimcac=caminho_controle,
-        ano_exercicio=2026,
-        mes_referencia=5,
-        caminho_decisoes=caminho_decisoes,
-        identidade_grupo=revisao.identidade_grupo,
-        acao=AcaoDecisao.PUBLICAR,
-        obs_selecionadas=[identidade_primeira],
-        autor="servidor.teste",
-    )
-
-    resumo_apos = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
-        caminho_controle_dimcac=caminho_controle,
-        ano_exercicio=2026,
-        mes_referencia=5,
-        caminho_decisoes=caminho_decisoes,
-    )
-    assert resumo_apos.revisoes[0].estado == "decidida"
-    assert resumo_apos.total_candidatos_normais == 1
-    assert resumo_apos.total_ocorrencias_nao_publicaveis == 1
+# --- HOMO-RT-04: canonicalização estrutural — nota de remoção ------------
+# Micro-fechamento Sprint C (Categoria A — teste obsoleto REMOVIDO, não
+# skip permanente): `test_canonicalizacao_nunca_colide_com_quebra_de_linha_
+# em_motivo_via_planilha_real` provava, ponta a ponta via arquivo real, que
+# texto "redistribuído" entre MOTIVO e SITUAÇÃO na mesma linha física da
+# Base OB nunca colidia no fingerprint. As DUAS premissas que sustentavam
+# esse cenário deixaram de existir na arquitetura E-Fisco: (1) motivo é
+# resolvido por DH via Controle DIMCAC (nunca mais por linha física da
+# fonte financeira — duas ocorrências do mesmo DH sempre compartilham o
+# mesmo motivo); (2) Situação passou de texto livre comparável para um
+# filtro de igualdade EXATA ("Paga") em `diaria_elegivel` — um valor como
+# "Segunda parte\nPaga" nem chega a virar diária, é excluído no filtro,
+# antes mesmo de chegar ao fingerprint. Não existe mais, na E-Fisco, um
+# PAR de campos livres na mesma linha física para reproduzir esta
+# adversarialidade especificamente.
+#
+# A garantia em si (HOMO-RT-04 — canonicalização nunca colide por
+# redistribuição de texto entre campos, qualquer caractere perigoso,
+# inclusive quebra de linha) permanece 100% coberta, exaustivamente e sem
+# nenhuma alteração desta Sprint, em `test_decisao.py::
+# test_canonicalizacao_nunca_confunde_fronteira_de_campo_com_conteudo`
+# (parametrizado com 8 caracteres perigosos, incluindo `\n` — id
+# "quebra-linha") — construída diretamente sobre `OcorrenciaFinanceira`
+# (nível de domínio), nunca dependeu do formato da fonte financeira, e por
+# isso não foi afetada pela migração. Remover este teste específico não
+# reduz a cobertura da propriedade — só remove uma segunda confirmação,
+# via I/O real, de um vetor de campos que não existe mais.
 
 
 # --- Micro-sprint "Duplicatas idênticas" — fim a fim via fontes reais -----
@@ -1517,11 +1570,14 @@ def test_canonicalizacao_nunca_colide_com_quebra_de_linha_em_motivo_via_planilha
 # por todo o resto desta suíte para casos que não nascem do motor real).
 
 
-def _linhas_duplicata_identica_mais_divergente(motivo_divergente="Motivo B — divergente"):
+def _linhas_duplicata_identica_mais_divergente(nome_divergente="Nome B — divergente"):
+    # Micro-fechamento Sprint C — divergência migrada de MOTIVO para
+    # NOME/CREDOR (autoridade do E-Fisco, por linha física) — mesma nota
+    # de `_linhas_rn04_repeticao_fisica` acima.
     return [
         _linha_ob(dh="2026DH000001", ob="2026OB000001"),  # A
         _linha_ob(dh="2026DH000001", ob="2026OB000001"),  # A — idêntica à primeira em todo campo material
-        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo=motivo_divergente),  # B — diverge só em motivo
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", nome=nome_divergente),  # B — diverge só em nome
     ]
 
 
@@ -1548,7 +1604,7 @@ def test_publicar_classe_identica_e_a_divergente_no_grupo_misto(tmp_path):
     identidade_b = next(i for i in identidades if identidades.count(i) == 1)
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1573,7 +1629,7 @@ def test_publicar_somente_a_classe_identica_no_grupo_misto(tmp_path):
     identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1595,7 +1651,7 @@ def test_nao_publicar_nenhuma_no_grupo_misto(tmp_path):
     identidade_grupo_alvo = resumo.revisoes[0].identidade_grupo
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1620,7 +1676,7 @@ def test_adiar_grupo_misto_bloqueia(tmp_path):
     revisao = resumo.revisoes[0]
 
     atualizado = service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1644,7 +1700,7 @@ def test_publicar_1_de_n_identicas_sobrevive_a_reload(tmp_path):
     identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1656,7 +1712,7 @@ def test_publicar_1_de_n_identicas_sobrevive_a_reload(tmp_path):
     )
 
     resumo_recarregado = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1675,7 +1731,7 @@ def test_publicar_zero_sobrevive_a_reload(tmp_path):
     revisao = resumo.revisoes[0]
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1688,7 +1744,7 @@ def test_publicar_zero_sobrevive_a_reload(tmp_path):
     )
 
     resumo_recarregado = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1718,7 +1774,7 @@ def test_decisao_antiga_com_chave_de_grupo_legada_e_selecao_especifica_exige_nov
     identidade_classe_a = next(i for i in identidades if identidades.count(i) == 2)
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1742,7 +1798,7 @@ def test_decisao_antiga_com_chave_de_grupo_legada_e_selecao_especifica_exige_nov
         json.dump(dados, arquivo)
 
     resumo_remontado = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1767,7 +1823,7 @@ def test_decisao_antiga_com_chave_de_grupo_legada_e_zero_continua_valida(tmp_pat
     revisao = resumo.revisoes[0]
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1792,7 +1848,7 @@ def test_decisao_antiga_com_chave_de_grupo_legada_e_zero_continua_valida(tmp_pat
         json.dump(dados, arquivo)
 
     resumo_remontado = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1810,7 +1866,7 @@ def test_xlsx_publica_exatamente_uma_linha_para_classe_identica(tmp_path):
     linhas no relatório final — nunca 3, mesmo havendo 3 ocorrências
     físicas no grupo."""
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(
-        tmp_path, _linhas_duplicata_identica_mais_divergente(motivo_divergente="Motivo B — divergente")
+        tmp_path, _linhas_duplicata_identica_mais_divergente(nome_divergente="Nome B — divergente")
     )
     revisao = resumo.revisoes[0]
     identidades = [oc.identidade for oc in revisao.ocorrencias]
@@ -1818,7 +1874,7 @@ def test_xlsx_publica_exatamente_uma_linha_para_classe_identica(tmp_path):
     identidade_b = next(i for i in identidades if identidades.count(i) == 1)
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1832,7 +1888,7 @@ def test_xlsx_publica_exatamente_uma_linha_para_classe_identica(tmp_path):
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1846,9 +1902,9 @@ def test_xlsx_publica_exatamente_uma_linha_para_classe_identica(tmp_path):
 
     wb = openpyxl.load_workbook(caminho_destino)
     ws = wb["Controle de Diárias"]
-    valores_publicados = {ws["I7"].value, ws["I8"].value}
-    assert valores_publicados == {"Motivo de teste", "Motivo B — divergente"}
-    assert ws["I9"].value is None  # nunca uma 3ª linha
+    valores_publicados = {ws["C7"].value, ws["C8"].value}
+    assert valores_publicados == {"FULANO DE TAL", "Nome B — divergente"}
+    assert ws["C9"].value is None  # nunca uma 3ª linha
 
 
 def test_xlsx_nenhuma_selecionada_gera_zero_linhas(tmp_path):
@@ -1858,7 +1914,7 @@ def test_xlsx_nenhuma_selecionada_gera_zero_linhas(tmp_path):
     revisao = resumo.revisoes[0]
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1873,7 +1929,7 @@ def test_xlsx_nenhuma_selecionada_gera_zero_linhas(tmp_path):
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1900,7 +1956,7 @@ def test_xlsx_nenhuma_selecionada_gera_zero_linhas(tmp_path):
 
 
 def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp_path):
-    linhas_ob = _linhas_rn04_repeticao_fisica(motivo_a="Motivo A", motivo_b="Motivo B")
+    linhas_ob = _linhas_rn04_repeticao_fisica(nome_a="Nome A", nome_b="Nome B")
     caminho_ob = tmp_path / "base_ob.xlsx"
     caminho_controle = tmp_path / "controle.xlsx"
     caminho_decisoes = tmp_path / "decisoes.json"
@@ -1908,7 +1964,7 @@ def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp
     _criar_controle_com_linha(caminho_controle, dh="2026DH000001", cargo="ANALISTA JUDICIÁRIO")
 
     resumo = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_base_efisco=str(caminho_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1916,10 +1972,10 @@ def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp
     )
     revisao = resumo.revisoes[0]
     assert revisao.regra == "RN04"
-    identidade_a = next(oc.identidade for oc in revisao.ocorrencias if oc.motivo == "Motivo A")
+    identidade_a = next(oc.identidade for oc in revisao.ocorrencias if oc.beneficiario == "Nome A")
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_base_efisco=str(caminho_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1935,7 +1991,7 @@ def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp
     _criar_controle_com_linha(caminho_controle, dh="2026DH000001", cargo="TÉCNICO JUDICIÁRIO")
 
     resumo_apos_mudanca_no_controle = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_base_efisco=str(caminho_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1950,9 +2006,9 @@ def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp
     # então a identidade por ocorrência também muda) libera a geração, e o
     # XLSX final só então reflete o Cargo NOVO.
     revisao_reatualizada = resumo_apos_mudanca_no_controle.revisoes[0]
-    nova_identidade_a = next(oc.identidade for oc in revisao_reatualizada.ocorrencias if oc.motivo == "Motivo A")
+    nova_identidade_a = next(oc.identidade for oc in revisao_reatualizada.ocorrencias if oc.beneficiario == "Nome A")
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_base_efisco=str(caminho_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=5,
@@ -1966,7 +2022,7 @@ def test_decisao_especifica_vira_desatualizada_quando_cargo_do_controle_muda(tmp
     caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_destino = str(tmp_path / "saida.xlsx")
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=str(caminho_ob),
+        caminho_base_efisco=str(caminho_ob),
         caminho_controle_dimcac=str(caminho_controle),
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2007,7 +2063,7 @@ def test_gerar_relatorio_xlsx_sem_planilha_passagens_coluna_j_vazia(tmp_path):
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2031,7 +2087,7 @@ def test_gerar_relatorio_xlsx_com_planilha_passagens_publica_valor_real(tmp_path
     _criar_planilha_passagens_ods(caminho_passagens, [["2026OB000042", "AVIÃO", 1657.76]])
 
     service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2056,7 +2112,7 @@ def test_gerar_relatorio_xlsx_ob_sem_correspondencia_na_planilha_fica_vazia(tmp_
     _criar_planilha_passagens_ods(caminho_passagens, [["2026OB999999", "AVIÃO", 500.0]])
 
     service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2083,7 +2139,7 @@ def test_gerar_relatorio_xlsx_estado_invalido_nao_bloqueia_via_service(tmp_path)
     _criar_planilha_passagens_ods(caminho_passagens, [["2026OB000042", "CARRO", "#VALOR!"]])
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2126,7 +2182,7 @@ def test_preparar_relatorio_com_planilha_passagens_nao_muda_rn01_rn07(tmp_path):
         [["2026OB000001", "AVIÃO", 100.0], ["2026OB000002", "CARRO", "-"]],
     )
     resumo_com = service.preparar_relatorio(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2148,14 +2204,18 @@ def test_preparar_relatorio_com_planilha_passagens_nao_muda_rn01_rn07(tmp_path):
 
 def _linhas_rn04_tres_fisicas_mesma_ob():
     """[A,A,B] — 3 linhas físicas da MESMA OB/DH: as duas primeiras são
-    byte-idênticas entre si (mesmo `motivo`), a terceira diverge — único
+    byte-idênticas entre si (mesmo `nome`), a terceira diverge — único
     cenário real em que `_resolver_repeticao_fisica` produz uma
     `RevisaoNecessaria` RN04 com 3 ocorrências (achado do Sprint 4:
-    Categoria B só é alcançável com 3+ repetições físicas, nunca com 2)."""
+    Categoria B só é alcançável com 3+ repetições físicas, nunca com 2).
+
+    Micro-fechamento Sprint C — divergência migrada de MOTIVO para
+    NOME/CREDOR (autoridade do E-Fisco, por linha física) — mesma nota de
+    `_linhas_rn04_repeticao_fisica` acima."""
     return [
-        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo idêntico"),
-        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo idêntico"),
-        _linha_ob(dh="2026DH000001", ob="2026OB000001", motivo="Motivo DIFERENTE"),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", nome="Nome idêntico"),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", nome="Nome idêntico"),
+        _linha_ob(dh="2026DH000001", ob="2026OB000001", nome="Nome DIFERENTE"),
     ]
 
 
@@ -2168,7 +2228,7 @@ def test_gerar_relatorio_xlsx_com_nao_publicadas_gera_dois_arquivos(tmp_path):
     identidade = resumo.revisoes[0].identidade_grupo
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2182,7 +2242,7 @@ def test_gerar_relatorio_xlsx_com_nao_publicadas_gera_dois_arquivos(tmp_path):
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2219,7 +2279,7 @@ def test_gerar_relatorio_xlsx_sem_nao_publicadas_nao_cria_arquivo_operacional(tm
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2249,7 +2309,7 @@ def test_gerar_relatorio_xlsx_publicar_zero_todas_na_operacional_categoria_a(tmp
     identidade = resumo.revisoes[0].identidade_grupo
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2264,7 +2324,7 @@ def test_gerar_relatorio_xlsx_publicar_zero_todas_na_operacional_categoria_a(tmp
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2295,7 +2355,7 @@ def test_gerar_relatorio_xlsx_duplicata_fisica_vira_categoria_b_na_operacional(t
     identidade_a1 = revisao.ocorrencias[0].identidade  # uma das duas físicas idênticas
 
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2309,7 +2369,7 @@ def test_gerar_relatorio_xlsx_duplicata_fisica_vira_categoria_b_na_operacional(t
     caminho_destino = str(tmp_path / "saida.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2340,7 +2400,7 @@ def test_gerar_relatorio_xlsx_falha_no_operacional_retorna_estado_parcial(tmp_pa
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2359,7 +2419,7 @@ def test_gerar_relatorio_xlsx_falha_no_operacional_retorna_estado_parcial(tmp_pa
     monkeypatch.setattr(service, "gerar_xlsx_diarias_nao_publicadas", _levanta)
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2395,7 +2455,7 @@ def test_gerar_relatorio_xlsx_operacional_preexistente_avanca_versao_automaticam
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas)
     identidade = resumo.revisoes[0].identidade_grupo
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2412,7 +2472,7 @@ def test_gerar_relatorio_xlsx_operacional_preexistente_avanca_versao_automaticam
     conteudo_operacional_preexistente = open(caminho_operacional_preexistente, "rb").read()
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2447,7 +2507,7 @@ def test_gerar_relatorio_xlsx_bloqueado_nao_cria_nenhum_arquivo(tmp_path):
 
     with pytest.raises(service.RelatorioBloqueadoPorPendencias):
         service.gerar_relatorio_xlsx(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -2486,7 +2546,7 @@ def test_gerar_relatorio_xlsx_passagem_preservada_no_oficial_e_operacional(tmp_p
     # registrada sem essa fonte fica DESATUALIZADA ao gerar com ela ativa
     # (comportamento correto e já homologado, não um bug deste teste).
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2499,7 +2559,7 @@ def test_gerar_relatorio_xlsx_passagem_preservada_no_oficial_e_operacional(tmp_p
     )
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2641,7 +2701,7 @@ def _preparar_e_decidir_um_grupo_nao_publicado(tmp_path, *, mes_referencia=5):
     ]
     resumo, caminho_ob, caminho_controle, caminho_decisoes = _preparar(tmp_path, linhas, mes_referencia=mes_referencia)
     service.registrar_decisao_revisao(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=mes_referencia,
@@ -2664,7 +2724,7 @@ def test_versionamento_automatico_1_primeira_geracao_sem_colisao(tmp_path):
     caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2689,7 +2749,7 @@ def test_versionamento_automatico_2_segunda_geracao_ponto_dois_sem_renomear(tmp_
     caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
 
     kwargs = dict(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2724,7 +2784,7 @@ def test_versionamento_automatico_3_terceira_geracao_ponto_tres(tmp_path):
     caminho_configuracao_template = _configurar_template(tmp_path)
     caminho_preferido = str(tmp_path / "Relatório de Diárias - Portal da Transparência - Maio 2026.xlsx")
     kwargs = dict(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2756,7 +2816,7 @@ def test_versionamento_automatico_4_somente_oficial_existente_pula_versao_inteir
     Workbook().save(caminho_preferido)
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2784,7 +2844,7 @@ def test_versionamento_automatico_5_somente_operacional_existente_pula_versao_in
     Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2814,7 +2874,7 @@ def test_versionamento_automatico_6_ambos_existentes_pula_versao_inteira(tmp_pat
     Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.xlsx"))
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2846,7 +2906,7 @@ def test_versionamento_automatico_7_lacuna_de_versoes_preenchida(tmp_path):
     Workbook().save(str(tmp_path / "Diarias_Nao_Publicadas_Maio_2026.3.xlsx"))
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2877,7 +2937,7 @@ def test_versionamento_automatico_8_zero_nao_publicadas_oficial_ainda_versiona(t
     Workbook().save(caminho_preferido)  # v1 do oficial já existe (de uma geração anterior)
 
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -2921,7 +2981,7 @@ def test_versionamento_automatico_9_concorrencia_cada_chamada_recebe_uma_versao_
         barreira.wait(timeout=15)
         try:
             resultados[indice] = service.gerar_relatorio_xlsx(
-                caminho_base_ordens_bancarias=caminho_ob,
+                caminho_base_efisco=caminho_ob,
                 caminho_controle_dimcac=caminho_controle,
                 ano_exercicio=2026,
                 mes_referencia=5,
@@ -2976,7 +3036,7 @@ def test_versionamento_automatico_oito_nao_publicadas_com_decisoes_ja_persistida
 
     for revisao in resumo.revisoes:
         service.registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,
@@ -2994,7 +3054,7 @@ def test_versionamento_automatico_oito_nao_publicadas_com_decisoes_ja_persistida
     # Chamada de geração completamente independente da(s) chamada(s) de
     # decisão acima — nenhum estado em memória é compartilhado entre elas.
     resultado = service.gerar_relatorio_xlsx(
-        caminho_base_ordens_bancarias=caminho_ob,
+        caminho_base_efisco=caminho_ob,
         caminho_controle_dimcac=caminho_controle,
         ano_exercicio=2026,
         mes_referencia=5,
@@ -3063,7 +3123,7 @@ def test_permission_error_persistente_nao_entra_em_loop_de_versionamento(tmp_pat
 
     with pytest.raises(service.DestinoInacessivel):
         service.gerar_relatorio_xlsx(
-            caminho_base_ordens_bancarias=caminho_ob,
+            caminho_base_efisco=caminho_ob,
             caminho_controle_dimcac=caminho_controle,
             ano_exercicio=2026,
             mes_referencia=5,

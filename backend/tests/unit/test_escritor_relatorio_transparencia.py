@@ -11,6 +11,7 @@ from datetime import date, datetime
 
 import openpyxl
 import pytest
+from openpyxl.styles import PatternFill
 
 from app.domain.entities.linha_passagem import EstadoPassagem, LinhaPassagem
 from app.domain.entities.ordem_bancaria import OrdemBancaria
@@ -36,6 +37,7 @@ from app.planilha.escritor_relatorio_transparencia import (
     GeracaoConcorrenteEmAndamento,
     RelatorioBloqueadoPorPendencias,
     TemplateEstruturalmenteInvalido,
+    _COLUNAS_DADOS,
     _NOME_ABA_DADOS,
     _NUMBER_FORMAT_VALOR_PASSAGEM,
     _PRIMEIRA_LINHA_DADOS,
@@ -1369,3 +1371,233 @@ def test_nome_publicado_e_escrito_de_fato_no_xlsx_gerado(tmp_path, template):
     wb = openpyxl.load_workbook(destino)
     ws = wb[_NOME_ABA_DADOS]
     assert ws[f"C{_PRIMEIRA_LINHA_DADOS}"].value == "JOÃO CARLOS ALBUQUERQUE DE OLIVEIRA"
+
+
+# ============================================================================
+# Sprint D.1 (Plano de Migração E-Fisco) — QA achado real: no relatório de
+# Maio/2026, a célula J833 apareceu com um preenchimento (fill) amarelo sem
+# nenhum significado no relatório — auditoria confirmou ser a ÚNICA célula
+# realmente anômala em toda a área de dados. A área de dados nunca prevê
+# destaque de nenhuma cor (só cabeçalho/subcabeçalho o têm, legitimamente,
+# fora desta área). Corrigido de forma GERAL (`_SEM_PREENCHIMENTO`, ver
+# `escritor_relatorio_transparencia.py`) — nunca corrigindo J833
+# especificamente, para cobrir qualquer célula com a mesma anomalia
+# introduzida em qualquer geração passada, sem precisar identificá-la uma a
+# uma. Roda para TODA célula de dados (A-M), em TODA linha de dados — nova
+# ou preexistente — a cada geração.
+# ============================================================================
+
+_FILL_AMARELO_ANOMALO = PatternFill(fill_type="solid", fgColor="FFFFFF00")
+
+
+def test_fill_amarelo_preexistente_e_normalizado_na_regeracao(tmp_path, template):
+    """Reprodução direta do achado do QA: uma célula de dados PREEXISTENTE
+    (dentro do tamanho original do template, nunca passa por `_copiar_
+    estilo_linha`) chega com um fill amarelo — exatamente como J833 no
+    relatório real. A regeração precisa normalizar para NENHUM
+    preenchimento, mesmo sem nenhuma linha ser inserida/removida (3
+    candidatos == 3 linhas do template, mesmo cenário do teste homólogo de
+    `number_format` acima)."""
+    linha_preexistente = _PRIMEIRA_LINHA_DADOS + 1  # linha 8, dentro do template original (7-9)
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{linha_preexistente}"].fill = _FILL_AMARELO_ANOMALO
+    wb.save(template)
+
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001"),
+        _candidato(ob="2026OB000002", dh="2026DH000002"),
+        _candidato(ob="2026OB000003", dh="2026DH000003"),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    celula = wb_g[_NOME_ABA_DADOS][f"J{linha_preexistente}"]
+    assert celula.fill.fill_type is None
+
+
+@pytest.mark.parametrize("coluna", list(_COLUNAS_DADOS))
+def test_fill_anomalo_normalizado_em_cada_coluna_de_dados(tmp_path, template, coluna):
+    linha_preexistente = _PRIMEIRA_LINHA_DADOS + 1
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"{coluna}{linha_preexistente}"].fill = _FILL_AMARELO_ANOMALO
+    wb.save(template)
+
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001"),
+        _candidato(ob="2026OB000002", dh="2026DH000002"),
+        _candidato(ob="2026OB000003", dh="2026DH000003"),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    assert wb_g[_NOME_ABA_DADOS][f"{coluna}{linha_preexistente}"].fill.fill_type is None
+
+
+def test_fill_anomalo_na_linha_modelo_nunca_e_herdado_por_linha_nova(tmp_path, template):
+    """Cenário espelho do teste homólogo de `number_format`: a linha-modelo
+    (linha 7, fonte de `_copiar_estilo_linha` para toda linha além do
+    tamanho original do template) está com fill amarelo. Uma linha NOVA
+    (além das 3 originais) precisa sair SEM preenchimento mesmo assim — a
+    normalização roda depois da cópia de estilo, nunca depende dela."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    ws[f"J{_PRIMEIRA_LINHA_DADOS}"].fill = _FILL_AMARELO_ANOMALO
+    wb.save(template)
+
+    candidatos = [_candidato(ob=f"2026OB{i:06d}", dh=f"2026DH{i:06d}") for i in range(1, 6)]
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    linha_nova = _PRIMEIRA_LINHA_DADOS + 4  # 5ª linha de dados, além do template original
+    assert wb_g[_NOME_ABA_DADOS][f"A{linha_nova}"].value == "2026OB000005"
+    assert wb_g[_NOME_ABA_DADOS][f"J{linha_nova}"].fill.fill_type is None
+
+
+def test_normalizacao_de_fill_preserva_number_format_fonte_borda_alinhamento(tmp_path, template):
+    """A correção toca SÓ `.fill` — fonte, borda, alinhamento e
+    number_format (inclusive formato de data e monetário) de uma célula com
+    fill anômalo continuam exatamente os mesmos depois da normalização."""
+    linha_preexistente = _PRIMEIRA_LINHA_DADOS + 1
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    celula_m = ws[f"M{linha_preexistente}"]
+    # `repr()` em vez de `==` direto: recarregado do disco, `.font`/`.border`/
+    # `.alignment` podem vir como um objeto interno do openpyxl distinto (mas
+    # com os MESMOS valores) do devolvido antes de salvar — `repr()` compara
+    # os valores de verdade, sem depender de `__eq__` entre esses tipos.
+    fonte_original = repr(celula_m.font)
+    borda_original = repr(celula_m.border)
+    alinhamento_original = repr(celula_m.alignment)
+    formato_original_m = celula_m.number_format
+    formato_original_e = ws[f"E{linha_preexistente}"].number_format
+    ws[f"M{linha_preexistente}"].fill = _FILL_AMARELO_ANOMALO
+    wb.save(template)
+
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001"),
+        _candidato(ob="2026OB000002", dh="2026DH000002"),
+        _candidato(ob="2026OB000003", dh="2026DH000003"),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    ws_g = wb_g[_NOME_ABA_DADOS]
+    celula_m_g = ws_g[f"M{linha_preexistente}"]
+    assert celula_m_g.fill.fill_type is None
+    assert repr(celula_m_g.font) == fonte_original
+    assert repr(celula_m_g.border) == borda_original
+    assert repr(celula_m_g.alignment) == alinhamento_original
+    assert celula_m_g.number_format == formato_original_m == '"R$ "#,##0.00'
+    assert ws_g[f"E{linha_preexistente}"].number_format == formato_original_e == "dd/mm/yyyy"
+
+
+def test_normalizacao_de_fill_nunca_atinge_cabecalho_ou_subcabecalho(tmp_path, template):
+    """Cabeçalho (linha 5) e subcabeçalho (linha 6) têm preenchimento
+    LEGÍTIMO (cor institucional) — fora da área de dados
+    (`_PRIMEIRA_LINHA_DADOS` em diante) e nunca tocados pela normalização."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    fill_cabecalho_original = ws["J5"].fill
+    fill_subcabecalho_original = ws["J6"].fill
+    wb.close()
+
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=[_candidato()]), template, destino)
+
+    wb_g = openpyxl.load_workbook(destino)
+    ws_g = wb_g[_NOME_ABA_DADOS]
+    assert ws_g["J5"].fill.fgColor.rgb == fill_cabecalho_original.fgColor.rgb
+    assert ws_g["J5"].fill.fill_type == fill_cabecalho_original.fill_type
+    assert ws_g["J6"].fill.fgColor.rgb == fill_subcabecalho_original.fgColor.rgb
+    assert ws_g["J6"].fill.fill_type == fill_subcabecalho_original.fill_type
+
+
+def test_normalizacao_de_fill_nunca_atinge_a_linha_de_totais(tmp_path, template):
+    """Um preenchimento legítimo eventualmente presente na linha de totais
+    (fora de `_PRIMEIRA_LINHA_DADOS`..`ultima_linha_dados`) nunca é tocado
+    pela normalização da área de dados."""
+    wb = openpyxl.load_workbook(template)
+    ws = wb[_NOME_ABA_DADOS]
+    fill_total_legitimo = PatternFill(fill_type="solid", fgColor="FFD8D8D8")
+    ws["A10"].fill = fill_total_legitimo  # linha de totais do template sintético (3 linhas de exemplo)
+    wb.save(template)
+
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001"),
+        _candidato(ob="2026OB000002", dh="2026DH000002"),
+        _candidato(ob="2026OB000003", dh="2026DH000003"),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    resultado_gerado = _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    assert resultado_gerado.linha_total == 10  # nenhuma linha inserida/removida (3 == 3)
+    wb_g = openpyxl.load_workbook(destino)
+    celula_total = wb_g[_NOME_ABA_DADOS]["A10"]
+    assert celula_total.fill.fgColor.rgb == "FFD8D8D8"
+    assert celula_total.fill.fill_type == "solid"
+
+
+# --- Auditoria de integridade dos dados (item 4 do pedido de QA) ----------
+
+
+def test_auditoria_zero_formulas_fora_da_totalizacao_homologada(tmp_path, template):
+    """Nenhuma célula da área de dados (A-M, `_PRIMEIRA_LINHA_DADOS` até a
+    última linha de dados) pode conter uma fórmula — a ÚNICA totalização
+    homologada é `J{linha_total}`/`M{linha_total}` (`=SUM(...)`, escrita
+    explicitamente por `gerar_xlsx_relatorio_transparencia`), e mais nenhum
+    outro lugar do relatório gerado."""
+    passagem = _linha_passagem(ob="2026OB000002", estado=EstadoPassagem.NUMERICO, valor=500.0)
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001"),
+        _candidato(ob="2026OB000002", dh="2026DH000002", passagem=passagem),
+        _candidato(ob="2026OB000003", dh="2026DH000003", passagem=None, registros_controle=[]),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    resultado_gerado = _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb = openpyxl.load_workbook(destino, data_only=False)
+    ws = wb[_NOME_ABA_DADOS]
+    for linha in range(_PRIMEIRA_LINHA_DADOS, resultado_gerado.ultima_linha_dados + 1):
+        for coluna in _COLUNAS_DADOS:
+            valor = ws[f"{coluna}{linha}"].value
+            assert not (isinstance(valor, str) and valor.startswith("=")), (
+                f"Fórmula inesperada fora da totalização homologada em {coluna}{linha}: {valor!r}"
+            )
+
+    linha_total = resultado_gerado.linha_total
+    assert ws[f"J{linha_total}"].value == f"=SUM(J{_PRIMEIRA_LINHA_DADOS}:J{resultado_gerado.ultima_linha_dados})"
+    assert ws[f"M{linha_total}"].value == f"=SUM(M{_PRIMEIRA_LINHA_DADOS}:M{resultado_gerado.ultima_linha_dados})"
+
+
+def test_auditoria_valores_j_m_continuam_numericos_e_celulas_vazias_continuam_vazias(tmp_path, template):
+    """J/M nunca viram texto/fórmula por acidente da normalização de fill
+    (que só toca `.fill`) — continuam numéricos quando têm valor, e
+    continuam `None` (nunca "", nunca 0, nunca texto bruto da fonte) quando
+    a evidência não permite um valor (Valor da Passagem ausente, Nº de
+    Diárias sem Controle DIMCAC associado)."""
+    passagem_com_valor = _linha_passagem(ob="2026OB000001", estado=EstadoPassagem.NUMERICO, valor=1234.56)
+    candidatos = [
+        _candidato(ob="2026OB000001", dh="2026DH000001", passagem=passagem_com_valor),
+        _candidato(ob="2026OB000002", dh="2026DH000002", passagem=None, registros_controle=[]),
+    ]
+    destino = str(tmp_path / "saida.xlsx")
+    _gerar(_resultado(candidatos=candidatos), template, destino)
+
+    wb = openpyxl.load_workbook(destino, data_only=False)
+    ws = wb[_NOME_ABA_DADOS]
+
+    linha_com_valor = _PRIMEIRA_LINHA_DADOS
+    assert isinstance(ws[f"J{linha_com_valor}"].value, (int, float))
+    assert isinstance(ws[f"M{linha_com_valor}"].value, (int, float))
+
+    linha_sem_passagem_nem_controle = _PRIMEIRA_LINHA_DADOS + 1
+    assert ws[f"J{linha_sem_passagem_nem_controle}"].value is None
+    assert ws[f"K{linha_sem_passagem_nem_controle}"].value is None
+    assert ws[f"L{linha_sem_passagem_nem_controle}"].value is None
+    assert isinstance(ws[f"M{linha_sem_passagem_nem_controle}"].value, (int, float))

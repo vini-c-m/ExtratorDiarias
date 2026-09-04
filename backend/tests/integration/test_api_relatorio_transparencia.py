@@ -50,7 +50,7 @@ def _linha_ob(
     periodo_final=date(2026, 5, 10),
     trecho="RECIFE - GARANHUNS",
     valor=154.09,
-    data_ob="15/05/2026 09:00:00",
+    data_ob="31/05/2026 09:00:00",
     motivo="Motivo de teste",
 ):
     return [
@@ -60,13 +60,37 @@ def _linha_ob(
     ]
 
 
+# Plano de Migração E-Fisco, Sprint C — `_linha_ob` continua a
+# especificação única por linha (mesma assinatura, nenhum call site
+# mudou); alimenta DOIS arquivos derivados agora. Índices espelham
+# `_CABECALHO_BASE_OB`.
+_IDX_DH, _IDX_OB, _IDX_SITUACAO, _IDX_DATA_OB, _IDX_SEI, _IDX_CPF, _IDX_NOME = range(7)
+_IDX_CARGO, _IDX_PERIODO_INICIAL, _IDX_PERIODO_FINAL, _IDX_TRECHO = range(7, 11)
+_IDX_TRANSPORTE, _IDX_MOTIVO, _IDX_VALOR = range(11, 14)
+
+_CABECALHO_EFISCO = [
+    "Ordem Bancária", "Número do DH", "Situação", "Data da OB", "Data Pagto./Devol.",
+    "Valor Bruto", "Observação", "Código da Natureza de Despesa",
+    "Razão Social do Credor", "Número do documento do Credor",
+]
+
+
 def _criar_base_ob(caminho, linhas):
+    """Escreve a Base E-Fisco derivada — nome preservado (histórico) para
+    não exigir mudança nos call sites deste arquivo. Ver mesma função em
+    `tests/unit/test_relatorio_transparencia_service.py`."""
     wb = Workbook()
     ws = wb.active
-    ws.title = "Sheet1"
-    ws.append(_CABECALHO_BASE_OB)
+    ws.title = "OB"
+    ws.append(_CABECALHO_EFISCO)
     for linha in linhas:
-        ws.append(linha)
+        data_ob_texto = str(linha[_IDX_DATA_OB]).split(" ")[0]
+        cpf_digitos = "".join(ch for ch in str(linha[_IDX_CPF]) if ch.isdigit())
+        ws.append([
+            linha[_IDX_OB], linha[_IDX_DH], linha[_IDX_SITUACAO], data_ob_texto, linha[_IDX_DATA_OB],
+            linha[_IDX_VALOR], "PAGTO TESTE ; UMA DIARIA PARCIAL", "33901400",
+            linha[_IDX_NOME], cpf_digitos,
+        ])
     wb.save(caminho)
 
 
@@ -77,9 +101,31 @@ def _criar_controle_vazio(caminho):
     wb.save(caminho)
 
 
+def _criar_controle_das_linhas(caminho, linhas):
+    """Deriva o Controle DIMCAC das mesmas especificações — necessário
+    porque SEI/CARGO/PERÍODO/TRECHO/TRANSPORTE/MOTIVO só existem na
+    `OrdemBancaria` via este arquivo no pipeline produtivo atual (Sprint
+    C). Ver mesma função em `test_relatorio_transparencia_service.py`."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Controle de Diárias"
+    ws.append([
+        "DH", "SEI", "DOC ORIGEM", "CPF", "", "", "CARGO", "PERÍODO INICIAL",
+        "PERÍODO FINAL", "TRECHO", "TRANSPORTE", "MOTIVO", "",
+        "QUANT. DIÁRIA INTEGRAL", "QUANT. DIÁRIA PARCIAL", "VALOR DA DIÁRIA",
+    ])
+    for linha in linhas:
+        ws.append([
+            linha[_IDX_DH], linha[_IDX_SEI], "PJTESTE", linha[_IDX_CPF], None, None, linha[_IDX_CARGO],
+            linha[_IDX_PERIODO_INICIAL], linha[_IDX_PERIODO_FINAL], linha[_IDX_TRECHO], linha[_IDX_TRANSPORTE],
+            linha[_IDX_MOTIVO], None, None, None, linha[_IDX_VALOR],
+        ])
+    wb.save(caminho)
+
+
 def _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes, mes_referencia=5):
     return {
-        "caminho_base_ordens_bancarias": str(caminho_base_ob),
+        "caminho_base_efisco": str(caminho_base_ob),
         "caminho_controle_dimcac": str(caminho_controle),
         "ano_exercicio": 2026,
         "mes_referencia": mes_referencia,
@@ -91,7 +137,7 @@ def _preparar_fontes(tmp_path, linhas):
     caminho_base_ob = tmp_path / "base_ob.xlsx"
     caminho_controle = tmp_path / "controle.xlsx"
     _criar_base_ob(caminho_base_ob, linhas)
-    _criar_controle_vazio(caminho_controle)
+    _criar_controle_das_linhas(caminho_controle, linhas)
     caminho_decisoes = tmp_path / "decisoes.json"
     return caminho_base_ob, caminho_controle, caminho_decisoes
 
@@ -382,6 +428,15 @@ def test_ponta_a_ponta_preparar_decidir_reaproveitar_invalidar(tmp_path):
             dh="2026DH000005", ob="2026OB000005", cpf=33333333333, valor=200.00,
             trecho="RECIFE - CARUARU", periodo_inicial=date(2026, 5, 12), periodo_final=date(2026, 5, 12),
         ),
+        # Linha extra só de COBERTURA — este teste recarrega a MESMA fonte
+        # em `mes_referencia=8` mais abaixo ("mês seguinte"); sem uma linha
+        # Paga cobrindo até agosto o gate de qualidade E-Fisco bloquearia
+        # essa segunda preparação.
+        _linha_ob(
+            dh="2026DH999999", ob="2026OB999999", cpf=99999999999, valor=1.0,
+            trecho="COBERTURA - AGOSTO", periodo_inicial=date(2026, 8, 31), periodo_final=date(2026, 8, 31),
+            data_ob="31/08/2026 09:00:00",
+        ),
     ]
     caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
     payload_fontes = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes)
@@ -427,13 +482,17 @@ def test_ponta_a_ponta_preparar_decidir_reaproveitar_invalidar(tmp_path):
 
     # Alterar materialmente uma evidência (motivo do grupo 1) -> decisão
     # correspondente vira DESATUALIZADA -> pode_gerar=False
+    #
+    # Plano de Migração E-Fisco, Sprint C — motivo é autoridade exclusiva
+    # do Controle DIMCAC agora: a "alteração de fonte" reescreve o
+    # Controle, não mais a Base E-Fisco (que continua idêntica).
     linhas_alteradas = list(linhas)
     linhas_alteradas[0] = _linha_ob(
         dh="2026DH000002", ob="2026OB000002", cpf=22222222222, valor=308.19,
         trecho="RECIFE - ARCOVERDE", periodo_inicial=date(2026, 5, 11), periodo_final=date(2026, 5, 11),
         motivo="Motivo revisado após o fechamento",
     )
-    _criar_base_ob(caminho_base_ob, linhas_alteradas)
+    _criar_controle_das_linhas(caminho_controle, linhas_alteradas)
 
     corpo = client.post(f"{_BASE_URL}/preparar", json=payload_fontes_mes_seguinte).json()
     estados = {r["identidade_grupo"]: r["estado"] for r in corpo["revisoes"]}
@@ -848,7 +907,7 @@ def test_post_fontes_dois_campos_diferentes_simultaneos_ambos_200_e_mesclados(tm
     (tmp_path / "dimcac.xlsx").write_bytes(b"")
     payload_a = {
         "caminho_configuracao_fontes": caminho_configuracao_fontes,
-        "caminho_base_ordens_bancarias": caminho_ob,
+        "caminho_base_efisco": caminho_ob,
     }
     payload_b = {
         "caminho_configuracao_fontes": caminho_configuracao_fontes,
@@ -875,7 +934,7 @@ def test_post_fontes_dois_campos_diferentes_simultaneos_ambos_200_e_mesclados(tm
     corpo_final = client.get(
         f"{_BASE_URL}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
     ).json()
-    assert corpo_final["base_ordens_bancarias"]["caminho"] == caminho_ob
+    assert corpo_final["base_efisco"]["caminho"] == caminho_ob
     assert corpo_final["controle_dimcac"]["caminho"] == caminho_dimcac
 
 
@@ -1264,7 +1323,7 @@ def test_get_fontes_nao_configurado(tmp_path):
 
     assert resposta.status_code == 200
     assert resposta.json() == {
-        "base_ordens_bancarias": {"configurado": False, "disponivel": False, "caminho": None},
+        "base_efisco": {"configurado": False, "disponivel": False, "caminho": None},
         "controle_dimcac": {"configurado": False, "disponivel": False, "caminho": None},
         "planilha_passagens": {"configurado": False, "disponivel": False, "caminho": None},
     }
@@ -1281,13 +1340,13 @@ def test_post_fontes_configura_ambas_e_get_reflete(tmp_path):
         f"{_BASE_URL}/fontes",
         json={
             "caminho_configuracao_fontes": caminho_configuracao_fontes,
-            "caminho_base_ordens_bancarias": str(caminho_ob),
+            "caminho_base_efisco": str(caminho_ob),
             "caminho_controle_dimcac": str(caminho_dimcac),
         },
     )
     assert resposta_post.status_code == 200
     corpo_post = resposta_post.json()
-    assert corpo_post["base_ordens_bancarias"] == {
+    assert corpo_post["base_efisco"] == {
         "configurado": True,
         "disponivel": True,
         "caminho": str(caminho_ob),
@@ -1316,7 +1375,7 @@ def test_post_fontes_configura_apenas_base_ob_preserva_controle(tmp_path):
         f"{_BASE_URL}/fontes",
         json={
             "caminho_configuracao_fontes": caminho_configuracao_fontes,
-            "caminho_base_ordens_bancarias": str(caminho_ob_v1),
+            "caminho_base_efisco": str(caminho_ob_v1),
             "caminho_controle_dimcac": str(caminho_dimcac),
         },
     )
@@ -1327,13 +1386,13 @@ def test_post_fontes_configura_apenas_base_ob_preserva_controle(tmp_path):
         f"{_BASE_URL}/fontes",
         json={
             "caminho_configuracao_fontes": caminho_configuracao_fontes,
-            "caminho_base_ordens_bancarias": str(caminho_ob_v2),
+            "caminho_base_efisco": str(caminho_ob_v2),
         },
     )
 
     assert resposta.status_code == 200
     corpo = resposta.json()
-    assert corpo["base_ordens_bancarias"]["caminho"] == str(caminho_ob_v2)
+    assert corpo["base_efisco"]["caminho"] == str(caminho_ob_v2)
     assert corpo["controle_dimcac"]["caminho"] == str(caminho_dimcac)
 
 
@@ -1352,7 +1411,7 @@ def test_post_fontes_configura_apenas_passagens_preserva_base_ob_e_controle(tmp_
         f"{_BASE_URL}/fontes",
         json={
             "caminho_configuracao_fontes": caminho_configuracao_fontes,
-            "caminho_base_ordens_bancarias": str(caminho_ob),
+            "caminho_base_efisco": str(caminho_ob),
             "caminho_controle_dimcac": str(caminho_dimcac),
         },
     )
@@ -1374,7 +1433,7 @@ def test_post_fontes_configura_apenas_passagens_preserva_base_ob_e_controle(tmp_
         "disponivel": True,
         "caminho": str(caminho_passagens),
     }
-    assert corpo["base_ordens_bancarias"]["caminho"] == str(caminho_ob)
+    assert corpo["base_efisco"]["caminho"] == str(caminho_ob)
     assert corpo["controle_dimcac"]["caminho"] == str(caminho_dimcac)
 
     resposta_get = client.get(
@@ -1392,7 +1451,7 @@ def test_get_fontes_configurado_mas_arquivo_sumiu(tmp_path):
         f"{_BASE_URL}/fontes",
         json={
             "caminho_configuracao_fontes": caminho_configuracao_fontes,
-            "caminho_base_ordens_bancarias": str(caminho_ob),
+            "caminho_base_efisco": str(caminho_ob),
         },
     )
     caminho_ob.unlink()
@@ -1406,7 +1465,7 @@ def test_get_fontes_configurado_mas_arquivo_sumiu(tmp_path):
     # Configurado continua `True` (o usuário JÁ escolheu um arquivo) — só
     # "disponivel" reflete que ele não existe mais, nunca some
     # silenciosamente do estado (mesmo critério do Template Oficial).
-    assert corpo["base_ordens_bancarias"] == {"configurado": True, "disponivel": False, "caminho": None}
+    assert corpo["base_efisco"] == {"configurado": True, "disponivel": False, "caminho": None}
 
 
 def test_get_fontes_json_corrompido_503_amigavel(tmp_path):

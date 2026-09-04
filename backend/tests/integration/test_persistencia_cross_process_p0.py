@@ -48,19 +48,39 @@ _CABECALHO_BASE_OB = [
 
 def _linha_ob(*, dh, ob, cpf, periodo_inicial, periodo_final, trecho, valor):
     return [
-        dh, ob, "Paga", "15/05/2026 09:00:00", "19.20.0001.0000001/2026-01", cpf, "FULANO DE TAL",
+        dh, ob, "Paga", "31/05/2026 09:00:00", "19.20.0001.0000001/2026-01", cpf, "FULANO DE TAL",
         "Cargo de Teste", periodo_inicial, periodo_final, trecho, "CARRO", "Motivo de teste",
         valor, None, "Único", "33901401",
     ]
 
 
+# Plano de Migração E-Fisco, Sprint C — índices espelham `_CABECALHO_BASE_OB`.
+_IDX_DH, _IDX_OB, _IDX_SITUACAO, _IDX_DATA_OB, _IDX_SEI, _IDX_CPF, _IDX_NOME = range(7)
+_IDX_CARGO, _IDX_PERIODO_INICIAL, _IDX_PERIODO_FINAL, _IDX_TRECHO = range(7, 11)
+_IDX_TRANSPORTE, _IDX_MOTIVO, _IDX_VALOR = range(11, 14)
+
+_CABECALHO_EFISCO = [
+    "Ordem Bancária", "Número do DH", "Situação", "Data da OB", "Data Pagto./Devol.",
+    "Valor Bruto", "Observação", "Código da Natureza de Despesa",
+    "Razão Social do Credor", "Número do documento do Credor",
+]
+
+
 def _criar_base_ob(caminho, linhas):
+    """Escreve a Base E-Fisco derivada — nome preservado (histórico). Ver
+    mesma função em `test_relatorio_transparencia_service.py`."""
     wb = Workbook()
     ws = wb.active
-    ws.title = "Sheet1"
-    ws.append(_CABECALHO_BASE_OB)
+    ws.title = "OB"
+    ws.append(_CABECALHO_EFISCO)
     for linha in linhas:
-        ws.append(linha)
+        data_ob_texto = str(linha[_IDX_DATA_OB]).split(" ")[0]
+        cpf_digitos = "".join(ch for ch in str(linha[_IDX_CPF]) if ch.isdigit())
+        ws.append([
+            linha[_IDX_OB], linha[_IDX_DH], linha[_IDX_SITUACAO], data_ob_texto, linha[_IDX_DATA_OB],
+            linha[_IDX_VALOR], "PAGTO TESTE ; UMA DIARIA PARCIAL", "33901400",
+            linha[_IDX_NOME], cpf_digitos,
+        ])
     wb.save(caminho)
 
 
@@ -68,6 +88,28 @@ def _criar_controle_vazio(caminho):
     wb = Workbook()
     ws = wb.active
     ws.title = "Controle de Diárias"
+    wb.save(caminho)
+
+
+def _criar_controle_das_linhas(caminho, linhas):
+    """Deriva o Controle DIMCAC das mesmas especificações — necessário
+    porque TRECHO/PERÍODO (chave do RN07 testado aqui) só existem na
+    `OrdemBancaria` via este arquivo no pipeline produtivo atual (Sprint
+    C). Ver mesma função em `test_relatorio_transparencia_service.py`."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Controle de Diárias"
+    ws.append([
+        "DH", "SEI", "DOC ORIGEM", "CPF", "", "", "CARGO", "PERÍODO INICIAL",
+        "PERÍODO FINAL", "TRECHO", "TRANSPORTE", "MOTIVO", "",
+        "QUANT. DIÁRIA INTEGRAL", "QUANT. DIÁRIA PARCIAL", "VALOR DA DIÁRIA",
+    ])
+    for linha in linhas:
+        ws.append([
+            linha[_IDX_DH], linha[_IDX_SEI], "PJTESTE", linha[_IDX_CPF], None, None, linha[_IDX_CARGO],
+            linha[_IDX_PERIODO_INICIAL], linha[_IDX_PERIODO_FINAL], linha[_IDX_TRECHO], linha[_IDX_TRANSPORTE],
+            linha[_IDX_MOTIVO], None, None, None, linha[_IDX_VALOR],
+        ])
     wb.save(caminho)
 
 
@@ -100,11 +142,11 @@ def _preparar_grupos(tmp_path: Path, quantidade: int, base_url: str, cliente: ht
     grupos = [_grupo_rn07(indice) for indice in range(quantidade)]
     todas_linhas = [linha for linhas, _, _ in grupos for linha in linhas]
     _criar_base_ob(caminho_base_ob, todas_linhas)
-    _criar_controle_vazio(caminho_controle)
+    _criar_controle_das_linhas(caminho_controle, todas_linhas)
     caminho_decisoes = tmp_path / "decisoes.json"
 
     payload_base = {
-        "caminho_base_ordens_bancarias": str(caminho_base_ob),
+        "caminho_base_efisco": str(caminho_base_ob),
         "caminho_controle_dimcac": str(caminho_controle),
         "ano_exercicio": 2026,
         "mes_referencia": 5,
@@ -191,32 +233,58 @@ class _ServidorUvicornReal:
         raise TimeoutError(f"Servidor Uvicorn não respondeu em {timeout_s}s (último erro: {ultimo_erro})")
 
     def encerrar(self) -> None:
-        self._processo.terminate()
+        """Idempotente (seguro chamar mais de uma vez, ou sem o processo
+        nunca ter chegado a subir). No Windows, `Popen.terminate()` chama
+        `TerminateProcess` no supervisor Uvicorn — não é um sinal que o
+        Uvicorn possa interceptar para encerrar os workers antes de
+        morrer, então os processos-worker (filhos reais do supervisor)
+        ficam órfãos mesmo em encerramento NORMAL, não só num kill
+        abrupto do processo de teste. `taskkill /T` mata a árvore
+        inteira (supervisor + workers) pelo PID; se falhar (ex.: já
+        morto), cai para `terminate`/`kill` no processo supervisor."""
+        if self._processo is None or self._processo.poll() is not None:
+            return
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(self._processo.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass
         try:
             self._processo.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self._processo.kill()
-            self._processo.wait(timeout=10)
+            try:
+                self._processo.kill()
+                self._processo.wait(timeout=10)
+            except OSError:
+                pass
 
 
 @pytest.fixture
 def servidor_dois_workers():
-    servidor = _ServidorUvicornReal(workers=2)
+    servidor = None
     try:
+        servidor = _ServidorUvicornReal(workers=2)
         servidor.aguardar_pronto()
         yield servidor
     finally:
-        servidor.encerrar()
+        if servidor is not None:
+            servidor.encerrar()
 
 
 @pytest.fixture
 def servidor_cinco_workers():
-    servidor = _ServidorUvicornReal(workers=5)
+    servidor = None
     try:
+        servidor = _ServidorUvicornReal(workers=5)
         servidor.aguardar_pronto()
         yield servidor
     finally:
-        servidor.encerrar()
+        if servidor is not None:
+            servidor.encerrar()
 
 
 def test_decisoes_concorrentes_via_http_dois_workers_sobrevivem(tmp_path, servidor_dois_workers):
@@ -266,7 +334,7 @@ def test_fontes_concorrentes_via_http_dois_workers_mesclam(tmp_path, servidor_do
                 "a",
                 {
                     "caminho_configuracao_fontes": caminho_configuracao_fontes,
-                    "caminho_base_ordens_bancarias": str(caminho_ob_fake),
+                    "caminho_base_efisco": str(caminho_ob_fake),
                 },
             ),
         )
@@ -291,7 +359,7 @@ def test_fontes_concorrentes_via_http_dois_workers_mesclam(tmp_path, servidor_do
         corpo_final = cliente.get(
             f"{base_url}/fontes", params={"caminho_configuracao_fontes": caminho_configuracao_fontes}
         ).json()
-        assert corpo_final["base_ordens_bancarias"]["caminho"] == str(caminho_ob_fake)
+        assert corpo_final["base_efisco"]["caminho"] == str(caminho_ob_fake)
         assert corpo_final["controle_dimcac"]["caminho"] == str(caminho_dimcac_fake)
 
 

@@ -363,7 +363,7 @@ def test_novo_rt08_fluxo_completo_ate_desatualizada(campo_kwarg, valor_a, valor_
     revisao_reconstruida = _revisao_rn04_mesma_ob(ordem_a, ordem_b_alterada)
     resultado = _resultado(revisoes=[revisao_reconstruida])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.pode_gerar_relatorio is False
@@ -400,7 +400,7 @@ def test_novo_rt08_fluxo_completo_sem_mudanca_permanece_decidida(campo_kwarg):
     revisao_reconstruida = _revisao_rn04_mesma_ob(ordem_a, ordem_b)
     resultado = _resultado(revisoes=[revisao_reconstruida])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.pode_gerar_relatorio is True
@@ -431,7 +431,7 @@ def test_decisao_permanece_valida_quando_so_duplicidade_muda():
     )
     resultado = _resultado(revisoes=[revisao_depois])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.pode_gerar_relatorio is True
@@ -451,7 +451,7 @@ def test_fingerprint_muda_com_situacao_diferente():
 def test_revisao_pendente_bloqueia_geracao():
     resultado = _resultado(revisoes=[_revisao()])
 
-    revisado = aplicar_decisoes(resultado, {})
+    revisado = aplicar_decisoes(resultado, {}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.PENDENTE
     assert revisado.pode_gerar_relatorio is False
@@ -471,7 +471,7 @@ def test_decisao_publicar_todas_libera_o_caso():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.pode_gerar_relatorio is True
@@ -490,7 +490,7 @@ def test_decisao_selecionando_apenas_uma_ob():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     obs_publicadas = {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis}
     assert obs_publicadas == {"2026OB000001"}
@@ -512,7 +512,7 @@ def test_decisao_selecionando_multiplas_obs_de_grupo_com_tres():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     obs_publicadas = {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis}
     assert obs_publicadas == {"2026OB000001", "2026OB000003"}
@@ -528,7 +528,7 @@ def test_decisao_adiar_mantem_pendencia():
     decisao = registrar_decisao(revisao, acao=AcaoDecisao.ADIAR, autor="servidor.teste")
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.ADIADA
     assert revisado.pode_gerar_relatorio is False
@@ -546,7 +546,7 @@ def test_ob_nao_selecionada_continua_rastreavel_com_dados_completos():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     excluida = revisado.ocorrencias_nao_publicaveis[0]
     assert excluida.ocorrencia.ordem_bancaria.ob == "2026OB000002"
@@ -574,7 +574,7 @@ def test_registros_controle_sobrevivem_do_ob_a_revisao_ate_candidato_publicavel(
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     candidato = next(c for c in revisado.candidatos_publicaveis if c.ocorrencia.ordem_bancaria.ob == "2026OB000001")
@@ -592,7 +592,7 @@ def test_fingerprint_identico_reaproveita_decisao():
     )
     resultado = _resultado(revisoes=[revisao])  # mesmas ocorrências, fingerprint idêntico
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
 
@@ -608,7 +608,7 @@ def test_fingerprint_alterado_vira_desatualizada():
     )
     resultado = _resultado(revisoes=[revisao_atualizada])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.pode_gerar_relatorio is False
@@ -631,7 +631,7 @@ def test_decisao_reaproveitada_em_competencia_posterior_sem_re_perguntar():
     revisao_agosto = _revisao()
     resultado_agosto = _resultado(revisoes=[revisao_agosto])
 
-    revisado = aplicar_decisoes(resultado_agosto, decisoes_persistidas)
+    revisado = aplicar_decisoes(resultado_agosto, decisoes_persistidas, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.pode_gerar_relatorio is True
@@ -642,13 +642,13 @@ def test_decisao_reaproveitada_em_competencia_posterior_sem_re_perguntar():
 
 def test_zero_pendencias_libera_geracao():
     resultado = _resultado(candidatos=[CandidatoNormal(ocorrencia=_oc(ob="2026OB000009"))])
-    revisado = aplicar_decisoes(resultado, {})
+    revisado = aplicar_decisoes(resultado, {}, ano_exercicio=2026, mes_referencia=8)
     assert revisado.pode_gerar_relatorio is True
 
 
 def test_uma_pendencia_bloqueia_geracao():
     resultado = _resultado(revisoes=[_revisao()])
-    revisado = aplicar_decisoes(resultado, {})
+    revisado = aplicar_decisoes(resultado, {}, ano_exercicio=2026, mes_referencia=8)
     assert revisado.pode_gerar_relatorio is False
 
 
@@ -663,7 +663,7 @@ def test_candidatos_normais_originais_permanecem_intactos():
     )
     resultado = _resultado(candidatos=[candidato_original], revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert candidato_original in revisado.candidatos_publicaveis
 
@@ -681,7 +681,7 @@ def test_decisao_de_grupo_desconhecido_nao_afeta_outra_revisao():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_de_outro_grupo.identidade_grupo: decisao_de_outro_grupo})
+    revisado = aplicar_decisoes(resultado, {decisao_de_outro_grupo.identidade_grupo: decisao_de_outro_grupo}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.PENDENTE
 
@@ -699,7 +699,7 @@ def test_decisao_com_fingerprint_desatualizado_nao_e_aplicada():
     )
     resultado = _resultado(revisoes=[revisao_com_trecho_novo])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.candidatos_publicaveis == []
@@ -724,7 +724,7 @@ def test_nenhuma_ob_desaparece_sem_rastreabilidade():
         revisoes=[revisao_decidida, revisao_pendente],
     )
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     obs_candidatos = {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis}
     obs_nao_publicaveis = {o.ocorrencia.ordem_bancaria.ob for o in revisado.ocorrencias_nao_publicaveis}
@@ -744,7 +744,7 @@ def test_nenhuma_ob_desaparece_sem_rastreabilidade():
 def test_nenhuma_decisao_e_inventada_sem_entrada_correspondente():
     resultado = _resultado(revisoes=[_revisao(), _revisao(regra="RN04", motivo="Outro motivo")])
 
-    revisado = aplicar_decisoes(resultado, {})
+    revisado = aplicar_decisoes(resultado, {}, ano_exercicio=2026, mes_referencia=8)
 
     assert all(r.estado is EstadoRevisao.PENDENTE for r in revisado.revisoes)
     assert all(r.decisao is None for r in revisado.revisoes)
@@ -834,7 +834,7 @@ def test_aplicar_decisoes_publica_somente_a_ocorrencia_a():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert len(revisado.candidatos_publicaveis) == 1
@@ -854,7 +854,7 @@ def test_aplicar_decisoes_publica_somente_a_ocorrencia_b():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 1
     assert revisado.candidatos_publicaveis[0].ocorrencia is b
@@ -873,7 +873,7 @@ def test_aplicar_decisoes_publica_as_duas_ocorrencias_fisicas():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 2
     assert revisado.ocorrencias_nao_publicaveis == []
@@ -893,7 +893,7 @@ def test_aplicar_decisoes_decisao_antiga_ambigua_volta_para_revisao():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_antiga.identidade_grupo: decisao_antiga})
+    revisado = aplicar_decisoes(resultado, {decisao_antiga.identidade_grupo: decisao_antiga}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.revisoes[0].decisao is decisao_antiga  # preservada, nunca descartada
@@ -913,7 +913,7 @@ def test_aplicar_decisoes_decisao_antiga_sem_ambiguidade_continua_valida():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
 
@@ -933,7 +933,7 @@ def test_aplicar_decisoes_publicar_zero_ocorrencias_de_grupo_com_repeticao_nao_e
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.candidatos_publicaveis == []
@@ -1105,7 +1105,7 @@ def test_decisao_para_ocorrencia_a_nunca_publica_b_apos_troca_de_linhas_fisicas(
     revisao_reordenada = _revisao_rn04_repeticao_fisica(b_linha10, a_linha11)
     resultado = _resultado(revisoes=[revisao_reordenada])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     publicados = [c.ocorrencia for c in revisado.candidatos_publicaveis if c.ocorrencia.ordem_bancaria.ob == "2026OB000001"]
@@ -1129,7 +1129,7 @@ def test_ocorrencia_adicionada_ao_grupo_ja_decidido_invalida_a_decisao():
     revisao_com_c = RevisaoNecessaria(regra="RN04", motivo=revisao_original.motivo, ocorrencias=[a, b, c])
     resultado = _resultado(revisoes=[revisao_com_c])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.candidatos_publicaveis == []
@@ -1148,7 +1148,7 @@ def test_ocorrencia_removida_do_grupo_ja_decidido_invalida_a_decisao():
     revisao_sem_c = _revisao_rn04_repeticao_fisica(a, b)
     resultado = _resultado(revisoes=[revisao_sem_c])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.candidatos_publicaveis == []
@@ -1167,7 +1167,7 @@ def test_decisao_em_formato_ob_n_do_homo_rt_02_e_tratada_como_ambigua():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_formato_antigo.identidade_grupo: decisao_formato_antigo})
+    revisado = aplicar_decisoes(resultado, {decisao_formato_antigo.identidade_grupo: decisao_formato_antigo}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.revisoes[0].decisao is decisao_formato_antigo
@@ -1186,7 +1186,7 @@ def test_decisao_em_formato_hash_sem_versao_do_homo_rt_03_e_tratada_como_ambigua
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_formato_antigo.identidade_grupo: decisao_formato_antigo})
+    revisado = aplicar_decisoes(resultado, {decisao_formato_antigo.identidade_grupo: decisao_formato_antigo}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.revisoes[0].decisao is decisao_formato_antigo
@@ -1388,7 +1388,7 @@ def test_decisao_persistida_para_a_sobrevive_a_reconstrucao_como_b_a():
 
     assert calcular_fingerprint(revisao_ba.ocorrencias) == decisao.fingerprint_evidencias
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     publicados = [c.ocorrencia.ordem_bancaria.motivo for c in revisado.candidatos_publicaveis]
@@ -1428,7 +1428,7 @@ def test_alteracao_material_de_a_apos_decisao_nunca_publica_b():
     revisao_alterada = _revisao_rn04_repeticao_fisica(a_alterada, b)
     resultado = _resultado(revisoes=[revisao_alterada])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.candidatos_publicaveis == []
@@ -1592,7 +1592,7 @@ def test_decisao_antiga_especifica_vira_desatualizada_quando_so_cargo_do_control
     revisao_reconstruida = _revisao_rn04_repeticao_fisica(a_cargo_alterado, b)
     resultado = _resultado(revisoes=[revisao_reconstruida])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.candidatos_publicaveis == []
@@ -1623,7 +1623,7 @@ def test_decisao_formato_v2_e_tratada_como_ambigua_apos_avanco_para_v3():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_formato_antigo.identidade_grupo: decisao_formato_antigo})
+    revisado = aplicar_decisoes(resultado, {decisao_formato_antigo.identidade_grupo: decisao_formato_antigo}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.revisoes[0].decisao is decisao_formato_antigo
@@ -1656,7 +1656,7 @@ def test_duas_ocorrencias_identicas_publicar_uma_gera_exatamente_uma_candidata()
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert len(revisado.candidatos_publicaveis) == 1  # NUNCA 2 — mesmo pagamento, uma vez só
@@ -1674,7 +1674,7 @@ def test_tres_ocorrencias_identicas_publicar_uma_gera_exatamente_uma_candidata()
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 1
     assert len(revisado.ocorrencias_nao_publicaveis) == 2
@@ -1692,7 +1692,7 @@ def test_duas_ocorrencias_identicas_nao_publicar_nenhuma():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.candidatos_publicaveis == []
@@ -1705,7 +1705,7 @@ def test_duas_ocorrencias_identicas_adiar_bloqueia():
     decisao = registrar_decisao(revisao, acao=AcaoDecisao.ADIAR, autor="servidor.teste")
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.ADIADA
     assert revisado.pode_gerar_relatorio is False
@@ -1732,7 +1732,7 @@ def test_classe_identica_mais_ocorrencia_distinta_sao_selecionaveis_independente
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 2
     assert len(revisado.ocorrencias_nao_publicaveis) == 1  # a segunda cópia de A
@@ -1753,7 +1753,7 @@ def test_duplicatas_identicas_reordenacao_nao_altera_semantica():
     revisao_ba = _revisao_rn04_repeticao_fisica(b, a)  # ordem física invertida
     resultado = _resultado(revisoes=[revisao_ba])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert len(revisado.candidatos_publicaveis) == 1
@@ -1772,7 +1772,7 @@ def test_rn07_publicar_somente_a_segunda_ob():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     obs_publicadas = {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis}
     assert obs_publicadas == {"2026OB000002"}
@@ -1791,7 +1791,7 @@ def test_rn07_nao_publicar_nenhuma():
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.candidatos_publicaveis == []
@@ -1849,7 +1849,7 @@ def test_decisao_gravada_com_chave_legada_de_grupo_adiar_e_reaplicada_com_segura
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_legada.identidade_grupo: decisao_legada})
+    revisado = aplicar_decisoes(resultado, {decisao_legada.identidade_grupo: decisao_legada}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.ADIADA
     assert revisado.revisoes[0].decisao is decisao_legada
@@ -1874,7 +1874,7 @@ def test_decisao_gravada_com_chave_legada_publicar_zero_e_reaplicada_com_seguran
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_legada.identidade_grupo: decisao_legada})
+    revisado = aplicar_decisoes(resultado, {decisao_legada.identidade_grupo: decisao_legada}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.candidatos_publicaveis == []
@@ -1902,7 +1902,7 @@ def test_decisao_gravada_com_chave_legada_publicar_especifica_exige_nova_decisao
     )
     resultado = _resultado(revisoes=[revisao])
 
-    revisado = aplicar_decisoes(resultado, {decisao_legada.identidade_grupo: decisao_legada})
+    revisado = aplicar_decisoes(resultado, {decisao_legada.identidade_grupo: decisao_legada}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.candidatos_publicaveis == []
@@ -1933,6 +1933,8 @@ def test_decisao_gravada_com_chave_nova_tem_prioridade_sobre_a_legada():
     revisado = aplicar_decisoes(
         resultado,
         {decisao_nova.identidade_grupo: decisao_nova, decisao_legada.identidade_grupo: decisao_legada},
+        ano_exercicio=2026,
+        mes_referencia=8,
     )
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
@@ -2169,7 +2171,7 @@ def test_decisao_fica_desatualizada_quando_so_a_passagem_muda_fluxo_completo():
     revisao_reconstruida = _revisao_com_passagem(passagem_alterada)
     resultado = _resultado(revisoes=[revisao_reconstruida])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.pode_gerar_relatorio is False
@@ -2204,7 +2206,7 @@ def test_decisao_permanece_decidida_quando_passagem_nao_muda_controle_negativo()
     revisao_reconstruida = _revisao_com_passagem(passagem)
     resultado = _resultado(revisoes=[revisao_reconstruida])
 
-    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
     assert revisado.pode_gerar_relatorio is True
@@ -2236,7 +2238,7 @@ def test_identidade_v3_nao_e_reaplicada_as_cegas_sobre_identidade_v4():
     )
 
     resultado = _resultado(revisoes=[revisao])
-    revisado = aplicar_decisoes(resultado, {decisao_antiga.identidade_grupo: decisao_antiga})
+    revisado = aplicar_decisoes(resultado, {decisao_antiga.identidade_grupo: decisao_antiga}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.revisoes[0].decisao == decisao_antiga  # nunca descartada, só marcada ambígua
@@ -2310,7 +2312,7 @@ def test_ab_publica_a_b_vira_categoria_a():
     revisao = _grupo_ab()
     decisoes = _decidir(revisao, obs_publicaveis=["2026OB000001"])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis} == {"2026OB000001"}
     assert len(revisado.ocorrencias_nao_publicaveis) == 1
@@ -2323,7 +2325,7 @@ def test_ab_publica_b_a_vira_categoria_a():
     revisao = _grupo_ab()
     decisoes = _decidir(revisao, obs_publicaveis=["2026OB000002"])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert {c.ocorrencia.ordem_bancaria.ob for c in revisado.candidatos_publicaveis} == {"2026OB000002"}
     nao_publicada = revisado.ocorrencias_nao_publicaveis[0]
@@ -2335,7 +2337,7 @@ def test_ab_publica_ambas_nenhuma_categoria_a():
     revisao = _grupo_ab()
     decisoes = _decidir(revisao, obs_publicaveis=["2026OB000001", "2026OB000002"])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 2
     assert revisado.ocorrencias_nao_publicaveis == []
@@ -2345,7 +2347,7 @@ def test_ab_publicar_zero_ambas_viram_categoria_a():
     revisao = _grupo_ab()
     decisoes = _decidir(revisao, obs_publicaveis=[])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.candidatos_publicaveis == []
     obs_nao_publicadas = {c.ocorrencia.ordem_bancaria.ob for c in revisado.ocorrencias_nao_publicaveis}
@@ -2360,7 +2362,7 @@ def test_ab_adiar_nao_produz_categoria_a():
     revisao = _grupo_ab()
     decisoes = _decidir(revisao, acao=AcaoDecisao.ADIAR)
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.ADIADA
     assert revisado.ocorrencias_nao_publicaveis == []
@@ -2371,7 +2373,7 @@ def test_ab_pendente_nao_produz_categoria_a():
     """Nenhuma decisão registrada — grupo fica PENDENTE."""
     revisao = _grupo_ab()
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {})
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.PENDENTE
     assert revisado.ocorrencias_nao_publicaveis == []
@@ -2391,7 +2393,7 @@ def test_ab_desatualizada_nao_produz_categoria_a():
         ],
     )
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao_reconstruida]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao_reconstruida]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
     assert revisado.ocorrencias_nao_publicaveis == []
@@ -2417,7 +2419,7 @@ def test_ab_requer_nova_decisao_nao_produz_categoria_a_nem_b():
         obs_publicaveis=frozenset([identidade_simulada_v3]),
     )
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {decisao.identidade_grupo: decisao})
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.revisoes[0].estado is EstadoRevisao.REQUER_NOVA_DECISAO
     assert revisado.ocorrencias_nao_publicaveis == []
@@ -2431,7 +2433,7 @@ def test_aab_publica_a_uma_oficial_outra_categoria_b_b_categoria_a():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[identidade_a])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 1  # uma A oficial
     assert len(revisado.ocorrencias_nao_publicaveis) == 2  # outra A (categoria B) + B (categoria A)
@@ -2446,7 +2448,7 @@ def test_aab_publica_a_mais_b_uma_a_oficial_outra_categoria_b_b_oficial():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[identidade_a, identidade_b])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert len(revisado.candidatos_publicaveis) == 2  # uma A + B oficiais
     assert len(revisado.ocorrencias_nao_publicaveis) == 1  # só a segunda A
@@ -2464,7 +2466,7 @@ def test_aab_publicar_zero_todas_categoria_a_nunca_b_falsa():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.candidatos_publicaveis == []
     assert len(revisado.ocorrencias_nao_publicaveis) == 3
@@ -2491,7 +2493,7 @@ def test_invariante_ocorrencia_oficial_nunca_aparece_como_nao_publicavel():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[identidade_a, identidade_b])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     ids_oficiais = {id(c.ocorrencia) for c in revisado.candidatos_publicaveis}
     ids_nao_publicaveis = {id(c.ocorrencia) for c in revisado.ocorrencias_nao_publicaveis}
@@ -2502,7 +2504,7 @@ def test_invariante_no_maximo_uma_representante_por_identidade():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[identidade_a, identidade_b])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     identidades = identidades_ocorrencias(revisao.ocorrencias)
     mapa_identidade = dict(zip((id(oc) for oc in revisao.ocorrencias), identidades))
@@ -2514,7 +2516,7 @@ def test_invariante_categoria_b_so_existe_se_identidade_foi_publicada():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[identidade_a])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     identidades = identidades_ocorrencias(revisao.ocorrencias)
     mapa_identidade = dict(zip((id(oc) for oc in revisao.ocorrencias), identidades))
@@ -2528,7 +2530,7 @@ def test_invariante_publicar_zero_nunca_produz_categoria_b():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, obs_publicaveis=[])
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert not any(
         c.categoria is CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA
@@ -2540,7 +2542,7 @@ def test_invariante_adiar_nunca_produz_nao_publicaveis():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
     decisoes = _decidir(revisao, acao=AcaoDecisao.ADIAR)
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes)
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), decisoes, ano_exercicio=2026, mes_referencia=8)
 
     assert revisado.ocorrencias_nao_publicaveis == []
 
@@ -2548,8 +2550,242 @@ def test_invariante_adiar_nunca_produz_nao_publicaveis():
 def test_invariante_pendente_nunca_produz_nao_publicaveis():
     revisao, identidade_a, identidade_b = _tres_fisicas_mesma_ob()
 
-    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {})  # nenhuma decisão registrada
+    revisado = aplicar_decisoes(_resultado(revisoes=[revisao]), {}, ano_exercicio=2026, mes_referencia=8)  # nenhuma decisão registrada
 
     assert revisado.revisoes[0].estado is EstadoRevisao.PENDENTE
     assert revisado.ocorrencias_nao_publicaveis == []
     assert revisado.pode_gerar_relatorio is False
+
+
+# ============================================================================
+# Sprint D.1 (Plano de Migração E-Fisco, QA manual — "decisão anterior
+# reaplicada invisível" + "cobertura parcial") — `aplicar_decisoes` passa a
+# exigir `ano_exercicio`/`mes_referencia` (a competência sendo preparada
+# AGORA) e aceitar `cobertura_efisco_ate` (a cobertura E-Fisco em vigor
+# agora). Nenhum dos dois muda QUAIS decisões são reaproveitadas (G06
+# continua intocado, ver testes acima que só passam os dois novos parâmetros
+# sem testar seu efeito) — estes testes cobrem especificamente o efeito
+# NOVO: tornar visível a reaplicação entre execuções
+# (`RevisaoComEstado.reaplicada_de_execucao_anterior`) e invalidar uma
+# decisão tomada sob cobertura parcial que depois avançou
+# (`DecisaoHumana.cobertura_efisco_ate`).
+# ============================================================================
+
+
+def test_reaplicada_de_execucao_anterior_true_quando_competencia_diverge():
+    """Decisão registrada para julho/2026, reaproveitada ao preparar
+    agosto/2026 (mesma evidência, G06 preservado) — a revisão resultante
+    precisa marcar `reaplicada_de_execucao_anterior=True`: antes desta
+    correção o reaproveitamento já acontecia, mas era indistinguível de uma
+    decisão tomada agora mesmo (achado real do QA manual)."""
+    revisao = _revisao()
+    decisao = registrar_decisao(
+        revisao,
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        obs_publicaveis=["2026OB000001", "2026OB000002"],
+        ano_exercicio=2026,
+        mes_referencia=7,
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+    assert revisado.revisoes[0].reaplicada_de_execucao_anterior is True
+
+
+def test_reaplicada_de_execucao_anterior_false_quando_decidida_na_mesma_execucao():
+    """Controle — decidida NA MESMA competência que está sendo preparada
+    agora nunca é marcada como reaplicada (é a decisão desta execução, não
+    uma reaproveitada de outra)."""
+    revisao = _revisao()
+    decisao = registrar_decisao(
+        revisao,
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        obs_publicaveis=["2026OB000001", "2026OB000002"],
+        ano_exercicio=2026,
+        mes_referencia=8,
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+    assert revisado.revisoes[0].reaplicada_de_execucao_anterior is False
+
+
+def test_reaplicada_de_execucao_anterior_tambem_marcada_para_adiada():
+    """A flag não é exclusiva de DECIDIDA — uma ADIADA reaproveitada de
+    outra competência também precisa ficar visível para quem revisa."""
+    revisao = _revisao()
+    decisao = registrar_decisao(revisao, acao=AcaoDecisao.ADIAR, autor="servidor.teste", ano_exercicio=2026, mes_referencia=7)
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8)
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.ADIADA
+    assert revisado.revisoes[0].reaplicada_de_execucao_anterior is True
+
+
+def test_reaplicada_de_execucao_anterior_false_quando_nenhuma_decisao():
+    """Nunca `True` quando não há decisão nenhuma (nada a reaplicar) —
+    controle explícito do contrato do campo (default `False` de
+    `RevisaoComEstado`, nunca setado no ramo PENDENTE)."""
+    resultado = _resultado(revisoes=[_revisao()])
+
+    revisado = aplicar_decisoes(resultado, {}, ano_exercicio=2026, mes_referencia=8)
+
+    assert revisado.revisoes[0].decisao is None
+    assert revisado.revisoes[0].reaplicada_de_execucao_anterior is False
+
+
+def test_decisao_sob_cobertura_parcial_permanece_valida_quando_cobertura_nao_avancou():
+    """Decisão tomada quando a Base E-Fisco só cobria pagamentos até
+    31/07/2026 (`aceitar_cobertura_parcial=True` no service) continua
+    DECIDIDA se a cobertura em vigor agora é EXATAMENTE a mesma — nada
+    avançou de verdade, então nada deveria pedir revisão de novo."""
+    revisao = _revisao()
+    decisao = registrar_decisao(
+        revisao,
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        obs_publicaveis=["2026OB000001", "2026OB000002"],
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 7, 31),
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(
+        resultado,
+        {decisao.identidade_grupo: decisao},
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 7, 31),
+    )
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+
+
+def test_cobertura_ampliada_invalida_decisao_tomada_sob_cobertura_parcial():
+    """A mesma decisão do teste acima, mas a cobertura real da Base E-Fisco
+    AVANÇOU (mais pagamentos confirmados desde então) — mesmo sem NENHUM
+    campo de evidência (fingerprint) ter mudado, a decisão precisa virar
+    DESATUALIZADA: foi tomada sobre um universo comprovadamente incompleto,
+    e agora existe mais fonte disponível para revisar."""
+    revisao = _revisao()
+    decisao = registrar_decisao(
+        revisao,
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        obs_publicaveis=["2026OB000001", "2026OB000002"],
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 7, 31),
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(
+        resultado,
+        {decisao.identidade_grupo: decisao},
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 8, 15),
+    )
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
+    assert revisado.pode_gerar_relatorio is False
+    assert revisado.candidatos_publicaveis == []
+
+
+def test_cobertura_completa_apos_parcial_tambem_invalida_decisao():
+    """Caso limite do teste acima: a fonte deixou de ter QUALQUER limitação
+    de cobertura (`cobertura_efisco_ate=None` na chamada atual) — ainda
+    assim invalida uma decisão tomada sob cobertura parcial, pelo mesmo
+    motivo (o universo disponível na época da decisão era comprovadamente
+    menor do que o de agora)."""
+    revisao = _revisao()
+    decisao = registrar_decisao(
+        revisao,
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        obs_publicaveis=["2026OB000001", "2026OB000002"],
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 7, 31),
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(
+        resultado, {decisao.identidade_grupo: decisao}, ano_exercicio=2026, mes_referencia=8, cobertura_efisco_ate=None
+    )
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DESATUALIZADA
+
+
+def test_decisao_sob_cobertura_completa_nunca_e_afetada_por_cobertura_atual():
+    """Controle — decisão tomada quando a cobertura já era COMPLETA
+    (`cobertura_efisco_ate=None` na própria decisão) nunca é invalidada por
+    esta checagem nova, seja qual for a cobertura em vigor agora — só o caso
+    descoberto no QA (decisão tomada sob universo comprovadamente
+    incompleto) precisa desta proteção extra."""
+    revisao = _revisao()
+    decisao = registrar_decisao(
+        revisao,
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.teste",
+        obs_publicaveis=["2026OB000001", "2026OB000002"],
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=None,
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(
+        resultado,
+        {decisao.identidade_grupo: decisao},
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 6, 30),
+    )
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+
+
+def test_retrocompatibilidade_decisao_legada_sem_novos_campos_de_execucao():
+    """Decisão persistida ANTES desta correção (formato legado: sem
+    `ano_exercicio`/`mes_referencia`/`cobertura_efisco_ate` — construída
+    diretamente via `DecisaoHumana`, nunca via `registrar_decisao`, para
+    simular exatamente o que `persistencia_decisoes._decisao_de_dict`
+    devolve para um registro antigo) continua sendo aplicada normalmente:
+    nunca DESATUALIZADA só por faltar os campos novos (a checagem de
+    cobertura só age quando `decisao.cobertura_efisco_ate is not None`), e é
+    sinalizada como reaplicada — não há como provar "decidida agora" sem o
+    dado, e o lado seguro é sinalizar reaplicação (mesmo princípio já usado
+    para `_decisao_e_de_outra_execucao`)."""
+    revisao = _revisao()
+    decisao_legada = DecisaoHumana(
+        identidade_grupo=identidade_grupo(revisao.regra, ["2026OB000001", "2026OB000002"]),
+        regra=revisao.regra,
+        obs_envolvidas=frozenset(["2026OB000001", "2026OB000002"]),
+        fingerprint_evidencias=calcular_fingerprint(revisao.ocorrencias),
+        acao=AcaoDecisao.PUBLICAR,
+        autor="servidor.antigo",
+        decidido_em=datetime(2026, 1, 10, 9, 0, 0, tzinfo=timezone.utc),
+        obs_publicaveis=frozenset(["2026OB000001", "2026OB000002"]),
+    )
+    resultado = _resultado(revisoes=[revisao])
+
+    revisado = aplicar_decisoes(
+        resultado,
+        {decisao_legada.identidade_grupo: decisao_legada},
+        ano_exercicio=2026,
+        mes_referencia=8,
+        cobertura_efisco_ate=date(2026, 8, 15),
+    )
+
+    assert revisado.revisoes[0].estado is EstadoRevisao.DECIDIDA
+    assert revisado.revisoes[0].reaplicada_de_execucao_anterior is True
+    assert revisado.pode_gerar_relatorio is True

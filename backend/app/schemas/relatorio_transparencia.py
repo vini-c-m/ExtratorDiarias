@@ -24,15 +24,21 @@ class ParametrosRelatorioBase(BaseModel):
     ocorrências). Informado, é lido/cruzado por OB e passa a integrar a
     linha publicável/fingerprint em toda operação que usa esta base
     (`/preparar`, `/revisoes`, `/revisoes/{id}/decisao`, `/gerar`) — mesmo
-    padrão de propagação de `caminho_base_ordens_bancarias`/
+    padrão de propagação de `caminho_base_efisco`/
     `caminho_controle_dimcac`, nenhum estado paralelo."""
 
-    caminho_base_ordens_bancarias: str
+    caminho_base_efisco: str
     caminho_controle_dimcac: str
     ano_exercicio: int
     mes_referencia: int = Field(ge=1, le=12)
     caminho_decisoes: str
     caminho_planilha_passagens: str | None = None
+    # Sprint D.1 (P2, cobertura parcial E-Fisco) — `False` (padrão) preserva
+    # EXATAMENTE o comportamento anterior: cobertura insuficiente sempre
+    # bloqueia (HTTP 422). `True` só depois de o usuário já ter visto o
+    # aviso (data-limite comprovada) e escolhido explicitamente prosseguir
+    # — nunca o padrão implícito.
+    aceitar_cobertura_parcial: bool = False
 
 
 class ParametrosRelatorioQuery(ParametrosRelatorioBase):
@@ -80,6 +86,13 @@ class RevisaoResposta(BaseModel):
     decidido_em: datetime | None = None
     observacao: str | None = None
     obs_publicaveis: list[str] | None = None
+    # Sprint D.1 (QA manual — decisão anterior reaplicada invisível) —
+    # `True` quando `autor`/`decidido_em` acima vêm de uma decisão tomada
+    # numa competência/execução DIFERENTE da que está sendo preparada
+    # agora, reaplicada porque a evidência continua válida (nunca é preciso
+    # decidir de novo) — a tela de revisão deve deixar isso visível, nunca
+    # apresentar como se tivesse acabado de acontecer.
+    reaplicada_de_execucao_anterior: bool = False
 
 
 class ResumoRelatorioResposta(BaseModel):
@@ -93,6 +106,18 @@ class ResumoRelatorioResposta(BaseModel):
     total_ocorrencias_nao_publicaveis: int
     pode_gerar_relatorio: bool
     revisoes: list[RevisaoResposta]
+    # Plano de Migração E-Fisco, Sprint D — diagnóstico de qualidade da
+    # fonte (`gates_qualidade_efisco.avaliar_qualidade_efisco`): nunca
+    # bloqueante por si só (um bloqueio real já virou HTTP 422 antes de
+    # chegar aqui) — só informativo, para a tela de revisão sinalizar.
+    avisos_qualidade_fonte: list[str] = []
+    diagnosticos_qualidade_fonte: list[str] = []
+    # Sprint D.1 — ver `RevisaoResposta.reaplicada_de_execucao_anterior`
+    # (contagem) e `gates_qualidade_efisco` (cobertura parcial): nunca
+    # afetam `pode_gerar_relatorio`, só informam.
+    total_decisoes_reaproveitadas: int = 0
+    cobertura_parcial: bool = False
+    cobertura_efisco_ate: date | None = None
 
 
 class ListaRevisoesResposta(BaseModel):
@@ -200,7 +225,7 @@ class StatusTemplateResposta(BaseModel):
 
 class ParametrosConfiguracaoFontesQuery(BaseModel):
     """`GET /fontes` — Micro-sprint UX operacional (persistência dos
-    caminhos de Base de Ordens Bancárias e Controle DIMCAC)."""
+    caminhos de Base E-Fisco e Controle DIMCAC)."""
 
     caminho_configuracao_fontes: str
 
@@ -208,10 +233,10 @@ class ParametrosConfiguracaoFontesQuery(BaseModel):
 class RequisicaoConfigurarFontes(BaseModel):
     """`POST /fontes` — atualização parcial: cada campo é opcional
     (`None` preserva o valor já persistido) para permitir selecionar Base
-    OB, Controle DIMCAC e Planilha de Passagens em momentos diferentes."""
+    E-Fisco, Controle DIMCAC e Planilha de Passagens em momentos diferentes."""
 
     caminho_configuracao_fontes: str
-    caminho_base_ordens_bancarias: str | None = None
+    caminho_base_efisco: str | None = None
     caminho_controle_dimcac: str | None = None
     # Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — terceira fonte,
     # mesmo padrão de atualização parcial dos dois campos acima.
@@ -225,6 +250,6 @@ class StatusArquivoFonteResposta(BaseModel):
 
 
 class StatusFontesResposta(BaseModel):
-    base_ordens_bancarias: StatusArquivoFonteResposta
+    base_efisco: StatusArquivoFonteResposta
     controle_dimcac: StatusArquivoFonteResposta
     planilha_passagens: StatusArquivoFonteResposta

@@ -1,7 +1,6 @@
 """Micro-sprint UX operacional — testes do módulo de configuração isolada
-dos caminhos de Base de Ordens Bancárias e Controle DIMCAC do Relatório de
-Diárias — Portal da Transparência. Dados 100% sintéticos, nenhum arquivo
-real."""
+dos caminhos de Base E-Fisco e Controle DIMCAC do Relatório de Diárias —
+Portal da Transparência. Dados 100% sintéticos, nenhum arquivo real."""
 
 import json
 import multiprocessing
@@ -25,11 +24,11 @@ def test_persistir_e_carregar_configuracao_fontes(tmp_path):
 
     persistida = config.persistir_configuracao_fontes(
         caminho_configuracao,
-        caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx",
+        caminho_base_efisco="C:\\fake\\ob.xlsx",
         caminho_controle_dimcac="C:\\fake\\dimcac.xlsx",
     )
 
-    assert persistida.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert persistida.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert persistida.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
     assert persistida.atualizado_em
 
@@ -41,11 +40,11 @@ def test_persistir_configuracao_fontes_grava_json_legivel(tmp_path):
     caminho_configuracao = tmp_path / "configuracao.json"
 
     config.persistir_configuracao_fontes(
-        str(caminho_configuracao), caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx"
+        str(caminho_configuracao), caminho_base_efisco="C:\\fake\\ob.xlsx"
     )
 
     conteudo = json.loads(caminho_configuracao.read_text(encoding="utf-8"))
-    assert conteudo["caminho_base_ordens_bancarias"] == "C:\\fake\\ob.xlsx"
+    assert conteudo["caminho_base_efisco"] == "C:\\fake\\ob.xlsx"
     assert conteudo["caminho_controle_dimcac"] is None
 
 
@@ -59,24 +58,24 @@ def test_configurar_apenas_base_ob_preserva_controle_ja_configurado(tmp_path):
     config.persistir_configuracao_fontes(caminho_configuracao, caminho_controle_dimcac="C:\\fake\\dimcac.xlsx")
 
     atualizada = config.persistir_configuracao_fontes(
-        caminho_configuracao, caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx"
+        caminho_configuracao, caminho_base_efisco="C:\\fake\\ob.xlsx"
     )
 
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert atualizada.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
 
 
 def test_configurar_apenas_controle_preserva_base_ob_ja_configurada(tmp_path):
     caminho_configuracao = str(tmp_path / "configuracao.json")
     config.persistir_configuracao_fontes(
-        caminho_configuracao, caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx"
+        caminho_configuracao, caminho_base_efisco="C:\\fake\\ob.xlsx"
     )
 
     atualizada = config.persistir_configuracao_fontes(
         caminho_configuracao, caminho_controle_dimcac="C:\\fake\\dimcac.xlsx"
     )
 
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert atualizada.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
 
 
@@ -99,7 +98,7 @@ def test_configurar_apenas_passagens_preserva_base_ob_e_controle_ja_configurados
     caminho_configuracao = str(tmp_path / "configuracao.json")
     config.persistir_configuracao_fontes(
         caminho_configuracao,
-        caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx",
+        caminho_base_efisco="C:\\fake\\ob.xlsx",
         caminho_controle_dimcac="C:\\fake\\dimcac.xlsx",
     )
 
@@ -107,7 +106,7 @@ def test_configurar_apenas_passagens_preserva_base_ob_e_controle_ja_configurados
         caminho_configuracao, caminho_planilha_passagens="C:\\fake\\passagens.ods"
     )
 
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert atualizada.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
     assert atualizada.caminho_planilha_passagens == "C:\\fake\\passagens.ods"
 
@@ -119,10 +118,10 @@ def test_configurar_base_ob_preserva_passagens_ja_configurada(tmp_path):
     )
 
     atualizada = config.persistir_configuracao_fontes(
-        caminho_configuracao, caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx"
+        caminho_configuracao, caminho_base_efisco="C:\\fake\\ob.xlsx"
     )
 
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert atualizada.caminho_planilha_passagens == "C:\\fake\\passagens.ods"
 
 
@@ -135,7 +134,7 @@ def test_configuracao_persistida_antes_do_campo_passagens_existir_carrega_com_no
     caminho_configuracao.write_text(
         json.dumps(
             {
-                "caminho_base_ordens_bancarias": "C:\\fake\\ob.xlsx",
+                "caminho_base_efisco": "C:\\fake\\ob.xlsx",
                 "caminho_controle_dimcac": None,
                 "atualizado_em": "2026-01-01T00:00:00",
             }
@@ -145,23 +144,107 @@ def test_configuracao_persistida_antes_do_campo_passagens_existir_carrega_com_no
 
     carregada = config.carregar_configuracao_fontes(str(caminho_configuracao))
 
-    assert carregada.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert carregada.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert carregada.caminho_planilha_passagens is None
+
+
+# ============================================================================
+# Plano de Migração E-Fisco, Sprint D — retrocompatibilidade de leitura da
+# chave legada `caminho_base_ordens_bancarias` (nome do ClickView, gravado
+# por qualquer instalação anterior a esta Sprint) para `caminho_base_efisco`
+# (nome novo). O usuário nunca precisa selecionar a fonte de novo só por
+# causa do rename.
+# ============================================================================
+
+
+def test_configuracao_legada_com_chave_antiga_de_base_ob_e_lida_no_campo_novo(tmp_path):
+    """Um `configuracao.json` gravado por uma instalação anterior à Sprint D
+    só tem a chave ANTIGA (`caminho_base_ordens_bancarias`) — nunca a nova.
+    `carregar_configuracao_fontes` precisa reconhecer isso sem exigir que o
+    usuário selecione a Base E-Fisco de novo."""
+    caminho_configuracao = tmp_path / "configuracao_legada_clickview.json"
+    caminho_configuracao.write_text(
+        json.dumps(
+            {
+                "caminho_base_ordens_bancarias": "C:\\fake\\base_ob_legada.xlsx",
+                "caminho_controle_dimcac": "C:\\fake\\dimcac.xlsx",
+                "caminho_planilha_passagens": "C:\\fake\\passagens.ods",
+                "atualizado_em": "2026-08-01T00:00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    carregada = config.carregar_configuracao_fontes(str(caminho_configuracao))
+
+    assert carregada.caminho_base_efisco == "C:\\fake\\base_ob_legada.xlsx"
+    assert carregada.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
+    assert carregada.caminho_planilha_passagens == "C:\\fake\\passagens.ods"
+
+
+def test_configuracao_legada_e_migrada_automaticamente_na_proxima_escrita(tmp_path):
+    """Depois de carregar uma configuração legada (chave antiga) e persistir
+    QUALQUER campo (mesmo um campo diferente, ex. Controle DIMCAC), o arquivo
+    reescrito no disco passa a usar a chave NOVA — migração automática,
+    silenciosa, sem nenhum passo manual."""
+    caminho_configuracao = tmp_path / "configuracao.json"
+    caminho_configuracao.write_text(
+        json.dumps(
+            {
+                "caminho_base_ordens_bancarias": "C:\\fake\\base_ob_legada.xlsx",
+                "caminho_controle_dimcac": None,
+                "atualizado_em": "2026-08-01T00:00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config.persistir_configuracao_fontes(str(caminho_configuracao), caminho_controle_dimcac="C:\\fake\\dimcac.xlsx")
+
+    conteudo = json.loads(caminho_configuracao.read_text(encoding="utf-8"))
+    assert "caminho_base_efisco" in conteudo
+    assert "caminho_base_ordens_bancarias" not in conteudo
+    assert conteudo["caminho_base_efisco"] == "C:\\fake\\base_ob_legada.xlsx"  # preservado, nunca perdido na migração
+    assert conteudo["caminho_controle_dimcac"] == "C:\\fake\\dimcac.xlsx"
+
+    recarregada = config.carregar_configuracao_fontes(str(caminho_configuracao))
+    assert recarregada.caminho_base_efisco == "C:\\fake\\base_ob_legada.xlsx"
+
+
+def test_configuracao_com_chave_nova_e_lida_normalmente_sem_fallback(tmp_path):
+    """Uma configuração já no formato novo (gravada por esta versão ou
+    posterior) usa a chave nova diretamente — o fallback para a chave legada
+    só entra em ação quando a nova está ausente."""
+    caminho_configuracao = tmp_path / "configuracao_nova.json"
+    caminho_configuracao.write_text(
+        json.dumps(
+            {
+                "caminho_base_efisco": "C:\\fake\\efisco.xlsx",
+                "caminho_controle_dimcac": None,
+                "atualizado_em": "2026-09-01T00:00:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    carregada = config.carregar_configuracao_fontes(str(caminho_configuracao))
+
+    assert carregada.caminho_base_efisco == "C:\\fake\\efisco.xlsx"
 
 
 def test_configurar_nova_base_ob_sobrescreve_apenas_esse_campo(tmp_path):
     caminho_configuracao = str(tmp_path / "configuracao.json")
     config.persistir_configuracao_fontes(
         caminho_configuracao,
-        caminho_base_ordens_bancarias="C:\\fake\\ob_v1.xlsx",
+        caminho_base_efisco="C:\\fake\\ob_v1.xlsx",
         caminho_controle_dimcac="C:\\fake\\dimcac.xlsx",
     )
 
     atualizada = config.persistir_configuracao_fontes(
-        caminho_configuracao, caminho_base_ordens_bancarias="C:\\fake\\ob_v2.xlsx"
+        caminho_configuracao, caminho_base_efisco="C:\\fake\\ob_v2.xlsx"
     )
 
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob_v2.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob_v2.xlsx"
     assert atualizada.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
 
 
@@ -191,16 +274,16 @@ def test_carregar_configuracao_fontes_sem_campo_obrigatorio(tmp_path):
     "conteudo",
     [
         json.dumps(
-            {"caminho_base_ordens_bancarias": 123, "caminho_controle_dimcac": None, "atualizado_em": "2026-01-01T00:00:00"}
+            {"caminho_base_efisco": 123, "caminho_controle_dimcac": None, "atualizado_em": "2026-01-01T00:00:00"}
         ),
         json.dumps(
             {
-                "caminho_base_ordens_bancarias": None,
+                "caminho_base_efisco": None,
                 "caminho_controle_dimcac": ["a", "b"],
                 "atualizado_em": "2026-01-01T00:00:00",
             }
         ),
-        json.dumps({"caminho_base_ordens_bancarias": None, "caminho_controle_dimcac": None, "atualizado_em": 20260101}),
+        json.dumps({"caminho_base_efisco": None, "caminho_controle_dimcac": None, "atualizado_em": 20260101}),
     ],
 )
 def test_carregar_configuracao_fontes_tipos_estruturalmente_invalidos(tmp_path, conteudo):
@@ -241,7 +324,7 @@ def test_carregar_configuracao_fontes_bytes_utf8_invalidos(tmp_path):
 def test_carregar_configuracao_fontes_permission_error(tmp_path, monkeypatch):
     caminho_configuracao = tmp_path / "sem_permissao.json"
     caminho_configuracao.write_text(
-        '{"caminho_base_ordens_bancarias": null, "caminho_controle_dimcac": null, "atualizado_em": "y"}',
+        '{"caminho_base_efisco": null, "caminho_controle_dimcac": null, "atualizado_em": "y"}',
         encoding="utf-8",
     )
 
@@ -257,7 +340,7 @@ def test_carregar_configuracao_fontes_permission_error(tmp_path, monkeypatch):
 def test_carregar_configuracao_fontes_oserror_generico(tmp_path, monkeypatch):
     caminho_configuracao = tmp_path / "falha_io.json"
     caminho_configuracao.write_text(
-        '{"caminho_base_ordens_bancarias": null, "caminho_controle_dimcac": null, "atualizado_em": "y"}',
+        '{"caminho_base_efisco": null, "caminho_controle_dimcac": null, "atualizado_em": "y"}',
         encoding="utf-8",
     )
 
@@ -310,7 +393,7 @@ def test_persistir_configuracao_fontes_concorrente_campos_diferentes_sao_mesclad
         else:
             erros[nome] = None
 
-    t1 = threading.Thread(target=_tarefa, args=("A",), kwargs={"caminho_base_ordens_bancarias": "C:\\fake\\ob.xlsx"})
+    t1 = threading.Thread(target=_tarefa, args=("A",), kwargs={"caminho_base_efisco": "C:\\fake\\ob.xlsx"})
     t2 = threading.Thread(
         target=_tarefa, args=("B",), kwargs={"caminho_controle_dimcac": "C:\\fake\\dimcac.xlsx"}
     )
@@ -324,7 +407,7 @@ def test_persistir_configuracao_fontes_concorrente_campos_diferentes_sao_mesclad
     json.loads(conteudo_bruto)  # nunca corrompe — sempre JSON válido
 
     final = config.carregar_configuracao_fontes(caminho_configuracao)  # leitura real, sem o atraso injetado
-    assert final.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"  # nenhum dos dois updates foi perdido
+    assert final.caminho_base_efisco == "C:\\fake\\ob.xlsx"  # nenhum dos dois updates foi perdido
     assert final.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
 
 
@@ -333,7 +416,7 @@ def test_persistir_configuracao_fontes_concorrente_tres_campos_todos_mesclados(t
     _patchear_leitura_com_atraso(monkeypatch, atraso_s=0.02)
 
     tarefas_kwargs = [
-        {"caminho_base_ordens_bancarias": "C:\\fake\\ob.xlsx"},
+        {"caminho_base_efisco": "C:\\fake\\ob.xlsx"},
         {"caminho_controle_dimcac": "C:\\fake\\dimcac.xlsx"},
         {"caminho_planilha_passagens": "C:\\fake\\passagens.ods"},
     ]
@@ -360,14 +443,14 @@ def test_persistir_configuracao_fontes_concorrente_tres_campos_todos_mesclados(t
     json.loads(conteudo_bruto)  # nunca corrompe
 
     final = config.carregar_configuracao_fontes(caminho_configuracao)
-    assert final.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert final.caminho_base_efisco == "C:\\fake\\ob.xlsx"
     assert final.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
     assert final.caminho_planilha_passagens == "C:\\fake\\passagens.ods"
 
 
 def test_persistir_configuracao_fontes_excecao_durante_escrita_nao_deixa_estado_invalido(tmp_path, monkeypatch):
     caminho_configuracao = tmp_path / "configuracao.json"
-    config.persistir_configuracao_fontes(str(caminho_configuracao), caminho_base_ordens_bancarias="C:\\fake\\ob_v1.xlsx")
+    config.persistir_configuracao_fontes(str(caminho_configuracao), caminho_base_efisco="C:\\fake\\ob_v1.xlsx")
     conteudo_antes = caminho_configuracao.read_text(encoding="utf-8")
 
     def _write_text_falha(self, *args, **kwargs):
@@ -376,7 +459,7 @@ def test_persistir_configuracao_fontes_excecao_durante_escrita_nao_deixa_estado_
     monkeypatch.setattr("pathlib.Path.write_text", _write_text_falha)
 
     with pytest.raises(OSError):
-        config.persistir_configuracao_fontes(str(caminho_configuracao), caminho_base_ordens_bancarias="C:\\fake\\ob_v2.xlsx")
+        config.persistir_configuracao_fontes(str(caminho_configuracao), caminho_base_efisco="C:\\fake\\ob_v2.xlsx")
 
     # A falha aconteceu escrevendo o `.tmp`, antes de qualquer `os.replace` —
     # o arquivo real permanece exatamente como estava.
@@ -387,9 +470,9 @@ def test_persistir_configuracao_fontes_excecao_durante_escrita_nao_deixa_estado_
     # subsequente, sem a falha simulada, tem que funcionar normalmente,
     # nunca travar (deadlock).
     atualizada = config.persistir_configuracao_fontes(
-        str(caminho_configuracao), caminho_base_ordens_bancarias="C:\\fake\\ob_v2.xlsx"
+        str(caminho_configuracao), caminho_base_efisco="C:\\fake\\ob_v2.xlsx"
     )
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob_v2.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob_v2.xlsx"
 
 
 # ============================================================================
@@ -406,7 +489,7 @@ def test_persistir_configuracao_fontes_multiprocesso_campos_diferentes_mesclados
     fila = multiprocessing.Queue()
     p1 = multiprocessing.Process(
         target=executar_e_reportar,
-        args=(fila, config.persistir_configuracao_fontes, (caminho_configuracao,), {"caminho_base_ordens_bancarias": "C:\\fake\\ob.xlsx"}),
+        args=(fila, config.persistir_configuracao_fontes, (caminho_configuracao,), {"caminho_base_efisco": "C:\\fake\\ob.xlsx"}),
     )
     p2 = multiprocessing.Process(
         target=executar_e_reportar,
@@ -423,7 +506,7 @@ def test_persistir_configuracao_fontes_multiprocesso_campos_diferentes_mesclados
     json.loads(conteudo_bruto)  # nunca corrompe
 
     final = config.carregar_configuracao_fontes(caminho_configuracao)
-    assert final.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"  # nenhum dos dois updates foi perdido
+    assert final.caminho_base_efisco == "C:\\fake\\ob.xlsx"  # nenhum dos dois updates foi perdido
     assert final.caminho_controle_dimcac == "C:\\fake\\dimcac.xlsx"
 
 
@@ -444,7 +527,7 @@ def test_persistir_configuracao_fontes_processo_morto_segurando_trava_recupera_d
     assert not processo.is_alive()
 
     inicio = time.monotonic()
-    atualizada = config.persistir_configuracao_fontes(caminho_configuracao, caminho_base_ordens_bancarias="C:\\fake\\ob.xlsx")
+    atualizada = config.persistir_configuracao_fontes(caminho_configuracao, caminho_base_efisco="C:\\fake\\ob.xlsx")
     duracao = time.monotonic() - inicio
     assert duracao < 8  # recupera bem antes do timeout de 10s — nenhum lock órfão
-    assert atualizada.caminho_base_ordens_bancarias == "C:\\fake\\ob.xlsx"
+    assert atualizada.caminho_base_efisco == "C:\\fake\\ob.xlsx"

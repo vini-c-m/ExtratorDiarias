@@ -8,15 +8,37 @@ responsabilidade exclusiva de `motor_decisao.classificar`).
 **Decisão arquitetural de estado (item 9 da Micro-sprint 3D)**: nenhum
 resultado derivado da reconciliação é persistido entre chamadas. Toda
 operação — inclusive `registrar_decisao_revisao` — reconstrói o estado
-completo a partir das fontes brutas (Base OB + Controle DIMCAC) e das
+completo a partir das fontes brutas (E-Fisco + Controle DIMCAC) e das
 decisões já persistidas, sempre. Isso significa que uma decisão nunca é
 validada contra o que o frontend *acha* que é a evidência atual — ela é
 sempre calculada contra o que as fontes *realmente* dizem no momento do
 registro (item 4 da especificação: "nunca confiar apenas em dados
-enviados pelo frontend"). O custo é reler as duas planilhas a cada
-chamada; o ganho é determinismo e segurança contra decisão tomada sobre
-evidência obsoleta — preferido explicitamente a um cache frágil
-(§9 da especificação da Micro-sprint 3D)."""
+enviados pelo frontend"). O custo é reler as fontes a cada chamada; o
+ganho é determinismo e segurança contra decisão tomada sobre evidência
+obsoleta — preferido explicitamente a um cache frágil (§9 da
+especificação da Micro-sprint 3D).
+
+Plano de Migração E-Fisco, Sprint C — a fonte financeira primária deste
+módulo passou da Base de Ordens Bancárias (ClickView) para a Base E-Fisco
+(`repositorio_efisco` → `filtro_diaria_efisco` → `adaptador_efisco`, já
+homologados nas Sprints A/B). `repositorio_ordens_bancarias.py`
+(ClickView) NÃO é mais importado aqui — nenhum fallback, nenhum pipeline
+duplo: se a Base E-Fisco falhar, a falha propaga como sempre propagou
+para a Base OB (mesmas exceções, ver abaixo), nunca um retorno silencioso
+ao ClickView. Controle DIMCAC e Planilha de Passagens continuam
+exatamente como estavam — nenhuma mudança nesses dois módulos.
+
+Plano de Migração E-Fisco, Sprint D — renomeação coordenada concluída: o
+parâmetro `caminho_base_efisco` e as exceções `BaseEfiscoNaoEncontrada`/
+`EstruturaBaseEfiscoInvalida` (antes `caminho_base_ordens_bancarias`/
+`BaseOBNaoEncontrada`/`EstruturaBaseOBInvalida`, nomes do ClickView) agora
+refletem a fonte real em todo o contrato público — `app/api/
+relatorio_transparencia.py`, `app/schemas/relatorio_transparencia.py` e
+`app/consulta/configuracao_fontes_relatorio_transparencia.py` foram
+atualizados juntos, na mesma Sprint. Retrocompatibilidade da configuração
+persistida (chave JSON antiga) é responsabilidade exclusiva de
+`configuracao_fontes_relatorio_transparencia.ConfiguracaoFontes.from_dict`
+— este módulo nunca lida com o formato legado diretamente."""
 
 import logging
 import os
@@ -42,10 +64,10 @@ from app.consulta.repositorio_controle_dimcac import (
     abrir_controle_dimcac,
     controle_dimcac_por_dh,
 )
-from app.consulta.repositorio_ordens_bancarias import (
-    OrdensBancariasEstruturalmenteInvalida,
-    abrir_base_ordens_bancarias,
-    ordens_bancarias_por_dh,
+from app.consulta.repositorio_efisco import (
+    EfiscoEstruturalmenteInvalido,
+    abrir_base_efisco,
+    linhas_efisco,
 )
 from app.consulta.repositorio_planilha_passagens import (
     EstruturaPlanilhaPassagensInvalida,
@@ -53,8 +75,15 @@ from app.consulta.repositorio_planilha_passagens import (
     abrir_planilha_passagens,
     linhas_passagens_por_ob,
 )
+from app.domain.relatorio_transparencia.adaptador_efisco import ordens_bancarias_por_dh_via_efisco
 from app.domain.relatorio_transparencia.competencia import intervalo_acumulado
 from app.domain.relatorio_transparencia.cruzamento_passagens import anexar_passagens_ao_resultado
+from app.domain.relatorio_transparencia.filtro_diaria_efisco import diaria_elegivel
+from app.domain.relatorio_transparencia.gates_qualidade_efisco import (
+    CoberturaInsuficienteEfisco,
+    DiagnosticoQualidadeEfisco,
+    avaliar_qualidade_efisco,
+)
 from app.domain.relatorio_transparencia.decisao import (
     AcaoDecisao,
     CategoriaNaoPublicada,
@@ -86,8 +115,9 @@ from app.planilha.escritor_relatorio_transparencia import (
 )
 
 __all__ = [
-    "BaseOBNaoEncontrada",
-    "EstruturaBaseOBInvalida",
+    "BaseEfiscoNaoEncontrada",
+    "EstruturaBaseEfiscoInvalida",
+    "CoberturaInsuficienteEfisco",
     "ControleDimcacNaoEncontrado",
     "EstruturaControleInvalida",
     "PlanilhaPassagensNaoEncontrada",
@@ -117,16 +147,15 @@ __all__ = [
 _logger = logging.getLogger(__name__)
 
 
-class BaseOBNaoEncontrada(Exception):
-    """Caminho de Base de Ordens Bancárias informado não existe no
-    filesystem — distinto de estrutura inválida (arquivo existe, mas não
-    tem as colunas/aba esperadas)."""
+class BaseEfiscoNaoEncontrada(Exception):
+    """Caminho da Base E-Fisco informado não existe no filesystem —
+    distinto de estrutura inválida (arquivo existe, mas não tem as
+    colunas/aba esperadas)."""
 
 
-class EstruturaBaseOBInvalida(Exception):
-    """Base de Ordens Bancárias existe, mas `abrir_base_ordens_bancarias`
-    rejeitou (extensão errada, corrompida, colunas obrigatórias
-    ausentes)."""
+class EstruturaBaseEfiscoInvalida(Exception):
+    """Base E-Fisco existe, mas `abrir_base_efisco` rejeitou (extensão
+    errada, corrompida, colunas obrigatórias ausentes)."""
 
 
 class ControleDimcacNaoEncontrado(Exception):
@@ -187,6 +216,12 @@ class RevisaoResumo:
     decidido_em: datetime | None = None
     observacao: str | None = None
     obs_publicaveis: list[str] | None = None
+    # Sprint D.1 (QA manual, transparência de reaproveitamento) — `True`
+    # quando `decisao` já existia de uma execução/competência ANTERIOR a
+    # esta preparação (`decisao.ano_exercicio`/`mes_referencia` diferentes
+    # dos informados agora, ou ausentes por serem de formato legado). Nunca
+    # `True` quando `autor`/`decidido_em` são `None` (nada decidido).
+    reaplicada_de_execucao_anterior: bool = False
     """Histórico da última decisão registrada para este grupo (HOMO-RT-02
     / histórico de decisões) — `None` quando o grupo nunca teve decisão
     (PENDENTE). `obs_publicaveis` é exposto exatamente como persistido
@@ -206,6 +241,26 @@ class ResumoRelatorio:
     pode_gerar_relatorio: bool
     revisoes: list[RevisaoResumo] = field(default_factory=list)
     total_requer_nova_decisao: int = 0
+    # Plano de Migração E-Fisco, Sprint D — diagnóstico de qualidade da
+    # Base E-Fisco (`gates_qualidade_efisco.avaliar_qualidade_efisco`):
+    # nunca bloqueante por si só (um bloqueio real já impediu a
+    # reconstrução antes de chegar aqui, via `CoberturaInsuficienteEfisco`)
+    # — só informativo, para a tela de revisão sinalizar ao usuário.
+    avisos_qualidade_fonte: list[str] = field(default_factory=list)
+    diagnosticos_qualidade_fonte: list[str] = field(default_factory=list)
+    # Sprint D.1 (QA manual) — quantas das revisões DECIDIDA/ADIADA acima
+    # vieram de uma decisão de execução/competência anterior, reaplicada
+    # silenciosamente (nunca reperguntada — G06 preservado); soma de
+    # `RevisaoResposta.reaplicada_de_execucao_anterior`. Puramente
+    # informativo, nunca afeta `pode_gerar_relatorio`.
+    total_decisoes_reaproveitadas: int = 0
+    # Sprint D.1 (P2, cobertura parcial E-Fisco) — `True` quando esta
+    # preparação prosseguiu apesar de cobertura insuficiente (o chamador
+    # aceitou explicitamente `aceitar_cobertura_parcial=True`); `cobertura_
+    # efisco_ate` é a última data de pagamento confirmada USADA — nunca
+    # inventa cobertura além do que a fonte realmente comprova.
+    cobertura_parcial: bool = False
+    cobertura_efisco_ate: date | None = None
 
 
 @dataclass(frozen=True)
@@ -358,13 +413,39 @@ def _proximo_par_de_versao_livre(
     )
 
 
-def _abrir_base_ob(caminho: str):
-    if not os.path.isfile(caminho):
-        raise BaseOBNaoEncontrada(f"Base de Ordens Bancárias não encontrada: {caminho}")
+def _ordens_bancarias_via_efisco(caminho_base_efisco: str, controle_por_dh: dict) -> tuple[dict, list, list]:
+    """Plano de Migração E-Fisco, Sprint C — substitui `_abrir_base_ob` +
+    `ordens_bancarias_por_dh` (Base OB/ClickView) no pipeline produtivo.
+    Abre a Base E-Fisco, aplica o filtro de diária elegível já homologado
+    (`filtro_diaria_efisco.diaria_elegivel`, Sprint A) e adapta para
+    `OrdemBancaria` usando o Controle DIMCAC já lido (`adaptador_efisco`,
+    Sprint B). Devolve `(por_dh, linhas_brutas, linhas_elegiveis)`: `por_dh`
+    tem exatamente a mesma forma (`dict[str, list[OrdemBancaria]]`) que
+    `ordens_bancarias_por_dh` sempre devolveu, para que `motor_
+    reconciliacao.reconciliar` (chamado logo depois) não precise de nenhuma
+    mudança; `linhas_brutas`/`linhas_elegiveis` (Sprint D) alimentam
+    `gates_qualidade_efisco.avaliar_qualidade_efisco`, chamado por quem
+    invoca esta função.
+
+    Mesma ordem de checagem/mesmas exceções públicas de sempre
+    (`BaseEfiscoNaoEncontrada`/`EstruturaBaseEfiscoInvalida` — nomes históricos,
+    ver docstring do módulo): arquivo ausente é checado ANTES de tentar
+    abrir (mesmo padrão já usado para a Base OB), para que "não
+    encontrado" (404 na API) nunca seja confundido com "estrutura
+    inválida" (422). Nenhum fallback: se `abrir_base_efisco`/`linhas_
+    efisco` falhar, a exceção propaga — `repositorio_ordens_bancarias.py`
+    (ClickView) nem é importado neste módulo."""
+    if not os.path.isfile(caminho_base_efisco):
+        raise BaseEfiscoNaoEncontrada(f"Base E-Fisco não encontrada: {caminho_base_efisco}")
     try:
-        return abrir_base_ordens_bancarias(caminho)
-    except OrdensBancariasEstruturalmenteInvalida as erro:
-        raise EstruturaBaseOBInvalida(str(erro)) from erro
+        planilha_efisco = abrir_base_efisco(caminho_base_efisco)
+    except EfiscoEstruturalmenteInvalido as erro:
+        raise EstruturaBaseEfiscoInvalida(str(erro)) from erro
+
+    resultado_leitura = linhas_efisco(planilha_efisco)
+    linhas_elegiveis = [linha for linha in resultado_leitura.linhas if diaria_elegivel(linha)]
+    resultado_adaptacao = ordens_bancarias_por_dh_via_efisco(linhas_elegiveis, controle_por_dh)
+    return resultado_adaptacao.por_dh, resultado_leitura.linhas, linhas_elegiveis
 
 
 def _abrir_controle(caminho: str):
@@ -378,13 +459,14 @@ def _abrir_controle(caminho: str):
 
 def _montar_resultado_revisado(
     *,
-    caminho_base_ordens_bancarias: str,
+    caminho_base_efisco: str,
     caminho_controle_dimcac: str,
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
     caminho_planilha_passagens: str | None = None,
-) -> ResultadoRevisado:
+    aceitar_cobertura_parcial: bool = False,
+) -> tuple[ResultadoRevisado, DiagnosticoQualidadeEfisco]:
     """Núcleo único de reconstrução — reaproveitado por `preparar_relatorio`,
     `listar_revisoes`, `registrar_decisao_revisao` e `gerar_relatorio_xlsx`.
     Nunca lê nem escreve nada além do que os componentes já homologados
@@ -399,16 +481,53 @@ def _montar_resultado_revisado(
     Passagens é lida e cruzada por OB (Sprint 1/2) e anexada ao resultado
     JÁ CLASSIFICADO por `classificar()` (RN01-RN07), ANTES de
     `aplicar_decisoes` — para que o fingerprint calculado ali já reflita o
-    Valor da Passagem (HOMO-RT-06)."""
-    planilha_ob = _abrir_base_ob(caminho_base_ordens_bancarias)
-    resultado_ob = ordens_bancarias_por_dh(planilha_ob)
+    Valor da Passagem (HOMO-RT-06).
 
+    Plano de Migração E-Fisco, Sprint C — Controle DIMCAC é lido ANTES da
+    fonte financeira (ordem invertida em relação à Base OB): o adaptador
+    E-Fisco (`_ordens_bancarias_via_efisco`) precisa de `resultado_
+    controle.por_dh` já em mãos para enriquecer cada `OrdemBancaria` com
+    SEI/cargo/período/trecho/transporte/motivo no momento em que ela é
+    criada — ao contrário da Base OB, que trazia esses campos prontos e só
+    era cruzada com o Controle depois, em `reconciliar`."""
     planilha_controle = _abrir_controle(caminho_controle_dimcac)
     resultado_controle = controle_dimcac_por_dh(planilha_controle)
 
-    resultado_reconciliado = reconciliar(resultado_controle.por_dh, resultado_ob.por_dh)
+    ordens_por_dh, linhas_brutas, linhas_elegiveis = _ordens_bancarias_via_efisco(
+        caminho_base_efisco, resultado_controle.por_dh
+    )
 
     intervalo = intervalo_acumulado(ano_exercicio, mes_referencia)
+
+    # Plano de Migração E-Fisco, Sprint D — gate de qualidade da fonte,
+    # ANTES de reconciliar/classificar: um BLOQUEIO aqui propaga como
+    # `CoberturaInsuficienteEfisco`, nunca prossegue silenciosamente com
+    # uma competência que a fonte comprovadamente não cobre. Avisos/
+    # diagnósticos (nunca bloqueantes) seguem junto no retorno, para quem
+    # chamou expor a quem revisa — ausência de Controle DIMCAC nunca entra
+    # aqui como bloqueio (princípio já homologado: nunca exclui diária).
+    diagnostico_qualidade = avaliar_qualidade_efisco(
+        linhas_brutas=linhas_brutas,
+        linhas_elegiveis=linhas_elegiveis,
+        controle_por_dh=resultado_controle.por_dh,
+        intervalo=intervalo,
+    )
+    # Sprint D.1 (P2, cobertura parcial) — `aceitar_cobertura_parcial=True`
+    # transforma o BLOQUEIO em prosseguimento explícito, nunca silencioso:
+    # quem chamou já foi avisado (`cobertura_paga_ate`) e escolheu
+    # ativamente continuar. Nada além disto muda — nenhum candidato/linha é
+    # filtrado por data aqui (RN01-RN07 continuam intocadas): a fonte já só
+    # inclui o que tem Situação=Paga comprovada (nunca infere pagamento
+    # futuro nem trata ausência como recusa), então "cobertura parcial" é
+    # sempre uma limitação do QUANTO a fonte cobre, nunca do QUE é
+    # processado dentro do que ela cobre.
+    if diagnostico_qualidade.bloqueios and not aceitar_cobertura_parcial:
+        raise CoberturaInsuficienteEfisco(
+            " ".join(diagnostico_qualidade.bloqueios),
+            cobertura_paga_ate=diagnostico_qualidade.cobertura_paga_ate,
+        )
+
+    resultado_reconciliado = reconciliar(resultado_controle.por_dh, ordens_por_dh)
     resultado_classificado = classificar(resultado_reconciliado, intervalo)
 
     if caminho_planilha_passagens is not None:
@@ -417,7 +536,14 @@ def _montar_resultado_revisado(
         resultado_classificado = anexar_passagens_ao_resultado(resultado_classificado, resultado_passagens.por_ob)
 
     decisoes = carregar_decisoes(caminho_decisoes)
-    return aplicar_decisoes(resultado_classificado, decisoes)
+    revisado = aplicar_decisoes(
+        resultado_classificado,
+        decisoes,
+        ano_exercicio=ano_exercicio,
+        mes_referencia=mes_referencia,
+        cobertura_efisco_ate=diagnostico_qualidade.cobertura_paga_ate if diagnostico_qualidade.bloqueios else None,
+    )
+    return revisado, diagnostico_qualidade
 
 
 def _ocorrencia_resumo(oc: OcorrenciaFinanceira, identidade: str) -> OcorrenciaResumo:
@@ -438,10 +564,18 @@ def _ocorrencia_resumo(oc: OcorrenciaFinanceira, identidade: str) -> OcorrenciaR
     )
 
 
+# Sprint D.1 — os dois únicos estados onde uma decisão foi de fato
+# aplicada (PENDENTE/DESATUALIZADA/REQUER_NOVA_DECISAO nunca contam para
+# "decisões reaproveitadas": não há decisão vigente nesses estados).
+_ESTADOS_RESOLVIDOS = frozenset({EstadoRevisao.DECIDIDA, EstadoRevisao.ADIADA})
+
+
 def _revisao_resumo(
     contexto: ContextoRevisaoParaExibicao,
     estado: EstadoRevisao,
     decisao: DecisaoHumana | None = None,
+    *,
+    reaplicada_de_execucao_anterior: bool = False,
 ) -> RevisaoResumo:
     identidades = identidades_ocorrencias(contexto.ocorrencias)
     return RevisaoResumo(
@@ -458,12 +592,24 @@ def _revisao_resumo(
         decidido_em=decisao.decidido_em if decisao else None,
         observacao=decisao.observacao if decisao else None,
         obs_publicaveis=sorted(decisao.obs_publicaveis) if decisao else None,
+        reaplicada_de_execucao_anterior=reaplicada_de_execucao_anterior,
     )
 
 
-def _resumo(revisado: ResultadoRevisado) -> ResumoRelatorio:
+def _resumo(revisado: ResultadoRevisado, diagnostico_qualidade: DiagnosticoQualidadeEfisco) -> ResumoRelatorio:
     por_estado = Counter(r.estado for r in revisado.revisoes)
-    revisoes = [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado, r.decisao) for r in revisado.revisoes]
+    revisoes = [
+        _revisao_resumo(
+            contexto_para_exibicao(r.revisao),
+            r.estado,
+            r.decisao,
+            reaplicada_de_execucao_anterior=r.reaplicada_de_execucao_anterior,
+        )
+        for r in revisado.revisoes
+    ]
+    total_reaproveitadas = sum(
+        1 for r in revisado.revisoes if r.reaplicada_de_execucao_anterior and r.estado in _ESTADOS_RESOLVIDOS
+    )
     return ResumoRelatorio(
         total_candidatos_normais=len(revisado.candidatos_publicaveis),
         total_revisoes=len(revisado.revisoes),
@@ -475,31 +621,38 @@ def _resumo(revisado: ResultadoRevisado) -> ResumoRelatorio:
         pode_gerar_relatorio=revisado.pode_gerar_relatorio,
         revisoes=revisoes,
         total_requer_nova_decisao=por_estado[EstadoRevisao.REQUER_NOVA_DECISAO],
+        avisos_qualidade_fonte=diagnostico_qualidade.avisos,
+        diagnosticos_qualidade_fonte=diagnostico_qualidade.diagnosticos,
+        total_decisoes_reaproveitadas=total_reaproveitadas,
+        cobertura_parcial=bool(diagnostico_qualidade.bloqueios),
+        cobertura_efisco_ate=diagnostico_qualidade.cobertura_paga_ate,
     )
 
 
 def preparar_relatorio(
     *,
-    caminho_base_ordens_bancarias: str,
+    caminho_base_efisco: str,
     caminho_controle_dimcac: str,
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
     caminho_planilha_passagens: str | None = None,
+    aceitar_cobertura_parcial: bool = False,
 ) -> ResumoRelatorio:
     """FONTES + RNs + DECISÕES HUMANAS VÁLIDAS → estado atual. Sempre
     reconstrói do zero — nunca lê um resultado derivado salvo de uma
     chamada anterior (só as decisões humanas, que são o único estado que
     de fato precisa sobreviver entre chamadas)."""
-    revisado = _montar_resultado_revisado(
-        caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
+    revisado, diagnostico_qualidade = _montar_resultado_revisado(
+        caminho_base_efisco=caminho_base_efisco,
         caminho_controle_dimcac=caminho_controle_dimcac,
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
         caminho_planilha_passagens=caminho_planilha_passagens,
+        aceitar_cobertura_parcial=aceitar_cobertura_parcial,
     )
-    resumo = _resumo(revisado)
+    resumo = _resumo(revisado, diagnostico_qualidade)
     _logger.info(
         "Relatório preparado: %s candidatos, %s revisões (%s pendentes, %s decididas, "
         "%s adiadas, %s desatualizadas), pode_gerar_relatorio=%s",
@@ -516,27 +669,54 @@ def preparar_relatorio(
 
 def listar_revisoes(
     *,
-    caminho_base_ordens_bancarias: str,
+    caminho_base_efisco: str,
     caminho_controle_dimcac: str,
     ano_exercicio: int,
     mes_referencia: int,
     caminho_decisoes: str,
     caminho_planilha_passagens: str | None = None,
+    aceitar_cobertura_parcial: bool = False,
 ) -> list[RevisaoResumo]:
-    revisado = _montar_resultado_revisado(
-        caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
+    revisado, _diagnostico_qualidade = _montar_resultado_revisado(
+        caminho_base_efisco=caminho_base_efisco,
         caminho_controle_dimcac=caminho_controle_dimcac,
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
         caminho_planilha_passagens=caminho_planilha_passagens,
+        aceitar_cobertura_parcial=aceitar_cobertura_parcial,
     )
-    return [_revisao_resumo(contexto_para_exibicao(r.revisao), r.estado, r.decisao) for r in revisado.revisoes]
+    return [
+        _revisao_resumo(
+            contexto_para_exibicao(r.revisao),
+            r.estado,
+            r.decisao,
+            reaplicada_de_execucao_anterior=r.reaplicada_de_execucao_anterior,
+        )
+        for r in revisado.revisoes
+    ]
+
+
+def _normalizar_autor(autor: str) -> str:
+    """Sprint D.1 (QA manual — 6 grafias diferentes de autor em 15
+    decisões) — normalização MÍNIMA e segura, compatível com o modelo
+    atual (autor continua texto livre, nenhum login/autenticação foi
+    inventado): remove espaços nas pontas e colapsa espaços internos
+    repetidos (mesma normalização que o frontend já aplicava só no
+    cliente — `PainelEntrada.aoClicarPreparar`/`autor.trim().replace(/\\s+/g,
+    " ")` — agora também aplicada aqui, servidor, para qualquer chamador,
+    HTTP ou não). NUNCA reescreve autores JÁ persistidos (decisões
+    históricas) — só normaliza o texto de uma decisão NOVA antes de
+    gravá-la. NÃO resolve variações reais de nome/apelido entre si (ex.:
+    "vini" vs "vini bala" vs "viniboy" continuam textos diferentes) — isso
+    exigiria identidade de usuário real (login), fora do escopo desta
+    correção (ver relatório da Sprint D.1)."""
+    return re.sub(r"\s+", " ", autor.strip())
 
 
 def registrar_decisao_revisao(
     *,
-    caminho_base_ordens_bancarias: str,
+    caminho_base_efisco: str,
     caminho_controle_dimcac: str,
     ano_exercicio: int,
     mes_referencia: int,
@@ -547,6 +727,7 @@ def registrar_decisao_revisao(
     autor: str,
     observacao: str | None = None,
     caminho_planilha_passagens: str | None = None,
+    aceitar_cobertura_parcial: bool = False,
 ) -> ResumoRelatorio:
     """Registra uma decisão humana e devolve o estado já atualizado.
     Reconstrói o estado ANTES de decidir (nunca confia em nenhuma
@@ -554,6 +735,9 @@ def registrar_decisao_revisao(
     sempre calculado sobre a leitura fresca das fontes feita aqui dentro,
     nunca sobre o que o frontend acreditava ser a evidência no momento em
     que o usuário abriu a tela."""
+    autor = _normalizar_autor(autor)
+    if not autor:
+        raise DecisaoInvalida("Autor da decisão é obrigatório.")
     obs_selecionadas_set = frozenset(obs_selecionadas)
     if acao is AcaoDecisao.ADIAR and obs_selecionadas_set:
         raise DecisaoInvalida("ADIAR não aceita OBs selecionadas.")
@@ -573,13 +757,14 @@ def registrar_decisao_revisao(
                 "informe uma justificativa (observacao) para confirmar esta decisão."
             )
 
-    revisado = _montar_resultado_revisado(
-        caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
+    revisado, diagnostico_qualidade = _montar_resultado_revisado(
+        caminho_base_efisco=caminho_base_efisco,
         caminho_controle_dimcac=caminho_controle_dimcac,
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
         caminho_planilha_passagens=caminho_planilha_passagens,
+        aceitar_cobertura_parcial=aceitar_cobertura_parcial,
     )
 
     revisao_alvo: RevisaoComEstado | None = None
@@ -609,6 +794,13 @@ def registrar_decisao_revisao(
         autor=autor,
         obs_publicaveis=obs_selecionadas_set,
         observacao=observacao,
+        ano_exercicio=ano_exercicio,
+        mes_referencia=mes_referencia,
+        # Sprint D.1 (P2) — a MESMA convenção de `_montar_resultado_revisado`:
+        # `None` quando a cobertura já é suficiente para esta competência
+        # (nenhum bloqueio), a data comprovada quando prosseguiu sob
+        # cobertura parcial (`aceitar_cobertura_parcial=True`).
+        cobertura_efisco_ate=diagnostico_qualidade.cobertura_paga_ate if diagnostico_qualidade.bloqueios else None,
     )
     salvar_decisao(caminho_decisoes, decisao)
     # Autor deliberadamente FORA do log (Micro-sprint 3D.1, minimização de
@@ -625,20 +817,21 @@ def registrar_decisao_revisao(
         len(obs_selecionadas_set),
     )
 
-    revisado_atualizado = _montar_resultado_revisado(
-        caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
+    revisado_atualizado, diagnostico_qualidade_atualizado = _montar_resultado_revisado(
+        caminho_base_efisco=caminho_base_efisco,
         caminho_controle_dimcac=caminho_controle_dimcac,
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
         caminho_planilha_passagens=caminho_planilha_passagens,
+        aceitar_cobertura_parcial=aceitar_cobertura_parcial,
     )
-    return _resumo(revisado_atualizado)
+    return _resumo(revisado_atualizado, diagnostico_qualidade_atualizado)
 
 
 def gerar_relatorio_xlsx(
     *,
-    caminho_base_ordens_bancarias: str,
+    caminho_base_efisco: str,
     caminho_controle_dimcac: str,
     ano_exercicio: int,
     mes_referencia: int,
@@ -647,6 +840,7 @@ def gerar_relatorio_xlsx(
     caminho_destino: str,
     hoje: date | None = None,
     caminho_planilha_passagens: str | None = None,
+    aceitar_cobertura_parcial: bool = False,
 ) -> RelatorioCompletoGeradoResultado:
     """Micro-sprint 3F/3H, estendido na Sprint 5 — único ponto de entrada
     real para gerar os DOIS artefatos desta competência. Nunca recebe do
@@ -713,13 +907,14 @@ def gerar_relatorio_xlsx(
     domínio útil — nunca mascarado atrás de centenas de tentativas
     inúteis."""
     caminho_template = resolver_caminho_template(caminho_configuracao_template)
-    revisado = _montar_resultado_revisado(
-        caminho_base_ordens_bancarias=caminho_base_ordens_bancarias,
+    revisado, _diagnostico_qualidade = _montar_resultado_revisado(
+        caminho_base_efisco=caminho_base_efisco,
         caminho_controle_dimcac=caminho_controle_dimcac,
         ano_exercicio=ano_exercicio,
         mes_referencia=mes_referencia,
         caminho_decisoes=caminho_decisoes,
         caminho_planilha_passagens=caminho_planilha_passagens,
+        aceitar_cobertura_parcial=aceitar_cobertura_parcial,
     )
 
     tentativa = 0

@@ -41,12 +41,13 @@ from app.schemas.relatorio_transparencia import (
     StatusTemplateResposta,
 )
 from app.services.relatorio_transparencia_service import (
-    BaseOBNaoEncontrada,
+    BaseEfiscoNaoEncontrada,
+    CoberturaInsuficienteEfisco,
     ControleDimcacNaoEncontrado,
     DecisaoInvalida,
     DestinoInacessivel,
     DestinoJaExiste,
-    EstruturaBaseOBInvalida,
+    EstruturaBaseEfiscoInvalida,
     EstruturaControleInvalida,
     EstruturaPlanilhaPassagensInvalida,
     GeracaoConcorrenteEmAndamento,
@@ -102,6 +103,7 @@ def _revisao_resposta(r: RevisaoResumo) -> RevisaoResposta:
         decidido_em=r.decidido_em,
         observacao=r.observacao,
         obs_publicaveis=r.obs_publicaveis,
+        reaplicada_de_execucao_anterior=r.reaplicada_de_execucao_anterior,
     )
 
 
@@ -117,6 +119,11 @@ def _resumo_resposta(resumo: ResumoRelatorio) -> ResumoRelatorioResposta:
         total_ocorrencias_nao_publicaveis=resumo.total_ocorrencias_nao_publicaveis,
         pode_gerar_relatorio=resumo.pode_gerar_relatorio,
         revisoes=[_revisao_resposta(r) for r in resumo.revisoes],
+        avisos_qualidade_fonte=resumo.avisos_qualidade_fonte,
+        diagnosticos_qualidade_fonte=resumo.diagnosticos_qualidade_fonte,
+        total_decisoes_reaproveitadas=resumo.total_decisoes_reaproveitadas,
+        cobertura_parcial=resumo.cobertura_parcial,
+        cobertura_efisco_ate=resumo.cobertura_efisco_ate,
     )
 
 
@@ -125,10 +132,26 @@ def _levantar_erro_de_fontes(erro: Exception) -> None:
     de `app/api/regularizacao_dh.py`/`app/api/analitica.py` (cada exceção
     de domínio/serviço vira um `HTTPException` com status semanticamente
     específico, nunca um 500 genérico escondendo a causa)."""
-    if isinstance(erro, (BaseOBNaoEncontrada, ControleDimcacNaoEncontrado, PlanilhaPassagensNaoEncontrada)):
+    if isinstance(erro, (BaseEfiscoNaoEncontrada, ControleDimcacNaoEncontrado, PlanilhaPassagensNaoEncontrada)):
         raise HTTPException(status_code=404, detail=str(erro)) from erro
-    if isinstance(erro, (EstruturaBaseOBInvalida, EstruturaControleInvalida, EstruturaPlanilhaPassagensInvalida)):
+    if isinstance(erro, (EstruturaBaseEfiscoInvalida, EstruturaControleInvalida, EstruturaPlanilhaPassagensInvalida)):
         raise HTTPException(status_code=422, detail=str(erro)) from erro
+    if isinstance(erro, CoberturaInsuficienteEfisco):
+        # Sprint D.1 (P2, cobertura parcial) — `detail` estruturado (não só
+        # texto) para o frontend oferecer "gerar com cobertura parcial" sem
+        # reparsear a mensagem; `tipo` é o discriminador estável (a
+        # mensagem em si pode mudar de texto no futuro sem quebrar quem lê
+        # `tipo`). `cobertura_paga_ate` é `None` só quando não há NENHUM
+        # pagamento confirmado na fonte inteira — aí não há "cobertura
+        # parcial" possível de oferecer, só o erro.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "tipo": "cobertura_efisco_insuficiente",
+                "mensagem": str(erro),
+                "cobertura_paga_ate": erro.cobertura_paga_ate.isoformat() if erro.cobertura_paga_ate else None,
+            },
+        ) from erro
     if isinstance(erro, VersaoEsquemaIncompativel):
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     if isinstance(erro, (PersistenciaDecisoesCorrompida, PersistenciaDecisoesEmUso)):
@@ -146,22 +169,24 @@ def _levantar_erro_de_fontes(erro: Exception) -> None:
 def preparar(requisicao: RequisicaoPrepararRelatorio) -> ResumoRelatorioResposta:
     try:
         resumo = preparar_relatorio(
-            caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
+            caminho_base_efisco=requisicao.caminho_base_efisco,
             caminho_controle_dimcac=requisicao.caminho_controle_dimcac,
             ano_exercicio=requisicao.ano_exercicio,
             mes_referencia=requisicao.mes_referencia,
             caminho_decisoes=requisicao.caminho_decisoes,
             caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
+            aceitar_cobertura_parcial=requisicao.aceitar_cobertura_parcial,
         )
     except (
-        BaseOBNaoEncontrada,
+        BaseEfiscoNaoEncontrada,
         ControleDimcacNaoEncontrado,
         PlanilhaPassagensNaoEncontrada,
-        EstruturaBaseOBInvalida,
+        EstruturaBaseEfiscoInvalida,
         EstruturaControleInvalida,
         EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
+        CoberturaInsuficienteEfisco,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -175,7 +200,7 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
     (`gerar_relatorio_xlsx`), nunca confiado ao corpo da requisição."""
     try:
         resultado = gerar_relatorio_xlsx(
-            caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
+            caminho_base_efisco=requisicao.caminho_base_efisco,
             caminho_controle_dimcac=requisicao.caminho_controle_dimcac,
             ano_exercicio=requisicao.ano_exercicio,
             mes_referencia=requisicao.mes_referencia,
@@ -195,16 +220,17 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
     except TemplateEstruturalmenteInvalido as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
     except (
-        BaseOBNaoEncontrada,
+        BaseEfiscoNaoEncontrada,
         ControleDimcacNaoEncontrado,
         PlanilhaPassagensNaoEncontrada,
-        EstruturaBaseOBInvalida,
+        EstruturaBaseEfiscoInvalida,
         EstruturaControleInvalida,
         EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
         TemplateOficialIndisponivel,
         ConfiguracaoTemplateCorrompida,
+        CoberturaInsuficienteEfisco,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -228,7 +254,7 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
 def revisoes(parametros: Annotated[ParametrosRelatorioQuery, Query()]) -> ListaRevisoesResposta:
     try:
         lista = listar_revisoes(
-            caminho_base_ordens_bancarias=parametros.caminho_base_ordens_bancarias,
+            caminho_base_efisco=parametros.caminho_base_efisco,
             caminho_controle_dimcac=parametros.caminho_controle_dimcac,
             ano_exercicio=parametros.ano_exercicio,
             mes_referencia=parametros.mes_referencia,
@@ -236,14 +262,15 @@ def revisoes(parametros: Annotated[ParametrosRelatorioQuery, Query()]) -> ListaR
             caminho_planilha_passagens=parametros.caminho_planilha_passagens,
         )
     except (
-        BaseOBNaoEncontrada,
+        BaseEfiscoNaoEncontrada,
         ControleDimcacNaoEncontrado,
         PlanilhaPassagensNaoEncontrada,
-        EstruturaBaseOBInvalida,
+        EstruturaBaseEfiscoInvalida,
         EstruturaControleInvalida,
         EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
+        CoberturaInsuficienteEfisco,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -254,7 +281,7 @@ def revisoes(parametros: Annotated[ParametrosRelatorioQuery, Query()]) -> ListaR
 def decidir(identidade: str, requisicao: RequisicaoRegistrarDecisao) -> ResumoRelatorioResposta:
     try:
         resumo = registrar_decisao_revisao(
-            caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
+            caminho_base_efisco=requisicao.caminho_base_efisco,
             caminho_controle_dimcac=requisicao.caminho_controle_dimcac,
             ano_exercicio=requisicao.ano_exercicio,
             mes_referencia=requisicao.mes_referencia,
@@ -271,15 +298,16 @@ def decidir(identidade: str, requisicao: RequisicaoRegistrarDecisao) -> ResumoRe
     except DecisaoInvalida as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
     except (
-        BaseOBNaoEncontrada,
+        BaseEfiscoNaoEncontrada,
         ControleDimcacNaoEncontrado,
         PlanilhaPassagensNaoEncontrada,
-        EstruturaBaseOBInvalida,
+        EstruturaBaseEfiscoInvalida,
         EstruturaControleInvalida,
         EstruturaPlanilhaPassagensInvalida,
         VersaoEsquemaIncompativel,
         PersistenciaDecisoesCorrompida,
         PersistenciaDecisoesEmUso,
+        CoberturaInsuficienteEfisco,
     ) as erro:
         _levantar_erro_de_fontes(erro)
 
@@ -354,8 +382,8 @@ def obter_status_fontes(parametros: Annotated[ParametrosConfiguracaoFontesQuery,
         raise HTTPException(status_code=503, detail=str(erro)) from erro
 
     return StatusFontesResposta(
-        base_ordens_bancarias=_status_arquivo_fonte_resposta(
-            configuracao.caminho_base_ordens_bancarias if configuracao else None
+        base_efisco=_status_arquivo_fonte_resposta(
+            configuracao.caminho_base_efisco if configuracao else None
         ),
         controle_dimcac=_status_arquivo_fonte_resposta(
             configuracao.caminho_controle_dimcac if configuracao else None
@@ -371,7 +399,7 @@ def configurar_fontes(requisicao: RequisicaoConfigurarFontes) -> StatusFontesRes
     try:
         configuracao = persistir_configuracao_fontes(
             requisicao.caminho_configuracao_fontes,
-            caminho_base_ordens_bancarias=requisicao.caminho_base_ordens_bancarias,
+            caminho_base_efisco=requisicao.caminho_base_efisco,
             caminho_controle_dimcac=requisicao.caminho_controle_dimcac,
             caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
         )
@@ -381,7 +409,7 @@ def configurar_fontes(requisicao: RequisicaoConfigurarFontes) -> StatusFontesRes
         raise HTTPException(status_code=503, detail=str(erro)) from erro
 
     return StatusFontesResposta(
-        base_ordens_bancarias=_status_arquivo_fonte_resposta(configuracao.caminho_base_ordens_bancarias),
+        base_efisco=_status_arquivo_fonte_resposta(configuracao.caminho_base_efisco),
         controle_dimcac=_status_arquivo_fonte_resposta(configuracao.caminho_controle_dimcac),
         planilha_passagens=_status_arquivo_fonte_resposta(configuracao.caminho_planilha_passagens),
     )

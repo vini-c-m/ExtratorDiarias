@@ -1,6 +1,5 @@
-"""Micro-sprint UX operacional — persistência dos caminhos de Base de Ordens
-Bancárias e Controle DIMCAC do Relatório de Diárias — Portal da
-Transparência.
+"""Micro-sprint UX operacional — persistência dos caminhos de Base E-Fisco e
+Controle DIMCAC do Relatório de Diárias — Portal da Transparência.
 
 Módulo exclusivo deste módulo (`§0 isolamento arquitetural`,
 `docs/relatorio-transparencia/README.md`), mesmo padrão de
@@ -12,13 +11,27 @@ CAMINHO do próprio arquivo de configuração é sempre informado por quem chama
 nunca decide onde fica o próprio arquivo, só como ele é lido/escrito.
 
 Diferente do Template Oficial, aqui só se guarda ONDE o usuário apontou da
-última vez — nenhuma validação de conteúdo é feita neste módulo (a Base OB e
-o Controle DIMCAC já são validados de forma robusta pelo fluxo normal de
-`preparar_relatorio`, `BaseOBNaoEncontrada`/`EstruturaBaseOBInvalida`/etc. —
-duplicar essa validação aqui só criaria uma segunda fonte de verdade). Os
-dois caminhos são independentes e persistidos separadamente: selecionar um
-nunca apaga o outro já configurado (`persistir_configuracao_fontes` só
-sobrescreve o campo que recebeu um valor novo)."""
+última vez — nenhuma validação de conteúdo é feita neste módulo (a Base
+E-Fisco e o Controle DIMCAC já são validados de forma robusta pelo fluxo
+normal de `preparar_relatorio`, `BaseEfiscoNaoEncontrada`/`EstruturaBase
+EfiscoInvalida`/etc. — duplicar essa validação aqui só criaria uma segunda
+fonte de verdade). Os dois caminhos são independentes e persistidos
+separadamente: selecionar um nunca apaga o outro já configurado
+(`persistir_configuracao_fontes` só sobrescreve o campo que recebeu um valor
+novo).
+
+Plano de Migração E-Fisco, Sprint D — renomeação coordenada de
+`caminho_base_ordens_bancarias` (nome do ClickView, aposentado desde a
+Sprint C) para `caminho_base_efisco`. RETROCOMPATIBILIDADE: um
+`configuracao.json` já persistido por uma instalação anterior a esta Sprint
+tem a chave ANTIGA (`caminho_base_ordens_bancarias`), nunca a nova —
+`ConfiguracaoFontes.from_dict` lê a chave nova quando presente e cai para a
+antiga quando ausente (nunca as duas ao mesmo tempo — a antiga só existe em
+arquivos gravados antes desta Sprint). O usuário NUNCA precisa selecionar a
+fonte de novo só por causa do rename: na próxima vez que qualquer campo for
+persistido (`persistir_configuracao_fontes`), o arquivo é regravado só com a
+chave nova — migração automática e silenciosa, sem necessidade de um passo
+de migração explícito separado."""
 
 import json
 import os
@@ -59,7 +72,7 @@ class ConfiguracaoFontesEmUso(Exception):
 
 @dataclass(frozen=True)
 class ConfiguracaoFontes:
-    caminho_base_ordens_bancarias: str | None
+    caminho_base_efisco: str | None
     caminho_controle_dimcac: str | None
     atualizado_em: str
     # Sprint 1 (plano "Valor da Passagem no XLSX Oficial") — terceira fonte
@@ -67,12 +80,13 @@ class ConfiguracaoFontes:
     # independente). Campo NOVO e OPCIONAL: `from_dict` trata sua ausência em
     # configurações já persistidas antes desta mudança como `None` (nunca
     # `KeyError`), para não quebrar a leitura de um `configuracao.json` já
-    # existente no `userData` de quem já usava só Base OB/Controle DIMCAC.
+    # existente no `userData` de quem já usava só Base E-Fisco/Controle
+    # DIMCAC.
     caminho_planilha_passagens: str | None = None
 
     def to_dict(self) -> dict:
         return {
-            "caminho_base_ordens_bancarias": self.caminho_base_ordens_bancarias,
+            "caminho_base_efisco": self.caminho_base_efisco,
             "caminho_controle_dimcac": self.caminho_controle_dimcac,
             "caminho_planilha_passagens": self.caminho_planilha_passagens,
             "atualizado_em": self.atualizado_em,
@@ -83,15 +97,27 @@ class ConfiguracaoFontes:
         """Levanta `KeyError`/`TypeError` quando `dados` não corresponde ao
         esquema esperado — `carregar_configuracao_fontes` é quem traduz isso
         para `ConfiguracaoFontesCorrompida`, mesmo critério de
-        `ConfiguracaoTemplate.from_dict`."""
-        caminho_base = dados["caminho_base_ordens_bancarias"]
+        `ConfiguracaoTemplate.from_dict`.
+
+        Plano de Migração E-Fisco, Sprint D — `caminho_base_efisco` é lido
+        com fallback explícito para a chave legada `caminho_base_ordens_
+        bancarias` (`.get(...)`, nunca `dados[...]`): um `configuracao.json`
+        gravado por uma instalação anterior a esta Sprint só tem a chave
+        antiga, e precisa continuar sendo lido sem exigir nova seleção do
+        usuário. Nunca as duas chaves seriam usadas juntas na prática — a
+        antiga só aparece em arquivos legados, nunca gravados por esta
+        versão (`to_dict` acima só escreve a nova)."""
+        if "caminho_base_efisco" in dados:
+            caminho_base = dados["caminho_base_efisco"]
+        else:
+            caminho_base = dados["caminho_base_ordens_bancarias"]  # migração de leitura, formato legado (ClickView)
         caminho_controle = dados["caminho_controle_dimcac"]
         # `.get(..., None)` (não `dados[...]`) — só este campo é retrocompatível
         # com um `configuracao.json` gravado antes do Sprint 1 existir.
         caminho_passagens = dados.get("caminho_planilha_passagens")
         atualizado_em = dados["atualizado_em"]
         if caminho_base is not None and not isinstance(caminho_base, str):
-            raise TypeError("'caminho_base_ordens_bancarias' deve ser string ou nulo")
+            raise TypeError("'caminho_base_efisco' deve ser string ou nulo")
         if caminho_controle is not None and not isinstance(caminho_controle, str):
             raise TypeError("'caminho_controle_dimcac' deve ser string ou nulo")
         if caminho_passagens is not None and not isinstance(caminho_passagens, str):
@@ -99,7 +125,7 @@ class ConfiguracaoFontes:
         if not isinstance(atualizado_em, str):
             raise TypeError("'atualizado_em' deve ser string")
         return ConfiguracaoFontes(
-            caminho_base_ordens_bancarias=caminho_base,
+            caminho_base_efisco=caminho_base,
             caminho_controle_dimcac=caminho_controle,
             caminho_planilha_passagens=caminho_passagens,
             atualizado_em=atualizado_em,
@@ -112,11 +138,11 @@ class ConfiguracaoFontes:
 # órfão após um crash): `persistir_configuracao_fontes` fazia um ciclo
 # read-modify-write (carregar a config atual → mesclar só o(s) campo(s)
 # informado(s) → escrever tudo) sem trava, com um `.tmp` fixo compartilhado
-# — duas atualizações parciais concorrentes (ex.: usuário seleciona Base OB
-# e Controle DIMCAC quase ao mesmo tempo, ou dois workers Uvicorn distintos
-# sob `WEB_CONCURRENCY>1`) liam o mesmo estado antes de qualquer uma
-# escrever, e a que escrevesse por último "vencia" sozinha, descartando o
-# campo da outra (lost update) — ou colidiam no mesmo `.tmp` e corrompiam
+# — duas atualizações parciais concorrentes (ex.: usuário seleciona Base
+# E-Fisco e Controle DIMCAC quase ao mesmo tempo, ou dois workers Uvicorn
+# distintos sob `WEB_CONCURRENCY>1`) liam o mesmo estado antes de qualquer
+# uma escrever, e a que escrevesse por último "vencia" sozinha, descartando
+# o campo da outra (lost update) — ou colidiam no mesmo `.tmp` e corrompiam
 # o JSON final. Uma correção anterior usou `threading.Lock()` em memória —
 # insuficiente porque só protege threads do MESMO processo, não processos
 # distintos (comprovado por QA com `WEB_CONCURRENCY=2`). `filelock.FileLock`
@@ -210,16 +236,23 @@ def carregar_configuracao_fontes(caminho_configuracao_fontes: str) -> Configurac
 def persistir_configuracao_fontes(
     caminho_configuracao_fontes: str,
     *,
-    caminho_base_ordens_bancarias: str | None = None,
+    caminho_base_efisco: str | None = None,
     caminho_controle_dimcac: str | None = None,
     caminho_planilha_passagens: str | None = None,
 ) -> ConfiguracaoFontes:
     """Atualização parcial: só sobrescreve o(s) campo(s) recebido(s)
     (não-`None`), preservando os demais já persistidos — permite selecionar
-    Base OB, Controle DIMCAC e Planilha de Passagens em momentos diferentes
-    sem que um apague os outros. Escrita segura (arquivo `.tmp` +
+    Base E-Fisco, Controle DIMCAC e Planilha de Passagens em momentos
+    diferentes sem que um apague os outros. Escrita segura (arquivo `.tmp` +
     `os.replace`, mesma técnica de
     `configuracao_template_relatorio_transparencia.persistir_configuracao_template`).
+
+    Plano de Migração E-Fisco, Sprint D — qualquer chamada aqui (mesmo só
+    atualizando Controle DIMCAC ou Passagens) já regrava o arquivo inteiro
+    usando `ConfiguracaoFontes.to_dict()`, que só emite a chave NOVA
+    (`caminho_base_efisco`) — migração automática do formato legado
+    acontece na primeira escrita seguinte à leitura, sem nenhum passo
+    manual.
 
     QA Codex (BUG-02, correção cross-process) — todo o ciclo leitura+
     mesclagem+escrita+promoção corre sob `_trava_fontes(...)`
@@ -232,10 +265,10 @@ def persistir_configuracao_fontes(
             atual = carregar_configuracao_fontes(caminho_configuracao_fontes)
 
             configuracao = ConfiguracaoFontes(
-                caminho_base_ordens_bancarias=(
-                    caminho_base_ordens_bancarias
-                    if caminho_base_ordens_bancarias is not None
-                    else (atual.caminho_base_ordens_bancarias if atual else None)
+                caminho_base_efisco=(
+                    caminho_base_efisco
+                    if caminho_base_efisco is not None
+                    else (atual.caminho_base_efisco if atual else None)
                 ),
                 caminho_controle_dimcac=(
                     caminho_controle_dimcac

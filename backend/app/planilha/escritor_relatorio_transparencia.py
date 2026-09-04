@@ -92,6 +92,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 from openpyxl.worksheet.cell_range import CellRange
 from openpyxl.worksheet.worksheet import Worksheet
 
@@ -133,6 +134,23 @@ _ROTULO_LINHA_TOTAL_PREFIXO = "Total"
 # publicação. Corrigido com um formato monetário fixo, aplicado
 # explicitamente a cada geração, nunca dependente de estilo herdado.
 _NUMBER_FORMAT_VALOR_PASSAGEM = '"R$ "#,##0.00'
+
+# Colunas A-M — a ÁREA DE DADOS inteira (cabeçalho é a linha 5/6, nunca
+# tocado; linha de totais é identificada à parte, também nunca tocada).
+_COLUNAS_DADOS = "ABCDEFGHIJKLM"
+
+# QA (achado real, relatório de Maio/2026) — a célula J833 apareceu com um
+# preenchimento amarelo sem nenhum significado no relatório (auditoria
+# confirmou: a ÚNICA célula da área de dados com destaque visual em toda a
+# faixa auditada). A área de dados nunca prevê destaque de nenhuma cor —
+# cabeçalho (`_PREENCHIMENTO_CABECALHO`/`_PREENCHIMENTO_SUBCABECALHO`, fora
+# desta área) é o único lugar com preenchimento legítimo. Em vez de corrigir
+# J833 especificamente (trataria o sintoma, não a causa — outra célula
+# poderia ter a mesma anomalia, introduzida por edição manual em qualquer
+# geração passada), `_SEM_PREENCHIMENTO` é reafirmado em TODA célula de
+# dados a cada geração — mesmo princípio já usado para `_NUMBER_FORMAT_
+# VALOR_PASSAGEM` acima (roda para linhas novas E já existentes).
+_SEM_PREENCHIMENTO = PatternFill(fill_type=None)
 
 _MESES_EXTENSO = [
     "JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO",
@@ -364,6 +382,17 @@ def _escrever_linha_ocorrencia(
     ws[f"L{linha}"] = quantidade.parcial if quantidade else None
     ws[f"M{linha}"] = ordem.valor  # RN02 — sempre o valor bruto da Base OB, zero incluso
 
+    # QA (achado real, relatório de Maio/2026 — ver `_SEM_PREENCHIMENTO`
+    # acima): normaliza o preenchimento de TODA célula de dados desta linha,
+    # sempre — nunca depende de identificar qual célula específica está
+    # anômala, e corrige retroativamente qualquer linha já existente (esta
+    # função roda para TODAS as linhas a cada geração, novas e
+    # preexistentes). Só `.fill` é tocado — fonte, borda, alinhamento e
+    # number_format (herdados de `_copiar_estilo_linha` para linhas novas,
+    # ou já corretos para linhas preexistentes) permanecem intocados.
+    for coluna in _COLUNAS_DADOS:
+        ws[f"{coluna}{linha}"].fill = _SEM_PREENCHIMENTO
+
     return ordem.valor or 0.0
 
 
@@ -529,8 +558,6 @@ def gerar_xlsx_relatorio_transparencia(
             quantidade_antiga = linha_total_antiga - _PRIMEIRA_LINHA_DADOS
             quantidade_nova = len(candidatos_ordenados)
 
-            colunas_dados = "ABCDEFGHIJKLM"
-
             if quantidade_nova > quantidade_antiga:
                 diferenca = quantidade_nova - quantidade_antiga
                 ws.insert_rows(linha_total_antiga, amount=diferenca)
@@ -538,7 +565,7 @@ def gerar_xlsx_relatorio_transparencia(
                 _realinhar_alturas_de_linha(ws, linha_total_antiga, diferenca)
                 for offset in range(diferenca):
                     linha_nova = linha_total_antiga + offset
-                    _copiar_estilo_linha(ws, _PRIMEIRA_LINHA_DADOS, linha_nova, colunas_dados)
+                    _copiar_estilo_linha(ws, _PRIMEIRA_LINHA_DADOS, linha_nova, _COLUNAS_DADOS)
             elif quantidade_nova < quantidade_antiga:
                 diferenca = quantidade_antiga - quantidade_nova
                 inicio_remocao = _PRIMEIRA_LINHA_DADOS + quantidade_nova

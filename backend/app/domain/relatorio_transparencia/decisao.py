@@ -142,6 +142,25 @@ class DecisaoHumana:
     decidido_em: datetime
     obs_publicaveis: frozenset[str] = field(default_factory=frozenset)
     observacao: str | None = None
+    # Sprint D.1 (QA manual — "decisão anterior reaplicada invisível") —
+    # a competência para a qual esta decisão foi ORIGINALMENTE tomada.
+    # `None` para toda decisão persistida ANTES desta correção (formato
+    # legado — nunca reescrito, nunca inferido retroativamente: ver
+    # `persistencia_decisoes._decisao_de_dict`). `aplicar_decisoes` compara
+    # isto com a competência sendo preparada AGORA para distinguir "decidido
+    # nesta execução" de "decisão de execução anterior reaplicada" — sem
+    # isso, as duas eram indistinguíveis para quem revisa (achado real do
+    # QA: SEVERINO/LEANDRO)."""
+    ano_exercicio: int | None = None
+    mes_referencia: int | None = None
+    # Sprint D.1 (P2, cobertura parcial E-Fisco) — a data de cobertura
+    # comprovada (`DiagnosticoQualidadeEfisco.cobertura_paga_ate`) em vigor
+    # NO MOMENTO desta decisão; `None` quando decidida sob cobertura
+    # completa (ou por uma versão anterior a este campo). Permite a
+    # `aplicar_decisoes` invalidar (`DESATUALIZADA`) uma decisão tomada
+    # sobre um universo parcial se a cobertura real avançar depois —
+    # mesmo que o fingerprint do grupo, por si só, não tenha mudado.
+    cobertura_efisco_ate: date | None = None
 
 
 class CategoriaNaoPublicada(str, Enum):
@@ -182,6 +201,13 @@ class OcorrenciaNaoPublicavel:
     ocorrencia: OcorrenciaFinanceira
     decisao: DecisaoHumana
     categoria: CategoriaNaoPublicada
+    # Sprint D.1 — mesma flag de `RevisaoComEstado`, copiada aqui no momento
+    # em que `aplicar_decisoes` já sabe a resposta (nunca recalculada em
+    # paralelo, mesmo princípio de `categoria` acima): permite ao escritor
+    # de Diárias Não Publicadas (`escritor_relatorio_nao_publicadas.py`)
+    # marcar a linha sem falsificar responsável/timestamp — o autor e a
+    # data continuam sendo os da decisão ORIGINAL, sempre.
+    reaplicada_de_execucao_anterior: bool = False
 
 
 @dataclass(frozen=True)
@@ -189,6 +215,14 @@ class RevisaoComEstado:
     revisao: RevisaoNecessaria
     estado: EstadoRevisao
     decisao: DecisaoHumana | None = None
+    # Sprint D.1 — `True` quando `decisao` já existia ANTES desta chamada de
+    # `aplicar_decisoes` ter sido feita para OUTRA competência (comparação
+    # de `decisao.ano_exercicio`/`mes_referencia` contra a competência
+    # atual, ver `aplicar_decisoes`) — nunca para decisões sem essa
+    # informação por serem anteriores a este campo, tratadas como
+    # reaplicadas por segurança (não dá pra provar que foram "agora").
+    # Sempre `False` quando `decisao is None` (nada a reaplicar).
+    reaplicada_de_execucao_anterior: bool = False
 
 
 @dataclass(frozen=True)
@@ -705,9 +739,20 @@ def registrar_decisao(
     obs_publicaveis: Iterable[str] = (),
     observacao: str | None = None,
     agora: datetime | None = None,
+    ano_exercicio: int | None = None,
+    mes_referencia: int | None = None,
+    cobertura_efisco_ate: date | None = None,
 ) -> DecisaoHumana:
     """Constrói uma `DecisaoHumana` a partir de uma revisão da 3B —
-    identidade e fingerprint são sempre calculados aqui, nunca à mão."""
+    identidade e fingerprint são sempre calculados aqui, nunca à mão.
+
+    Sprint D.1 — `ano_exercicio`/`mes_referencia`/`cobertura_efisco_ate` são
+    OPCIONAIS (retrocompatíveis: chamadores existentes, incluindo scripts/
+    testes fora do service, continuam funcionando sem informar nada, com o
+    mesmo comportamento de antes) — quando informados pelo chamador real
+    (`registrar_decisao_revisao`, com a competência/cobertura da chamada
+    atual), ficam gravados na decisão para permitir a `aplicar_decisoes`
+    identificar reaplicação entre competências/coberturas."""
     obs = [oc.ordem_bancaria.ob for oc in revisao.ocorrencias]
     return DecisaoHumana(
         identidade_grupo=identidade_grupo(revisao.regra, obs),
@@ -719,6 +764,9 @@ def registrar_decisao(
         decidido_em=agora or datetime.now(timezone.utc),
         obs_publicaveis=frozenset(obs_publicaveis),
         observacao=observacao,
+        ano_exercicio=ano_exercicio,
+        mes_referencia=mes_referencia,
+        cobertura_efisco_ate=cobertura_efisco_ate,
     )
 
 
@@ -738,15 +786,53 @@ def _decisao_legado_e_segura_para_reaplicar(decisao: DecisaoHumana) -> bool:
     return decisao.acao is AcaoDecisao.PUBLICAR and not decisao.obs_publicaveis
 
 
+def _decisao_e_de_outra_execucao(decisao: DecisaoHumana, ano_exercicio: int, mes_referencia: int) -> bool:
+    """Sprint D.1 — `True` quando a decisão persistida NÃO foi tomada para a
+    competência sendo preparada agora. Decisões sem `ano_exercicio`/
+    `mes_referencia` gravados (formato anterior a esta correção) sempre
+    contam como "de outra execução" — não há como provar que foram tomadas
+    "agora" (a própria ausência do campo já significa que vieram de antes
+    desta feature), e o lado seguro é sinalizar reaplicação, nunca omitir."""
+    return (decisao.ano_exercicio, decisao.mes_referencia) != (ano_exercicio, mes_referencia)
+
+
+def _cobertura_da_decisao_ficou_obsoleta(decisao: DecisaoHumana, cobertura_efisco_ate: date | None) -> bool:
+    """Sprint D.1 (P2, cobertura parcial) — `True` quando a decisão foi
+    tomada sob uma cobertura E-Fisco PARCIAL (`decisao.cobertura_efisco_ate`
+    não-nulo) e a cobertura em vigor agora avançou além daquele ponto
+    (inclui "agora está completa", `cobertura_efisco_ate is None`). Decisões
+    tomadas sob cobertura completa (`decisao.cobertura_efisco_ate is None`)
+    nunca são afetadas por esta checagem — só o caso descoberto no QA
+    (decisão sobre universo comprovadamente incompleto) precisa desta
+    proteção extra, além do fingerprint normal."""
+    if decisao.cobertura_efisco_ate is None:
+        return False
+    return cobertura_efisco_ate is None or cobertura_efisco_ate > decisao.cobertura_efisco_ate
+
+
 def aplicar_decisoes(
     resultado: ResultadoRelatorio,
     decisoes: dict[str, DecisaoHumana],
+    *,
+    ano_exercicio: int,
+    mes_referencia: int,
+    cobertura_efisco_ate: date | None = None,
 ) -> ResultadoRevisado:
     """Aplica decisões humanas persistidas sobre a saída da 3B. Nunca
     reclassifica nada por conta própria (RN01-RN07 continuam
     responsabilidade exclusiva de `motor_decisao.classificar`) e nunca
     inventa uma decisão para um grupo sem entrada correspondente em
-    `decisoes` — esse grupo simplesmente permanece PENDENTE."""
+    `decisoes` — esse grupo simplesmente permanece PENDENTE.
+
+    Sprint D.1 — `ano_exercicio`/`mes_referencia` (a competência sendo
+    preparada AGORA) e `cobertura_efisco_ate` (a cobertura E-Fisco em vigor
+    agora, `None` quando completa) são novos parâmetros OBRIGATÓRIOS
+    (`ano_exercicio`/`mes_referencia`) e opcional (`cobertura_efisco_ate`) —
+    usados só para marcar cada revisão resolvida como reaplicada de
+    execução anterior e/ou invalidar uma decisão cuja cobertura ficou
+    obsoleta. PRESERVA o reaproveitamento entre competências (G06) — nunca
+    força nova decisão só por ter mudado de mês quando a evidência continua
+    válida; só torna essa reaplicação VISÍVEL."""
     candidatos_publicaveis = list(resultado.candidatos_normais)
     nao_publicaveis: list[OcorrenciaNaoPublicavel] = []
     revisoes_com_estado: list[RevisaoComEstado] = []
@@ -781,15 +867,24 @@ def aplicar_decisoes(
             decisao = decisao_legada
 
         fingerprint_atual = calcular_fingerprint(revisao.ocorrencias)
-        if decisao.fingerprint_evidencias != fingerprint_atual:
+        if decisao.fingerprint_evidencias != fingerprint_atual or _cobertura_da_decisao_ficou_obsoleta(
+            decisao, cobertura_efisco_ate
+        ):
             revisoes_com_estado.append(
                 RevisaoComEstado(revisao=revisao, estado=EstadoRevisao.DESATUALIZADA, decisao=decisao)
             )
             continue
 
+        reaplicada = _decisao_e_de_outra_execucao(decisao, ano_exercicio, mes_referencia)
+
         if decisao.acao is AcaoDecisao.ADIAR:
             revisoes_com_estado.append(
-                RevisaoComEstado(revisao=revisao, estado=EstadoRevisao.ADIADA, decisao=decisao)
+                RevisaoComEstado(
+                    revisao=revisao,
+                    estado=EstadoRevisao.ADIADA,
+                    decisao=decisao,
+                    reaplicada_de_execucao_anterior=reaplicada,
+                )
             )
             continue
 
@@ -846,6 +941,7 @@ def aplicar_decisoes(
                         ocorrencia=oc,
                         decisao=decisao,
                         categoria=CategoriaNaoPublicada.NAO_PUBLICADA_POR_DECISAO_HUMANA,
+                        reaplicada_de_execucao_anterior=reaplicada,
                     )
                 )
             elif identidade in publicadas_por_identidade:
@@ -854,6 +950,7 @@ def aplicar_decisoes(
                         ocorrencia=oc,
                         decisao=decisao,
                         categoria=CategoriaNaoPublicada.DUPLICATA_FISICA_IDENTICA_SUPRIMIDA,
+                        reaplicada_de_execucao_anterior=reaplicada,
                     )
                 )
             else:
@@ -862,7 +959,12 @@ def aplicar_decisoes(
                 )
                 publicadas_por_identidade.add(identidade)
         revisoes_com_estado.append(
-            RevisaoComEstado(revisao=revisao, estado=EstadoRevisao.DECIDIDA, decisao=decisao)
+            RevisaoComEstado(
+                revisao=revisao,
+                estado=EstadoRevisao.DECIDIDA,
+                decisao=decisao,
+                reaplicada_de_execucao_anterior=reaplicada,
+            )
         )
 
     return ResultadoRevisado(

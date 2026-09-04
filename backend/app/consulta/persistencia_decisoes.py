@@ -16,7 +16,7 @@ este módulo não lê nem escreve nada além do seu próprio arquivo JSON."""
 import json
 import os
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import filelock
@@ -174,10 +174,21 @@ def _decisao_para_dict(decisao: DecisaoHumana) -> dict:
         "autor": decisao.autor,
         "decidido_em": decisao.decidido_em.isoformat(),
         "observacao": decisao.observacao,
+        # Sprint D.1 — campos novos, SEMPRE gravados a partir de agora (nunca
+        # `None` para uma decisão nova real, ver `registrar_decisao_revisao`).
+        # Decisões antigas relidas e regravadas (`salvar_decisao` reescreve o
+        # arquivo inteiro a cada chamada) preservam exatamente o que já
+        # tinham em memória — nunca inventamos um valor para uma decisão
+        # histórica só porque o arquivo foi reescrito por causa de OUTRA
+        # decisão.
+        "ano_exercicio": decisao.ano_exercicio,
+        "mes_referencia": decisao.mes_referencia,
+        "cobertura_efisco_ate": decisao.cobertura_efisco_ate.isoformat() if decisao.cobertura_efisco_ate else None,
     }
 
 
 def _decisao_de_dict(dados: dict) -> DecisaoHumana:
+    cobertura_efisco_ate = dados.get("cobertura_efisco_ate")
     return DecisaoHumana(
         identidade_grupo=dados["identidade_grupo"],
         regra=dados["regra"],
@@ -188,6 +199,14 @@ def _decisao_de_dict(dados: dict) -> DecisaoHumana:
         autor=dados["autor"],
         decidido_em=datetime.fromisoformat(dados["decidido_em"]),
         observacao=dados.get("observacao"),
+        # Sprint D.1 — `.get(...)` deliberado (nunca `dados[...]`): arquivos
+        # gravados por versões anteriores a esta correção nunca têm essas
+        # chaves — `None` é o valor correto e esperado para eles (nunca uma
+        # falha de leitura), preservando decisões históricas exatamente como
+        # foram persistidas (nenhuma reescrita/inferência retroativa).
+        ano_exercicio=dados.get("ano_exercicio"),
+        mes_referencia=dados.get("mes_referencia"),
+        cobertura_efisco_ate=date.fromisoformat(cobertura_efisco_ate) if cobertura_efisco_ate else None,
     )
 
 
