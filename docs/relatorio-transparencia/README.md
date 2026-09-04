@@ -1,5 +1,21 @@
 # Relatório de Diárias — Portal da Transparência — Especificação Consolidada
 
+> **Atualização (Plano de Migração E-Fisco, Sprints A-D/D.1, posteriores a
+> este documento) — a Base de Ordens Bancárias/ClickView descrita abaixo foi
+> APOSENTADA como fonte financeira e substituída pela Base E-Fisco
+> (`app/consulta/repositorio_efisco.py`); o leitor exclusivo do ClickView
+> (`repositorio_ordens_bancarias.py`) foi removido do pipeline produtivo na
+> Sprint E (limpeza do legado). Nenhuma regra deste documento mudou de
+> significado por causa disso — RN01-RN07, o motor de reconciliação e a
+> estrutura `OrdemBancaria` continuam exatamente as mesmas, agora
+> alimentadas por `adaptador_efisco.py` em vez do leitor antigo (a mesma
+> forma de dados, `dict[str, list[OrdemBancaria]]`, entra em
+> `motor_reconciliacao.reconciliar` de qualquer uma das duas fontes,
+> indistintamente). As evidências/achados citados abaixo (linhas reais da
+> Base OB 2026, números de OB específicos etc.) permanecem como registro
+> histórico da investigação original que fundamentou essas regras — nunca
+> reescritos —, mas não descrevem mais a fonte em produção.
+
 > **Estado em 2026-08-23.** Micro-Sprints 1, 2 e 3A já implementadas
 > (leitura isolada da Base de Ordens Bancárias, leitura própria e
 > não-destrutiva do Controle DIMCAC, motor de reconciliação DH↔OB). Este

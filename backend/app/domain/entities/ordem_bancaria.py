@@ -4,12 +4,24 @@ from datetime import date, datetime
 
 @dataclass(frozen=True)
 class OrdemBancaria:
-    """Uma linha da Base de Ordens Bancárias (fonte externa ao DIMCAC, lida
-    por `app/consulta/repositorio_ordens_bancarias.py`) — projeção de leitura
-    pura, sem nenhuma regra de negócio aplicada. A reconciliação contra o
-    Controle de Diárias (R01-R10) é responsabilidade de um motor futuro,
-    ainda não implementado (Micro-sprint 3) — esta entidade só representa o
-    que está escrito na planilha.
+    """Uma ocorrência financeira (fonte externa ao DIMCAC) — projeção de
+    leitura pura, sem nenhuma regra de negócio aplicada. Nome/campo `ob`
+    preservados por representarem um conceito de negócio real (Número da
+    Ordem Bancária) que continua existindo na fonte atual, não um artefato
+    do leitor legado.
+
+    Sprint E (Plano de Migração E-Fisco, limpeza do legado) — até a Sprint C
+    a única fonte era a Base de Ordens Bancárias/ClickView, lida por
+    `app/consulta/repositorio_ordens_bancarias.py` (removido nesta Sprint,
+    já sem nenhum uso produtivo). A fonte atual é a Base E-Fisco
+    (`app/consulta/repositorio_efisco.py`), adaptada para esta MESMA forma
+    por `app/domain/relatorio_transparencia/adaptador_efisco.py` — o motor
+    de reconciliação (`motor_reconciliacao.py`) e tudo o que consome
+    `OrdemBancaria` nunca precisou mudar por causa da troca de fonte.
+
+    A reconciliação contra o Controle de Diárias (RN01-RN07) é
+    responsabilidade de `domain/relatorio_transparencia/motor_reconciliacao.py`/
+    `motor_decisao.py` — esta entidade só representa o dado já lido.
 
     `linha` é só diagnóstico (localizar a linha na planilha), nunca chave. A
     chave de negócio real é o par `(dh, ob)` — nunca `ob` isolada (a mesma OB

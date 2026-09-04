@@ -1,8 +1,12 @@
-"""Motor de reconciliação entre o Controle de Diárias (DIMCAC) e a Base de
-Ordens Bancárias, para a futura geração do Relatório de Diárias — Portal da
-Transparência. Funções puras (sem I/O) — quem lê as duas fontes é sempre
-`app/consulta/` (`repositorio_controle_dimcac.controle_dimcac_por_dh`,
-`repositorio_ordens_bancarias.ordens_bancarias_por_dh`).
+"""Motor de reconciliação entre o Controle de Diárias (DIMCAC) e a fonte
+financeira (Base E-Fisco, desde o Plano de Migração E-Fisco), para o
+Relatório de Diárias — Portal da Transparência. Funções puras (sem I/O) —
+quem lê as fontes é sempre `app/consulta/`
+(`repositorio_controle_dimcac.controle_dimcac_por_dh`,
+`repositorio_efisco.linhas_efisco` + `adaptador_efisco.
+ordens_bancarias_por_dh_via_efisco`; o leitor exclusivo da Base de Ordens
+Bancárias/ClickView foi removido na Sprint E, sem uso produtivo desde a
+Sprint C).
 
 Micro-sprint 2 (reconciliação mínima): só a granularidade DH/OB é
 preservada — nenhuma regra financeira/descritiva (R01, R02, R05, R06, R07,

@@ -4,7 +4,6 @@ from openpyxl import Workbook
 
 from app.domain.entities.registro_controle import ClassificacaoSei
 from app.consulta.repositorio_controle_dimcac import controle_dimcac_por_dh
-from app.consulta.repositorio_ordens_bancarias import ordens_bancarias_por_dh
 from app.domain.relatorio_transparencia.motor_reconciliacao import reconciliar
 
 _SEI_PADRAO = "19.20.0001.0000001/2026-01"
@@ -266,59 +265,22 @@ def test_nenhuma_linha_com_dh_preenchido_e_descartada_mesmo_com_outros_campos_ma
 
 
 def test_integracao_com_reconciliar_preserva_multiplas_linhas_de_controle():
+    """Integração com `reconciliar()` — a fonte financeira (`ordens_por_dh`)
+    é construída aqui diretamente via `_ob_generica` (mesmo helper já usado
+    pelo teste vizinho, `test_um_dh_para_n_obs_...`), nunca lendo uma Base OB
+    real: `reconciliar()` não sabe nem precisa saber de onde vieram os
+    `OrdemBancaria` — Base OB/ClickView (aposentada na Sprint C) ou Base
+    E-Fisco (`adaptador_efisco`, fonte atual) produzem exatamente a mesma
+    forma. Sprint E — removida a dependência do leitor legado
+    (`repositorio_ordens_bancarias`), sem perder cobertura da integração."""
     _, planilha_controle = _nova_planilha()
     _escrever_linha_controle(planilha_controle, 2, sei="19.20.0001.0000001/2026-01")
     _escrever_linha_controle(planilha_controle, 3, sei="19.20.0001.0000002/2026-02")
     resultado_controle = controle_dimcac_por_dh(planilha_controle)
 
-    workbook_ob = Workbook()
-    planilha_ob = workbook_ob.active
-    planilha_ob.title = "Sheet1"
-    planilha_ob.append(
-        [
-            "DH",
-            "OB",
-            "SITUAÇÃO",
-            "DATA OB",
-            "SEI",
-            "CPF",
-            "NOME",
-            "CARGO",
-            "PERÍODO INICIAL",
-            "PERÍODO FINAL",
-            "TRECHO",
-            "TRANSPORTE",
-            "MOTIVO",
-            "VALOR DA DIÁRIA",
-            "RESTITUIÇÃO",
-            "DUPLICIDADE",
-            "ITEM DE GASTO",
-        ]
-    )
-    planilha_ob.append(
-        [
-            _DH_PADRAO,
-            "2026OB000001",
-            "Paga",
-            "12/05/2026 08:38:14",
-            _SEI_PADRAO,
-            11111111111,
-            "FULANO DE TAL",
-            "Cargo Teste",
-            date(2026, 1, 8),
-            date(2026, 1, 10),
-            "RECIFE - GARANHUNS",
-            "CARRO",
-            "Motivo de teste",
-            801.25,
-            None,
-            "Único",
-            "33901401",
-        ]
-    )
-    resultado_ob = ordens_bancarias_por_dh(planilha_ob)
+    ordens_por_dh = {_DH_PADRAO: [_ob_generica(ob="2026OB000001", valor=801.25)]}
 
-    resultado = reconciliar(resultado_controle.por_dh, resultado_ob.por_dh)
+    resultado = reconciliar(resultado_controle.por_dh, ordens_por_dh)
 
     documento = resultado.documentos[_DH_PADRAO]
     assert len(documento.controle) == 2
