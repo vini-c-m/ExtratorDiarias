@@ -1477,3 +1477,218 @@ def test_get_fontes_json_corrompido_503_amigavel(tmp_path):
     )
 
     assert resposta.status_code == 503
+
+
+# ============================================================================
+# QA real pós-instalador 2.3.1 — "cobertura parcial é perdida na geração
+# final". Achado exato: `aceitar_cobertura_parcial` chegava correto em
+# `/preparar` (schema, API e service já corretos ali) mas `revisoes()` e
+# `decidir()`/`gerar()` em `app/api/relatorio_transparencia.py` nunca
+# repassavam `parametros.aceitar_cobertura_parcial`/`requisicao.
+# aceitar_cobertura_parcial` para `listar_revisoes`/`registrar_decisao_
+# revisao`/`gerar_relatorio_xlsx` — os três serviços sempre recebiam o
+# default `False`, e `_montar_resultado_revisado` voltava a bloquear com
+# `CoberturaInsuficienteEfisco` mesmo já tendo sido aceito explicitamente
+# na MESMA execução. Nenhum destes testes existia antes da correção — o
+# bug só aparece numa chamada HTTP real a `/gerar` (ou `/revisoes`/
+# `/revisoes/{id}/decisao`) depois de um `/preparar` aceito sob cobertura
+# parcial, nunca testando `gerar_relatorio_xlsx`/`registrar_decisao_
+# revisao` isoladamente (esses sempre estiveram corretos).
+#
+# Reproduz o cenário real relatado em QA: agosto/2026 (`mes_referencia=8`,
+# fim de competência 31/08), última linha Paga confirmada em 25/08 — os
+# mesmos números do relato ("...até 2026-08-25", competência "2026-08-31").
+# ============================================================================
+
+
+def _linhas_agosto_cobertura_ate_25(*, cobertura_completa=False):
+    """Um grupo RN07 (mesmo CPF/período/valor/trecho) em agosto/2026, com
+    a última Data Pagto./Devol. em 25/08 — cobertura insuficiente para a
+    competência agosto (fim em 31/08) a menos que `cobertura_completa`
+    acrescente uma linha extra alcançando 31/08 (mesmo recurso já usado em
+    `test_ponta_a_ponta_preparar_decidir_reaproveitar_invalidar`)."""
+    linhas = [
+        _linha_ob(
+            dh="2026DH000030", ob="2026OB000030", cpf=44444444444, valor=500.00,
+            trecho="RECIFE - SALGUEIRO", periodo_inicial=date(2026, 8, 5), periodo_final=date(2026, 8, 5),
+            data_ob="25/08/2026 09:00:00",
+        ),
+        _linha_ob(
+            dh="2026DH000031", ob="2026OB000031", cpf=44444444444, valor=500.00,
+            trecho="RECIFE - SALGUEIRO", periodo_inicial=date(2026, 8, 5), periodo_final=date(2026, 8, 5),
+            data_ob="25/08/2026 09:00:00",
+        ),
+    ]
+    if cobertura_completa:
+        linhas.append(
+            _linha_ob(
+                dh="2026DH999998", ob="2026OB999998", cpf=99999999998, valor=1.0,
+                trecho="COBERTURA - AGOSTO COMPLETA", periodo_inicial=date(2026, 8, 31), periodo_final=date(2026, 8, 31),
+                data_ob="31/08/2026 09:00:00",
+            )
+        )
+    return linhas
+
+
+def test_preparar_sem_consentimento_bloqueia_com_422_estruturado(tmp_path):
+    """Controle — reproduz o PRIMEIRO passo do relato de QA: sem
+    `aceitar_cobertura_parcial`, `/preparar` bloqueia com o 422 estruturado
+    (nunca um texto genérico), com a MESMA data-limite relatada."""
+    linhas = _linhas_agosto_cobertura_ate_25()
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes, mes_referencia=8)
+
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload)
+
+    assert resposta.status_code == 422
+    detalhe = resposta.json()["detail"]
+    assert detalhe["tipo"] == "cobertura_efisco_insuficiente"
+    assert detalhe["cobertura_paga_ate"] == "2026-08-25"
+
+
+def test_fluxo_completo_cobertura_parcial_preparar_decidir_gerar_sem_novo_bloqueio(tmp_path):
+    """Fluxo real do relato de QA, ponta a ponta via HTTP (o único nível
+    onde o bug aparecia): /preparar -> 422 -> repetir com
+    aceitar_cobertura_parcial=true -> sucesso -> decidir a revisão
+    pendente (mesmo consentimento) -> pode_gerar_relatorio=True -> /gerar
+    com o MESMO contexto -> sucesso, sem novo bloqueio de cobertura.
+    Antes da correção, o último passo (`/gerar`) falhava com o mesmo 422
+    do primeiro passo, mesmo já tendo sido aceito explicitamente."""
+    linhas = _linhas_agosto_cobertura_ate_25()
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload_fontes = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes, mes_referencia=8)
+
+    # 1) /preparar sem consentimento -> 422 (já coberto isoladamente acima,
+    # repetido aqui só para fixar o ponto de partida do fluxo real).
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload_fontes)
+    assert resposta.status_code == 422
+
+    # 2) repetir com aceitar_cobertura_parcial=true -> sucesso.
+    payload_parcial = dict(payload_fontes, aceitar_cobertura_parcial=True)
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload_parcial)
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["cobertura_parcial"] is True
+    assert corpo["cobertura_efisco_ate"] == "2026-08-25"
+    assert corpo["total_revisoes"] == 1
+    assert corpo["pode_gerar_relatorio"] is False
+    identidade = corpo["revisoes"][0]["identidade_grupo"]
+    # Rastreabilidade D.1 — decidida NESTA execução, nunca reaplicada de
+    # outra (não existe decisão anterior nenhuma para este grupo ainda).
+    assert corpo["revisoes"][0]["reaplicada_de_execucao_anterior"] is False
+
+    # 3) decidir a revisão pendente, MESMO consentimento -> sem bloqueio de
+    # cobertura na reconstrução que `registrar_decisao_revisao` faz antes
+    # de decidir.
+    payload_decisao = dict(
+        payload_parcial,
+        acao="publicar",
+        autor="servidor.teste",
+        obs_selecionadas=["2026OB000030", "2026OB000031"],
+    )
+    resposta = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload_decisao)
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["pode_gerar_relatorio"] is True
+    assert corpo["cobertura_parcial"] is True
+    assert corpo["cobertura_efisco_ate"] == "2026-08-25"
+    revisao = next(r for r in corpo["revisoes"] if r["identidade_grupo"] == identidade)
+    assert revisao["estado"] == "decidida"
+    assert revisao["reaplicada_de_execucao_anterior"] is False
+
+    # 4) /gerar com o MESMO contexto (mesmo aceitar_cobertura_parcial=true)
+    # -> sucesso. Este é o passo que falhava antes da correção.
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida.xlsx"
+    payload_gerar = dict(
+        payload_parcial,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload_gerar)
+
+    assert resposta.status_code == 200
+    assert caminho_destino.exists()
+
+
+def test_gerar_sem_consentimento_continua_bloqueado_mesmo_apos_decisao_sob_cobertura_parcial(tmp_path):
+    """A correção nunca pode virar um "sempre permite" — geração DIRETA
+    sem `aceitar_cobertura_parcial` continua bloqueada, mesmo que a
+    revisão já tenha sido decidida sob cobertura parcial em uma chamada
+    anterior (o consentimento é por REQUISIÇÃO, nunca um estado global
+    persistido)."""
+    linhas = _linhas_agosto_cobertura_ate_25()
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload_fontes = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes, mes_referencia=8)
+    payload_parcial = dict(payload_fontes, aceitar_cobertura_parcial=True)
+
+    corpo = client.post(f"{_BASE_URL}/preparar", json=payload_parcial).json()
+    identidade = corpo["revisoes"][0]["identidade_grupo"]
+    payload_decisao = dict(
+        payload_parcial,
+        acao="publicar",
+        autor="servidor.teste",
+        obs_selecionadas=["2026OB000030", "2026OB000031"],
+    )
+    corpo = client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload_decisao).json()
+    assert corpo["pode_gerar_relatorio"] is True
+
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida_sem_consentimento.xlsx"
+    payload_gerar_sem_consentimento = dict(
+        payload_fontes,  # sem aceitar_cobertura_parcial
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload_gerar_sem_consentimento)
+
+    assert resposta.status_code == 422
+    assert resposta.json()["detail"]["tipo"] == "cobertura_efisco_insuficiente"
+    assert not caminho_destino.exists()
+
+
+def test_preparar_com_cobertura_completa_continua_normal(tmp_path):
+    """Controle negativo — cobertura completa (linha extra alcançando o
+    fim da competência) nunca é tratada como parcial, mesmo sem
+    `aceitar_cobertura_parcial` — comportamento normal preservado."""
+    linhas = _linhas_agosto_cobertura_ate_25(cobertura_completa=True)
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes, mes_referencia=8)
+
+    resposta = client.post(f"{_BASE_URL}/preparar", json=payload)
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["cobertura_parcial"] is False
+
+
+def test_gerar_com_cobertura_completa_nunca_exige_aceitar_cobertura_parcial(tmp_path):
+    """Controle negativo do fluxo completo — com cobertura completa,
+    `/gerar` continua funcionando sem `aceitar_cobertura_parcial` (nunca
+    passou a EXIGIR o campo por causa da correção)."""
+    linhas = _linhas_agosto_cobertura_ate_25(cobertura_completa=True)
+    caminho_base_ob, caminho_controle, caminho_decisoes = _preparar_fontes(tmp_path, linhas)
+    payload_fontes = _payload_base(caminho_base_ob, caminho_controle, caminho_decisoes, mes_referencia=8)
+
+    identidade = client.post(f"{_BASE_URL}/preparar", json=payload_fontes).json()["revisoes"][0]["identidade_grupo"]
+    payload_decisao = dict(
+        payload_fontes,
+        acao="publicar",
+        autor="servidor.teste",
+        obs_selecionadas=["2026OB000030", "2026OB000031"],
+    )
+    client.post(f"{_BASE_URL}/revisoes/{identidade}/decisao", json=payload_decisao)
+
+    caminho_configuracao_template = _configurar_template(tmp_path)
+    caminho_destino = tmp_path / "saida_cobertura_completa.xlsx"
+    payload_gerar = dict(
+        payload_fontes,
+        caminho_configuracao_template=caminho_configuracao_template,
+        caminho_destino=str(caminho_destino),
+    )
+
+    resposta = client.post(f"{_BASE_URL}/gerar", json=payload_gerar)
+
+    assert resposta.status_code == 200
+    assert caminho_destino.exists()

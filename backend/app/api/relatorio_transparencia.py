@@ -208,6 +208,17 @@ def gerar(requisicao: RequisicaoGerarRelatorio) -> RelatorioGeradoResposta:
             caminho_configuracao_template=requisicao.caminho_configuracao_template,
             caminho_destino=requisicao.caminho_destino,
             caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
+            # QA real (bug reportado em QA na máquina de teste, instalador
+            # 2.3.1) — achado exato: `RequisicaoGerarRelatorio.aceitar_
+            # cobertura_parcial` chegava aqui corretamente (schema/API já
+            # tinham o campo), mas nunca era repassado nesta chamada —
+            # `gerar_relatorio_xlsx` sempre recebia o default `False` e
+            # `_montar_resultado_revisado` voltava a bloquear com
+            # `CoberturaInsuficienteEfisco`, mesmo já tendo sido aceita
+            # explicitamente em `/preparar` na MESMA execução. Único ponto
+            # onde o valor era perdido — nenhum outro lugar da cadeia
+            # (frontend → schema → aqui) estava errado.
+            aceitar_cobertura_parcial=requisicao.aceitar_cobertura_parcial,
         )
     except RelatorioBloqueadoPorPendencias as erro:
         raise HTTPException(status_code=409, detail=str(erro)) from erro
@@ -260,6 +271,12 @@ def revisoes(parametros: Annotated[ParametrosRelatorioQuery, Query()]) -> ListaR
             mes_referencia=parametros.mes_referencia,
             caminho_decisoes=parametros.caminho_decisoes,
             caminho_planilha_passagens=parametros.caminho_planilha_passagens,
+            # QA real (bug pós-instalador 2.3.1) — faltava aqui: cobertura
+            # parcial já aceita em `/preparar` era perdida nesta chamada
+            # (o service caía no default `False` e reconstruía como se a
+            # cobertura nunca tivesse sido autorizada). Mesma autorização
+            # da MESMA execução tem que valer para revisões/decisão/geração.
+            aceitar_cobertura_parcial=parametros.aceitar_cobertura_parcial,
         )
     except (
         BaseEfiscoNaoEncontrada,
@@ -292,6 +309,12 @@ def decidir(identidade: str, requisicao: RequisicaoRegistrarDecisao) -> ResumoRe
             autor=requisicao.autor,
             observacao=requisicao.observacao,
             caminho_planilha_passagens=requisicao.caminho_planilha_passagens,
+            # QA real (bug pós-instalador 2.3.1) — ver mesma correção em
+            # `revisoes`/`gerar`: sem isto, uma decisão registrada durante
+            # cobertura parcial já aceita reconstruía o estado como se a
+            # cobertura fosse insuficiente de novo, quebrando a mesma
+            # autorização no meio da execução.
+            aceitar_cobertura_parcial=requisicao.aceitar_cobertura_parcial,
         )
     except RevisaoNaoEncontrada as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
