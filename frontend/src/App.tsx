@@ -204,6 +204,8 @@ export default function App() {
               }}
               aoSelecionarRegularizacaoDH={() => setPagina("regularizacao-dh")}
               aoSelecionarRelatorioTransparencia={() => setPagina("relatorio-transparencia")}
+              configuracaoAtiva={configuracao}
+              aoAbrirConfiguracoes={abrirConfiguracoesComSeguranca}
             />
           )}
           {pagina === "processamento" && (
@@ -238,10 +240,16 @@ export default function App() {
                   backendOnline={status === "conectado"}
                   aoMudarEstado={setEstadoApp}
                   aoMudarSolicitarSaidaSegura={aoMudarSolicitarSaidaSegura}
+                  configuracaoAtiva={configuracao}
+                  aoAbrirConfiguracoes={abrirConfiguracoesComSeguranca}
                 />
               )}
               {subPaginaProcessamento === "finalizar" && (
-                <FinalizarDiarias backendOnline={status === "conectado"} />
+                <FinalizarDiarias
+                  backendOnline={status === "conectado"}
+                  configuracaoAtiva={configuracao}
+                  aoAbrirConfiguracoes={abrirConfiguracoesComSeguranca}
+                />
               )}
             </div>
           )}
@@ -269,6 +277,8 @@ export default function App() {
         <ModalAlterarPlanilhaOficial
           onFechar={() => setModalConfiguracoesAberto(false)}
           aoConfigurar={atualizarConfiguracao}
+          configuracaoAtual={configuracao}
+          aoAtualizarPastas={atualizarConfiguracao}
         />
       )}
       {dialogoFechamento}

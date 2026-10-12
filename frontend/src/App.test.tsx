@@ -91,12 +91,28 @@ import { useConfiguracao } from "./hooks/useConfiguracao";
 const useConfiguracaoMock = vi.mocked(useConfiguracao);
 const atualizarConfiguracaoMock = vi.fn();
 
+// Organização Automática de PDFs — pastas operacionais aditivas, nenhuma
+// configurada nestes testes de navegação (não são o foco desta suíte).
+const PRONTIDAO_PASTAS_VAZIA = {
+  processamento_padrao: { liberado: false, pastas_faltando: ["PDFs a Processar", "PDFs Processados"] },
+  complemento: {
+    liberado: false,
+    pastas_faltando: ["PDFs de Complemento a Processar", "PDFs Processados"],
+  },
+  finalizacao: { liberado: false, pastas_faltando: ["PDFs de Diárias a Confirmar"] },
+};
+
 const CONFIGURACAO_ATIVA = {
   configurado: true as const,
   planilha_acessivel: true as const,
   requer_revalidacao: false,
   caminho_planilha_oficial: "G:\\Meu Drive\\DIMCAC\\Controle de Diárias.xlsx",
   configurado_em: "2026-07-30T14:32:10",
+  caminho_pdfs_a_processar: null,
+  caminho_pdfs_complemento_a_processar: null,
+  caminho_pdfs_processados: null,
+  caminho_pdfs_diarias_a_confirmar: null,
+  prontidao_pastas: PRONTIDAO_PASTAS_VAZIA,
 };
 
 // Sprint (Loading/Bloqueio de Ações/Navegação Segura, item 15) — o
@@ -238,7 +254,15 @@ describe("App — gate de Configuração Inicial (Sprint 15)", () => {
   it("planilha_acessivel:false NÃO bloqueia Boas-vindas/Hub — só a ação de preencher, dentro de Processamento (§7)", async () => {
     const usuario = userEvent.setup();
     useConfiguracaoMock.mockReturnValue({
-      estado: { configurado: true, planilha_acessivel: false },
+      estado: {
+        configurado: true,
+        planilha_acessivel: false,
+        caminho_pdfs_a_processar: null,
+        caminho_pdfs_complemento_a_processar: null,
+        caminho_pdfs_processados: null,
+        caminho_pdfs_diarias_a_confirmar: null,
+        prontidao_pastas: PRONTIDAO_PASTAS_VAZIA,
+      },
       atualizar: atualizarConfiguracaoMock,
     });
 

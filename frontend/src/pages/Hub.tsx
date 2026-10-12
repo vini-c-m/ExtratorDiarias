@@ -1,9 +1,11 @@
 import { BarChart3, ClipboardCheck, FileSpreadsheet, Landmark, ListChecks } from "lucide-react";
 import AlertaGlobalDocumentosHabeis from "../components/hub/AlertaGlobalDocumentosHabeis";
 import CardFuncionalidade from "../components/hub/CardFuncionalidade";
+import AvisoConfiguracaoPendente from "../components/configuracao/AvisoConfiguracaoPendente";
 import Alerta from "../components/ui/Alerta";
 import { MENSAGENS } from "../lib/mensagens";
 import { TIPOGRAFIA } from "../theme/tipografia";
+import type { EstadoConfiguracao } from "../types/configuracao";
 
 interface Props {
   backendOnline: boolean;
@@ -17,8 +19,29 @@ interface Props {
   aoSelecionarRegularizacaoDH: () => void;
   // Micro-sprint 3E.1 — quinto card, mesmo padrão das demais. Opcional só
   // para não quebrar testes existentes que montam este componente sem esta
-  // prop.
+  // prop (mesmo critério já usado por `configuracaoAtiva`/`aoAbrirConfiguracoes`
+  // abaixo).
   aoSelecionarRelatorioTransparencia?: () => void;
+  // Organização Automática de PDFs — aviso persistente quando alguma
+  // funcionalidade está bloqueada por falta de pasta operacional
+  // configurada. Nunca bloqueia o Hub em si, só avisa. Opcionais para não
+  // quebrar testes existentes que montam este componente sem essas props;
+  // `null`/ausente nunca mostra o aviso.
+  configuracaoAtiva?: EstadoConfiguracao | null;
+  aoAbrirConfiguracoes?: () => void;
+}
+
+// Rótulos únicos de todas as pastas faltando em qualquer funcionalidade —
+// o banner do Hub é genérico (não lista rótulos), mas só aparece quando há
+// pelo menos uma pendência real em alguma das três.
+function pastasFaltandoNoHub(configuracao: EstadoConfiguracao | null): string[] {
+  if (!configuracao || !configuracao.configurado) return [];
+  const { prontidao_pastas: prontidao } = configuracao;
+  const faltando = new Set<string>();
+  for (const chave of ["processamento_padrao", "complemento", "finalizacao"] as const) {
+    for (const rotulo of prontidao[chave].pastas_faltando) faltando.add(rotulo);
+  }
+  return [...faltando];
 }
 
 // Sprint 14 — Hub de funcionalidades: segunda tela do fluxo (Boas-vindas →
@@ -44,6 +67,8 @@ export default function Hub({
   aoAbrirDocumentosHabeisPendentes,
   aoSelecionarRegularizacaoDH,
   aoSelecionarRelatorioTransparencia,
+  configuracaoAtiva = null,
+  aoAbrirConfiguracoes,
 }: Props) {
   const funcionalidades = [
     {
@@ -115,6 +140,14 @@ export default function Hub({
         <AlertaGlobalDocumentosHabeis
           backendOnline={backendOnline}
           aoAbrirPendencias={aoAbrirDocumentosHabeisPendentes}
+        />
+      </div>
+
+      <div className="mx-auto mt-4 max-w-md">
+        <AvisoConfiguracaoPendente
+          pastasFaltando={pastasFaltandoNoHub(configuracaoAtiva)}
+          aoConfigurar={() => aoAbrirConfiguracoes?.()}
+          variante="banner"
         />
       </div>
 

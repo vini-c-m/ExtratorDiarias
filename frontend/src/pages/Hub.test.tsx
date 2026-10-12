@@ -202,4 +202,93 @@ describe("Hub", () => {
 
     expect(screen.queryByText("Aguardando o aplicativo terminar de iniciar...")).not.toBeInTheDocument();
   });
+
+  // Organização Automática de PDFs.
+  describe("aviso de pastas operacionais pendentes", () => {
+    function propsBase() {
+      return {
+        backendOnline: true,
+        aoSelecionarProcessamento: vi.fn(),
+        aoSelecionarConferencia: vi.fn(),
+        aoSelecionarAnalitica: vi.fn(),
+        aoAbrirDocumentosHabeisPendentes: vi.fn(),
+        aoSelecionarRegularizacaoDH: vi.fn(),
+      };
+    }
+
+    it("nenhuma pendência: não mostra o banner", () => {
+      render(
+        <Hub
+          {...propsBase()}
+          configuracaoAtiva={{
+            configurado: true,
+            planilha_acessivel: true,
+            requer_revalidacao: false,
+            caminho_planilha_oficial: "C:/planilha.xlsx",
+            configurado_em: "2026-08-01T10:00:00",
+            caminho_pdfs_a_processar: "C:/pdfs",
+            caminho_pdfs_complemento_a_processar: "C:/pdfs",
+            caminho_pdfs_processados: "C:/processados",
+            caminho_pdfs_diarias_a_confirmar: "C:/a-confirmar",
+            prontidao_pastas: {
+              processamento_padrao: { liberado: true, pastas_faltando: [] },
+              complemento: { liberado: true, pastas_faltando: [] },
+              finalizacao: { liberado: true, pastas_faltando: [] },
+            },
+          }}
+        />,
+      );
+
+      expect(
+        screen.queryByText("Configuração de pastas incompleta. Algumas funções estão indisponíveis."),
+      ).not.toBeInTheDocument();
+    });
+
+    it("alguma pendência: mostra o banner e 'Configurar agora' aciona aoAbrirConfiguracoes", async () => {
+      const usuario = userEvent.setup();
+      const aoAbrirConfiguracoes = vi.fn();
+
+      render(
+        <Hub
+          {...propsBase()}
+          aoAbrirConfiguracoes={aoAbrirConfiguracoes}
+          configuracaoAtiva={{
+            configurado: true,
+            planilha_acessivel: true,
+            requer_revalidacao: false,
+            caminho_planilha_oficial: "C:/planilha.xlsx",
+            configurado_em: "2026-08-01T10:00:00",
+            caminho_pdfs_a_processar: null,
+            caminho_pdfs_complemento_a_processar: null,
+            caminho_pdfs_processados: null,
+            caminho_pdfs_diarias_a_confirmar: null,
+            prontidao_pastas: {
+              processamento_padrao: {
+                liberado: false,
+                pastas_faltando: ["PDFs a Processar", "PDFs Processados"],
+              },
+              complemento: { liberado: true, pastas_faltando: [] },
+              finalizacao: { liberado: true, pastas_faltando: [] },
+            },
+          }}
+        />,
+      );
+
+      expect(
+        screen.getByText("Configuração de pastas incompleta. Algumas funções estão indisponíveis."),
+      ).toBeInTheDocument();
+
+      await usuario.click(screen.getByRole("button", { name: "Configurar agora" }));
+
+      expect(aoAbrirConfiguracoes).toHaveBeenCalledTimes(1);
+    });
+
+    it("configuracaoAtiva ausente (prop não passada): nunca mostra o banner", () => {
+      render(<Hub {...propsBase()} />);
+
+      expect(
+        screen.queryByText("Configuração de pastas incompleta. Algumas funções estão indisponíveis."),
+      ).not.toBeInTheDocument();
+    });
+  });
 });
