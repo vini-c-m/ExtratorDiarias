@@ -86,6 +86,14 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
   // lido pelo fluxo Padrão (RN-04 continua sempre 1, intocado).
   const [parcialIsolada, setParcialIsolada] = useState(false);
 
+  // Histórico e-Fisco de Membro — controlados como string (mesmo padrão de
+  // `sei`/`destino`), parseados só na hora de montar o payload
+  // (`gerarHistoricoClique`). Relevantes tanto no modo Padrão quanto no
+  // Complemento (RN institucional: a Central não lê o despacho do GABPGJ em
+  // nenhum dos dois); nunca lidos quando a categoria não é MEMBRO.
+  const [quantidadeIntegralMembro, setQuantidadeIntegralMembro] = useState("");
+  const [quantidadeParcialMembro, setQuantidadeParcialMembro] = useState("");
+
   // Micro-sprint A ("Valor Automático da Diária na Central de Conferência")
   // — sempre acionado junto com `gerarHistoricoClique` (mesmo botão), mas
   // como uma chamada independente: uma falha aqui nunca apaga/impede o
@@ -109,6 +117,8 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
     setProsseguirMesmoAssim(false);
     setCandidatos([]);
     setParcialIsolada(false);
+    setQuantidadeIntegralMembro("");
+    setQuantidadeParcialMembro("");
     setValorResultado(null);
     setCarregandoValor(false);
     setErroValor(null);
@@ -195,6 +205,19 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
     // financeira nunca afeta o que é gerado/exibido dele.
     calcularValorClique();
 
+    // Histórico e-Fisco de Membro — só monta os dois valores quando a
+    // categoria classificada na Etapa 1 é MEMBRO; para Servidor, ambos ficam
+    // `undefined` e o corpo da requisição sai idêntico ao de antes desta
+    // melhoria.
+    const integralMembro =
+      categoriaFuncional === "MEMBRO" && quantidadeIntegralMembro !== ""
+        ? Number(quantidadeIntegralMembro)
+        : undefined;
+    const parcialMembro =
+      categoriaFuncional === "MEMBRO" && quantidadeParcialMembro !== ""
+        ? Number(quantidadeParcialMembro)
+        : undefined;
+
     try {
       const texto = modoComplemento
         ? await gerarHistoricoComplemento(
@@ -204,8 +227,18 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
             sei,
             destino,
             parcialIsolada ? 1 : undefined,
+            integralMembro,
+            parcialMembro,
           )
-        : await gerarHistorico(cpf, periodoInicial, periodoFinal, sei, destino);
+        : await gerarHistorico(
+            cpf,
+            periodoInicial,
+            periodoFinal,
+            sei,
+            destino,
+            integralMembro,
+            parcialMembro,
+          );
       setHistorico(texto);
     } catch (erro) {
       setErroHistorico(mensagemAmigavel(erro, "Não foi possível gerar o histórico."));
@@ -252,6 +285,12 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
     resultado?.veredito === "REVISAR" && cadastroOk && duplicidadeOk && !janelaOk;
   const mostrarEtapaHistorico =
     resultado?.veredito === "APTO_PARA_PROCESSAMENTO" || (apenasJanelaPendente && prosseguirMesmoAssim);
+
+  // Histórico e-Fisco de Membro — classificação já feita pela Etapa 1
+  // (`ServidorResposta.categoria_funcional`), reaproveitada aqui para
+  // decidir se `FormularioHistorico` exibe os campos manuais de
+  // Integrais/Parcial, em Padrão ou Complemento.
+  const categoriaFuncional = resultado?.servidor?.categoria_funcional ?? null;
 
   // Cadastro de Servidor/Membro — CPF ainda não localizado + Planilha
   // Oficial disponível para escrita agora.
@@ -383,6 +422,11 @@ export default function Conferencia({ backendOnline, configuracaoAtiva }: Props)
               tituloResultado={modoComplemento ? "Histórico de Complemento para o e-Fisco" : undefined}
               parcialIsolada={modoComplemento ? parcialIsolada : undefined}
               onMudarParcialIsolada={modoComplemento ? setParcialIsolada : undefined}
+              categoriaFuncional={categoriaFuncional}
+              quantidadeIntegralMembro={quantidadeIntegralMembro}
+              onMudarQuantidadeIntegralMembro={setQuantidadeIntegralMembro}
+              quantidadeParcialMembro={quantidadeParcialMembro}
+              onMudarQuantidadeParcialMembro={setQuantidadeParcialMembro}
               valor={valorResultado}
               carregandoValor={carregandoValor}
               erroValor={erroValor}

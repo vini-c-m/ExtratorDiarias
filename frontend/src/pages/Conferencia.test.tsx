@@ -169,6 +169,15 @@ const CONFIGURACAO_ATIVA: ConfiguracaoAtiva = {
   requer_revalidacao: false,
   caminho_planilha_oficial: "C:\\planilha-oficial.xlsx",
   configurado_em: "2026-08-01T10:00:00",
+  caminho_pdfs_a_processar: null,
+  caminho_pdfs_complemento_a_processar: null,
+  caminho_pdfs_processados: null,
+  caminho_pdfs_diarias_a_confirmar: null,
+  prontidao_pastas: {
+    processamento_padrao: { liberado: false, pastas_faltando: [] },
+    complemento: { liberado: false, pastas_faltando: [] },
+    finalizacao: { liberado: false, pastas_faltando: [] },
+  },
 };
 
 beforeEach(() => {
@@ -363,6 +372,11 @@ describe("Conferencia — geração e cópia do histórico", () => {
       "2026-07-23",
       "19.20.0000.0000000/2026-00",
       "Garanhuns",
+      // Histórico e-Fisco de Membro — undefined/undefined preservam o
+      // comportamento anterior a esta melhoria: servidor não é MEMBRO, então
+      // nenhuma quantidade manual é enviada.
+      undefined,
+      undefined,
     );
 
     await usuario.click(screen.getByRole("button", { name: /Copiar Histórico/ }));
@@ -468,6 +482,10 @@ describe("Conferencia — Modo Complemento de Diárias (RN-14)", () => {
       // desmarcado por padrão: undefined preserva o padrão institucional
       // (0) aplicado no backend.
       undefined,
+      // Histórico e-Fisco de Membro — servidor não é MEMBRO, nenhuma
+      // quantidade manual enviada.
+      undefined,
+      undefined,
     );
     expect(gerarHistoricoMock).not.toHaveBeenCalled();
   });
@@ -497,6 +515,10 @@ describe("Conferencia — Modo Complemento de Diárias (RN-14)", () => {
       "19.20.0001.0004758/2026-36",
       "Recife",
       1,
+      // Histórico e-Fisco de Membro — servidor não é MEMBRO, nenhuma
+      // quantidade manual enviada.
+      undefined,
+      undefined,
     );
   });
 
@@ -807,6 +829,135 @@ describe("Conferencia — Valor Automático da Diária (Micro-sprint A)", () => 
       "2026-07-23",
       "Recife",
       { ufConfirmada: undefined, modo: "COMPLEMENTO", quantidadeDiariaParcial: undefined },
+    );
+  });
+});
+
+// Histórico e-Fisco de Membro — a Central de Conferência não lê o despacho
+// do GABPGJ, então quando a categoria funcional classificada na Etapa 1 é
+// MEMBRO, o formulário passa a pedir manualmente as quantidades de
+// integrais/parcial concedidas (regra em `historico_efisco.py`/
+// `conferencia_service.py`, já coberta em
+// `test_api_conferencia_historico_membro.py`). Aqui só é testado o wiring
+// da UI: quando os campos aparecem, a validação mínima do botão e o que é
+// efetivamente enviado à API.
+const RESULTADO_APTO_MEMBRO: ResultadoConferencia = {
+  ...RESULTADO_APTO,
+  servidor: {
+    nome: "Herbet Gonçalves Santos",
+    cargo: "Promotor de Justiça de 1a. Entrancia",
+    previdencia: "FUNAFIN",
+    categoria_funcional: "MEMBRO",
+  },
+};
+
+describe("Conferencia — Histórico e-Fisco de Membro", () => {
+  it("F — campos manuais de Integrais/Parciais não aparecem para Servidor", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO);
+
+    render(<Conferencia backendOnline />);
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico para o e-Fisco");
+
+    expect(screen.queryByLabelText("Diárias Integrais")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Diárias Parciais")).not.toBeInTheDocument();
+  });
+
+  it("Membro Padrão exibe os campos manuais e mantém o botão desabilitado até informar quantidades válidas", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO_MEMBRO);
+
+    render(<Conferencia backendOnline />);
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico para o e-Fisco");
+
+    expect(screen.getByLabelText("Diárias Integrais")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diárias Parciais")).toBeInTheDocument();
+
+    await usuario.type(screen.getByLabelText("Número do SEI"), "19.20.0000.0000000/2026-00");
+    await usuario.type(screen.getByLabelText("Destino"), "Recife");
+
+    // Sem as quantidades preenchidas, o botão continua desabilitado (mesmo
+    // com SEI/Destino já válidos) — validação nova, escopada só a Membro.
+    expect(screen.getByRole("button", { name: "Gerar Histórico" })).toBeDisabled();
+
+    // Soma zero (0 integral + 0 parcial) também mantém desabilitado — mesma
+    // regra do backend (`_validar_quantidades_membro`).
+    await usuario.type(screen.getByLabelText("Diárias Integrais"), "0");
+    await usuario.type(screen.getByLabelText("Diárias Parciais"), "0");
+    expect(screen.getByRole("button", { name: "Gerar Histórico" })).toBeDisabled();
+  });
+
+  it("Membro Padrão envia as quantidades manuais ao gerar o histórico, sem alterar o período consultado", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO_MEMBRO);
+    gerarHistoricoMock.mockResolvedValue("19.20.0000.0000000/2026-00 HERBET... 01 (UMA) DIÁRIA INTEGRAL...");
+
+    render(<Conferencia backendOnline />);
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico para o e-Fisco");
+
+    await usuario.type(screen.getByLabelText("Número do SEI"), "19.20.0000.0000000/2026-00");
+    await usuario.type(screen.getByLabelText("Destino"), "Recife");
+    await usuario.type(screen.getByLabelText("Diárias Integrais"), "1");
+    await usuario.type(screen.getByLabelText("Diárias Parciais"), "0");
+
+    // Preenchendo as quantidades manuais, os campos de período (já
+    // preenchidos por `preencherEConferir`) continuam intocados.
+    expect(screen.getByLabelText("Período inicial")).toHaveValue("2026-07-21");
+    expect(screen.getByLabelText("Período final")).toHaveValue("2026-07-23");
+
+    expect(screen.getByRole("button", { name: "Gerar Histórico" })).toBeEnabled();
+    await usuario.click(screen.getByRole("button", { name: "Gerar Histórico" }));
+
+    await screen.findByText(/01 \(UMA\) DIÁRIA INTEGRAL/);
+    expect(gerarHistoricoMock).toHaveBeenCalledWith(
+      "12345678901",
+      "2026-07-21",
+      "2026-07-23",
+      "19.20.0000.0000000/2026-00",
+      "Recife",
+      1,
+      0,
+    );
+  });
+
+  it("Membro Complemento exibe os campos manuais, esconde o checkbox 'parcial isolada' e envia as quantidades", async () => {
+    const usuario = userEvent.setup();
+    conferirMock.mockResolvedValue(RESULTADO_APTO_MEMBRO);
+    gerarHistoricoComplementoMock.mockResolvedValue("TEXTO MEMBRO (COMPLEMENTO).");
+
+    render(<Conferencia backendOnline />);
+    await usuario.click(screen.getByRole("button", { name: "Modo Complemento de Diárias" }));
+    await preencherEConferir(usuario);
+    await screen.findByText("Gerar Histórico de Complemento");
+
+    expect(screen.getByLabelText("Diárias Integrais")).toBeInTheDocument();
+    expect(screen.getByLabelText("Diárias Parciais")).toBeInTheDocument();
+    // O mecanismo legado de "parcial isolada" ficaria conflitante com os
+    // campos manuais de Membro acima — escondido só para esta categoria.
+    expect(
+      screen.queryByLabelText("Esta simulação representa uma parcial isolada (sem diária integral)"),
+    ).not.toBeInTheDocument();
+
+    await usuario.type(screen.getByLabelText("Número do SEI"), "19.20.0001.0004758/2026-36");
+    await usuario.type(screen.getByLabelText("Destino"), "Recife");
+    await usuario.type(screen.getByLabelText("Diárias Integrais"), "0");
+    await usuario.type(screen.getByLabelText("Diárias Parciais"), "1");
+    await usuario.click(screen.getByRole("button", { name: "Gerar Histórico" }));
+
+    await screen.findByText("TEXTO MEMBRO (COMPLEMENTO).");
+    expect(gerarHistoricoComplementoMock).toHaveBeenCalledWith(
+      "12345678901",
+      "2026-07-21",
+      "2026-07-23",
+      "19.20.0001.0004758/2026-36",
+      "Recife",
+      // checkbox "parcial isolada" nem existe nesta tela para Membro.
+      undefined,
+      0,
+      1,
     );
   });
 });

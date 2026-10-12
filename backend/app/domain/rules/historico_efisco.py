@@ -54,6 +54,7 @@ def montar_historico(
     periodo_final: date,
     destino: str,
     quantidade_diaria_parcial: int = 1,
+    quantidade_diaria_integral: int | None = None,
     contexto_complemento: bool = False,
 ) -> str:
     """RN-13 — texto contínuo do histórico do e-Fisco, sem título, sem
@@ -85,8 +86,24 @@ def montar_historico(
     comportamento). O modo Complemento de Diárias passa explicitamente a
     quantidade de parcial realmente identificada nos documentos (0 por
     padrão institucional, ou o valor comprovado) — o modelo do texto
-    continua sendo exatamente este mesmo, nunca um segundo template."""
-    dias_integrais = (periodo_final - periodo_inicial).days
+    continua sendo exatamente este mesmo, nunca um segundo template.
+
+    **Generalização (Histórico e-Fisco de Membro):** `quantidade_diaria_integral`
+    (default `None`) preserva integralmente o comportamento anterior — quando
+    omitido, a quantidade de integrais continua calculada de
+    `periodo_final - periodo_inicial` (RN-03), exatamente como antes desta
+    generalização. Só quando um chamador passa um valor explícito (Central de
+    Conferência, quando a categoria funcional é MEMBRO — o despacho do GABPGJ,
+    não o período, determina a quantidade concedida) esse valor substitui o
+    cálculo automático, unicamente para montar o trecho textual de quantidade.
+    `periodo_texto` abaixo continua construído exclusivamente a partir de
+    `periodo_inicial`/`periodo_final` recebidos — nunca é afetado por esta
+    quantidade."""
+    dias_integrais = (
+        quantidade_diaria_integral
+        if quantidade_diaria_integral is not None
+        else (periodo_final - periodo_inicial).days
+    )
     trecho_diarias = _trecho_diarias(
         dias_integrais, quantidade_diaria_parcial, contexto_complemento=contexto_complemento
     )

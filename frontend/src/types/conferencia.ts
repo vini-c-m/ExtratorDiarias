@@ -11,10 +11,21 @@ export interface ItemChecklist {
   valor: string | null;
 }
 
+// Histórico e-Fisco de Membro — mesmo `CategoriaFuncional` já usado por
+// `ResultadoValorDiaria` (Micro-sprint A), movido para cima para também ser
+// usado por `ServidorConferencia`.
+export type CategoriaFuncional = "MEMBRO" | "SERVIDOR" | "NAO_IDENTIFICADO";
+
 export interface ServidorConferencia {
   nome: string;
   cargo: string;
   previdencia: string;
+  // Opcional (espelha `ServidorResposta.categoria_funcional` no backend, que
+  // é `None` por padrão porque o mesmo schema também é usado pelo Cadastro
+  // de Servidor/Membro — `RespostaCadastroServidor.servidor` nunca o
+  // popula) — sempre populado pela Etapa 1 da Central de Conferência
+  // (`POST /conferencia`).
+  categoria_funcional?: CategoriaFuncional | null;
 }
 
 export interface DuplicidadeEncontrada {
@@ -103,7 +114,8 @@ export type SituacaoValorDiaria =
   | "uf_nao_resolvida"
   | "uf_fora_da_tabela";
 
-export type CategoriaFuncional = "MEMBRO" | "SERVIDOR" | "NAO_IDENTIFICADO";
+// `CategoriaFuncional` está definido acima, perto de `ServidorConferencia`
+// (movido nesta melhoria — Histórico e-Fisco de Membro).
 
 /** `valor_integral`/`valor_parcial`/`valor_total` chegam como STRING (ex.
  * `"616.38"`, ponto decimal) — o backend serializa `Decimal` como texto de

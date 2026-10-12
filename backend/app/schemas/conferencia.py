@@ -2,13 +2,20 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 VereditoResposta = Literal["APTO_PARA_PROCESSAMENTO", "REVISAR"]
 # RN-14 — modo Complemento de Diárias. Mesmo `Literal` espelhando o enum
 # `ModoProcessamento` do domínio, no mesmo padrão de `VereditoResposta`
 # acima (schema nunca importa um enum de domínio diretamente).
 ModoConferenciaRequisicao = Literal["PADRAO", "COMPLEMENTO"]
+# Espelha 1:1 `CategoriaFuncional` de `app.domain.analitica.categoria_funcional`
+# (schema nunca importa um Literal de domínio diretamente, mesmo padrão dos
+# dois acima). Definido aqui, antes de `ServidorResposta`, para que a Etapa 1
+# (`POST /conferencia`) também possa expor a categoria já classificada —
+# histórico movido para cima nesta melhoria (Histórico e-Fisco de Membro);
+# usado também mais abaixo por `RespostaValorDiaria` (Micro-sprint A).
+CategoriaFuncionalResposta = Literal["MEMBRO", "SERVIDOR", "NAO_IDENTIFICADO"]
 
 
 class RequisicaoConferencia(BaseModel):
@@ -34,6 +41,16 @@ class ServidorResposta(BaseModel):
     nome: str
     cargo: str
     previdencia: str
+    # Histórico e-Fisco de Membro — classificação já existente
+    # (`classificar_categoria_funcional`), exposta na Etapa 1 para o
+    # frontend decidir, antes do clique em "Gerar Histórico", se exibe os
+    # campos manuais de Integrais/Parcial. Independente do endpoint de Valor
+    # (Micro-sprint A) — os dois recursos continuam desacoplados. Opcional
+    # (`None` por padrão): `ServidorResposta` também é usado por
+    # `app/api/cadastro_dados.py` (Cadastro de Servidor/Membro, fora do
+    # escopo desta melhoria), que não popula este campo — obrigatório
+    # quebraria aquele endpoint sem necessidade.
+    categoria_funcional: CategoriaFuncionalResposta | None = None
 
 
 class DuplicidadeResposta(BaseModel):
@@ -72,6 +89,16 @@ class RequisicaoHistorico(BaseModel):
     # ignorado por POST /conferencia/historico (que sempre assume 1, RN-04).
     # `None` vira o padrão institucional (0) no service.
     quantidade_diaria_parcial: int | None = None
+    # Histórico e-Fisco de Membro — só relevante quando a categoria funcional
+    # do CPF consultado é MEMBRO (classificada no service, que também exige
+    # os dois campos juntos e soma >= 1 nesse caso); ignorados para
+    # SERVIDOR/NAO_IDENTIFICADO. Compartilhados pelas duas rotas
+    # (`/conferencia/historico` e `/conferencia/historico-complemento`),
+    # mesmo padrão de `quantidade_diaria_parcial` acima. `ge=0`/`Literal[0, 1]`
+    # só validam o formato — a obrigatoriedade condicional à categoria e a
+    # soma mínima ficam no service (dependem de I/O na Base Local).
+    quantidade_diaria_integral_membro: int | None = Field(default=None, ge=0)
+    quantidade_diaria_parcial_membro: Literal[0, 1] | None = None
 
     @model_validator(mode="after")
     def _validar(self) -> "RequisicaoHistorico":
@@ -133,10 +160,12 @@ class RespostaCandidatosComplemento(BaseModel):
 
 # Micro-sprint A ("Valor Automático da Diária na Central de Conferência") —
 # RN-05, homologada por auditoria financeira real (2026-08-12).
+# `CategoriaFuncionalResposta` usada abaixo está definida no topo do arquivo
+# (movida nesta melhoria — Histórico e-Fisco de Membro — para também ser
+# usada por `ServidorResposta`).
 SituacaoValorDiariaResposta = Literal[
     "calculado", "indisponivel_para_categoria", "uf_nao_resolvida", "uf_fora_da_tabela"
 ]
-CategoriaFuncionalResposta = Literal["MEMBRO", "SERVIDOR", "NAO_IDENTIFICADO"]
 
 
 class RequisicaoValorDiaria(BaseModel):

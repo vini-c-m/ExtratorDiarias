@@ -56,6 +56,16 @@ class TabelaValoresIndisponivel(ErroConferenciaServico):
     impede o Histórico de ser gerado (P0 da Micro-sprint A)."""
 
 
+class QuantidadeDiariaMembroInvalida(ErroConferenciaServico):
+    """Histórico e-Fisco de Membro — a Central de Conferência não lê o
+    despacho do GABPGJ, então quando a categoria funcional é MEMBRO ela
+    depende do usuário informar manualmente as quantidades de integrais e
+    parcial concedidas. Levantada quando essa informação está ausente, ou
+    quando a soma é zero (nenhuma diária a descrever no Histórico). Nunca um
+    erro técnico — mapeada para HTTP 422, mesma família de erro de validação
+    de negócio já usada por `RequisicaoHistorico._validar`."""
+
+
 SituacaoValorDiaria = Literal[
     "calculado", "indisponivel_para_categoria", "uf_nao_resolvida", "uf_fora_da_tabela"
 ]
@@ -140,12 +150,41 @@ def conferir_cpf(
     return replace(resultado, avisos_indexacao=indexacao_diarias.avisos)
 
 
+def _validar_quantidades_membro(
+    quantidade_diaria_integral_membro: int | None,
+    quantidade_diaria_parcial_membro: int | None,
+) -> None:
+    """Histórico e-Fisco de Membro — regra única, reutilizada por
+    `gerar_historico` e `gerar_historico_complemento`, para nunca duplicar
+    esta validação. `integral >= 0` e `parcial em {0, 1}` já são garantidos
+    antes disso pelo schema (`RequisicaoHistorico`); aqui só é checado o que
+    depende de já ter classificado a categoria funcional (I/O da Base
+    Local): as duas quantidades precisam estar presentes, e precisa existir
+    ao menos uma diária concedida a descrever (soma >= 1) — decisão
+    institucional confirmada pelo usuário, escopada exclusivamente a este
+    caminho novo (Padrão/Complemento de Servidor continuam sem esta
+    checagem, exatamente como hoje)."""
+    if quantidade_diaria_integral_membro is None or quantidade_diaria_parcial_membro is None:
+        raise QuantidadeDiariaMembroInvalida(
+            "Para Membro, informe a quantidade de diárias integrais e parcial "
+            "concedidas pelo GABPGJ para gerar o Histórico e-Fisco."
+        )
+    if quantidade_diaria_integral_membro + quantidade_diaria_parcial_membro == 0:
+        raise QuantidadeDiariaMembroInvalida(
+            "A soma de diárias integrais e parcial concedidas pelo GABPGJ não pode "
+            "ser zero — não há diária a descrever no Histórico e-Fisco."
+        )
+
+
 def gerar_historico(
     cpf: str,
     periodo_inicial: date,
     periodo_final: date,
     sei: str,
     destino: str,
+    *,
+    quantidade_diaria_integral_membro: int | None = None,
+    quantidade_diaria_parcial_membro: int | None = None,
 ) -> str:
     """Etapa 2 — RN-11 exige que o nome do servidor venha sempre de uma
     fonte única de verdade (a Base Local), nunca de um valor ecoado pelo
@@ -153,7 +192,18 @@ def gerar_historico(
     montar o histórico.
 
     Correção de 2026-08-05: a Etapa 2 deixou de pedir Origem — o histórico
-    do e-Fisco usa apenas o destino (ver `app.domain.rules.historico_efisco.montar_historico`)."""
+    do e-Fisco usa apenas o destino (ver `app.domain.rules.historico_efisco.montar_historico`).
+
+    Histórico e-Fisco de Membro: `quantidade_diaria_integral_membro`/
+    `quantidade_diaria_parcial_membro` (default `None`, ambos) preservam
+    100% o comportamento anterior para SERVIDOR/NAO_IDENTIFICADO — nenhum
+    chamador existente os informa, então a chamada a `montar_historico`
+    abaixo permanece idêntica à de antes desta generalização. Só quando a
+    categoria funcional (mesma classificação já usada por
+    `calcular_valor_diaria`) é MEMBRO essas quantidades manuais substituem o
+    cálculo automático por período — a Central de Conferência não lê o
+    despacho do GABPGJ, então depende do usuário informar o que já foi
+    concedido."""
     workbook = _abrir_base_local()
     cpf_normalizado = _cpf_normalizado(cpf)
     servidores = servidores_por_cpf(workbook[NOME_ABA_SERVIDORES])
@@ -161,6 +211,20 @@ def gerar_historico(
     if servidor is None:
         raise ServidorNaoEncontrado(
             f"Servidor com CPF {cpf} não foi localizado na Base Local de Consulta."
+        )
+
+    if classificar_categoria_funcional(servidor.cargo) == "MEMBRO":
+        _validar_quantidades_membro(
+            quantidade_diaria_integral_membro, quantidade_diaria_parcial_membro
+        )
+        return montar_historico(
+            sei=sei,
+            nome_servidor=servidor.nome,
+            periodo_inicial=periodo_inicial,
+            periodo_final=periodo_final,
+            destino=destino,
+            quantidade_diaria_integral=quantidade_diaria_integral_membro,
+            quantidade_diaria_parcial=quantidade_diaria_parcial_membro,
         )
 
     return montar_historico(
@@ -179,6 +243,9 @@ def gerar_historico_complemento(
     sei: str,
     destino: str,
     quantidade_diaria_parcial: int = 0,
+    *,
+    quantidade_diaria_integral_membro: int | None = None,
+    quantidade_diaria_parcial_membro: int | None = None,
 ) -> str:
     """GERAR HISTÓRICO DE COMPLEMENTO (RN-14/RN-16) — mesma disciplina de
     `gerar_historico` (nome do servidor sempre vindo de uma nova consulta
@@ -193,7 +260,17 @@ def gerar_historico_complemento(
     resolver essa quantidade a partir de evidência documental (ver
     `app.extraction.enriquecimento.quantidade_complementar`). Quando o
     Processamento já resolveu um valor diferente de 0 para este mesmo
-    complemento, quem chama pode informá-lo aqui explicitamente."""
+    complemento, quem chama pode informá-lo aqui explicitamente.
+
+    Histórico e-Fisco de Membro: mesma generalização de `gerar_historico`.
+    Quando a categoria funcional é MEMBRO, `quantidade_diaria_integral_membro`/
+    `quantidade_diaria_parcial_membro` substituem — só para este Complemento
+    — tanto o cálculo automático de integrais quanto o `quantidade_diaria_parcial`
+    "clássico" acima (que continua existindo e funcionando normalmente para
+    Servidor). `contexto_complemento=True` é preservado sem alteração — o
+    texto de Complemento já homologado continua o mesmo, só a fonte da
+    quantidade muda de "calculado"/"parâmetro de complemento" para "informado
+    manualmente pelo usuário"."""
     workbook = _abrir_base_local()
     cpf_normalizado = _cpf_normalizado(cpf)
     servidores = servidores_por_cpf(workbook[NOME_ABA_SERVIDORES])
@@ -201,6 +278,21 @@ def gerar_historico_complemento(
     if servidor is None:
         raise ServidorNaoEncontrado(
             f"Servidor com CPF {cpf} não foi localizado na Base Local de Consulta."
+        )
+
+    if classificar_categoria_funcional(servidor.cargo) == "MEMBRO":
+        _validar_quantidades_membro(
+            quantidade_diaria_integral_membro, quantidade_diaria_parcial_membro
+        )
+        return montar_historico(
+            sei=sei,
+            nome_servidor=servidor.nome,
+            periodo_inicial=periodo_inicial,
+            periodo_final=periodo_final,
+            destino=destino,
+            quantidade_diaria_integral=quantidade_diaria_integral_membro,
+            quantidade_diaria_parcial=quantidade_diaria_parcial_membro,
+            contexto_complemento=True,
         )
 
     return montar_historico(

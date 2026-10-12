@@ -40,6 +40,26 @@ def test_complemento_duas_integrais_gera_02_diarias_integrais_sem_mencionar_parc
     )
 
 
+def test_complemento_quantidade_diaria_integral_explicita_sobrescreve_periodo() -> None:
+    """Histórico e-Fisco de Membro no Complemento: período de 1 dia (que
+    resultaria em 0 integrais pelo cálculo automático), mas a quantidade
+    concedida informada manualmente é 1 integral — `contexto_complemento`
+    continua `True`, mesmo texto de Complemento já homologado."""
+    texto = montar_historico(
+        sei="19.20.0000.0000000/2026-00",
+        nome_servidor="Fulano de Tal",
+        periodo_inicial=date(2026, 8, 1),
+        periodo_final=date(2026, 8, 1),
+        destino="Recife",
+        quantidade_diaria_parcial=0,
+        quantidade_diaria_integral=1,
+        contexto_complemento=True,
+    )
+    assert "01 (UMA) DIÁRIA INTEGRAL," in texto
+    assert "PARCIAL" not in texto
+    assert "NO PERÍODO DE 01/08/2026 A 01/08/2026." in texto
+
+
 def test_complemento_com_parcial_documentada_inclui_e_uma_parcial() -> None:
     """Regra do usuário: não é regra absoluta — se o documento comprovar
     parcial, o sistema respeita o documento."""

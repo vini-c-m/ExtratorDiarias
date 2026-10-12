@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from app.domain.analitica.categoria_funcional import classificar_categoria_funcional
 from app.domain.entities.modo_processamento import ModoProcessamento
 from app.schemas.conferencia import (
     CandidatoDiariaOriginalResposta,
@@ -19,6 +20,7 @@ from app.schemas.conferencia import (
 )
 from app.services.conferencia_service import (
     BaseLocalIndisponivel,
+    QuantidadeDiariaMembroInvalida,
     ServidorNaoEncontrado,
     TabelaValoresIndisponivel,
     calcular_valor_diaria,
@@ -59,6 +61,7 @@ def conferir(requisicao: RequisicaoConferencia) -> ResultadoConferenciaResposta:
                 nome=resultado.servidor.nome,
                 cargo=resultado.servidor.cargo,
                 previdencia=resultado.servidor.previdencia,
+                categoria_funcional=classificar_categoria_funcional(resultado.servidor.cargo),
             )
             if resultado.servidor
             else None
@@ -90,11 +93,15 @@ def historico(requisicao: RequisicaoHistorico) -> RespostaHistorico:
             requisicao.periodo_final,
             requisicao.sei,
             requisicao.destino,
+            quantidade_diaria_integral_membro=requisicao.quantidade_diaria_integral_membro,
+            quantidade_diaria_parcial_membro=requisicao.quantidade_diaria_parcial_membro,
         )
     except BaseLocalIndisponivel as erro:
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     except ServidorNaoEncontrado as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
+    except QuantidadeDiariaMembroInvalida as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
 
     return RespostaHistorico(texto=texto)
 
@@ -116,11 +123,15 @@ def historico_complemento(requisicao: RequisicaoHistorico) -> RespostaHistorico:
             requisicao.quantidade_diaria_parcial
             if requisicao.quantidade_diaria_parcial is not None
             else 0,
+            quantidade_diaria_integral_membro=requisicao.quantidade_diaria_integral_membro,
+            quantidade_diaria_parcial_membro=requisicao.quantidade_diaria_parcial_membro,
         )
     except BaseLocalIndisponivel as erro:
         raise HTTPException(status_code=503, detail=str(erro)) from erro
     except ServidorNaoEncontrado as erro:
         raise HTTPException(status_code=404, detail=str(erro)) from erro
+    except QuantidadeDiariaMembroInvalida as erro:
+        raise HTTPException(status_code=422, detail=str(erro)) from erro
 
     return RespostaHistorico(texto=texto)
 

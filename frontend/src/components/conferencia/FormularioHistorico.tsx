@@ -7,7 +7,7 @@ import Selecao from "../ui/Selecao";
 import { FOCO_ANEL, SUPERFICIE_BASE } from "../../theme/estilos";
 import { TIPOGRAFIA } from "../../theme/tipografia";
 import { formatarValorDiariaCopiavel } from "../../lib/formatarValorDiaria";
-import type { ResultadoValorDiaria } from "../../types/conferencia";
+import type { CategoriaFuncional, ResultadoValorDiaria } from "../../types/conferencia";
 
 interface Props {
   sei: string;
@@ -27,6 +27,18 @@ interface Props {
   // recebe essas duas props, então o checkbox nunca aparece lá.
   parcialIsolada?: boolean;
   onMudarParcialIsolada?: (valor: boolean) => void;
+  // Histórico e-Fisco de Membro — todas opcionais: quando `categoriaFuncional`
+  // não é `"MEMBRO"` (Servidor, ou ainda não classificado), nenhum campo novo
+  // é renderizado e o formulário fica idêntico ao de antes desta melhoria.
+  // Aparecem tanto no modo Padrão quanto no modo Complemento (RN institucional:
+  // a Central não lê o despacho do GABPGJ em nenhum dos dois modos), ao
+  // contrário de `parcialIsolada` acima, que continua exclusiva do Complemento
+  // de Servidor.
+  categoriaFuncional?: CategoriaFuncional | null;
+  quantidadeIntegralMembro?: string;
+  onMudarQuantidadeIntegralMembro?: (valor: string) => void;
+  quantidadeParcialMembro?: string;
+  onMudarQuantidadeParcialMembro?: (valor: string) => void;
   // Micro-sprint A ("Valor Automático da Diária") — todas opcionais: quando
   // omitidas (nenhum chamador atual as omite de propósito), o bloco VALOR
   // simplesmente não é renderizado, preservando 100% o comportamento
@@ -58,6 +70,11 @@ export default function FormularioHistorico({
   tituloResultado = "Histórico para o e-Fisco",
   parcialIsolada,
   onMudarParcialIsolada,
+  categoriaFuncional,
+  quantidadeIntegralMembro,
+  onMudarQuantidadeIntegralMembro,
+  quantidadeParcialMembro,
+  onMudarQuantidadeParcialMembro,
   valor,
   carregandoValor,
   erroValor,
@@ -193,6 +210,24 @@ export default function FormularioHistorico({
     );
   }
 
+  // Histórico e-Fisco de Membro — espelha no cliente a mesma validação do
+  // backend (`_validar_quantidades_membro`), só para UX (o backend continua
+  // a autoridade final): integral inteiro >= 0, parcial só 0 ou 1, soma >= 1.
+  // Quando a categoria não é MEMBRO, esta checagem não entra em jogo.
+  const membroExigeQuantidades = categoriaFuncional === "MEMBRO";
+  const integralMembroNumero = Number(quantidadeIntegralMembro);
+  const parcialMembroNumero = Number(quantidadeParcialMembro);
+  const quantidadesMembroValidas =
+    !membroExigeQuantidades ||
+    (quantidadeIntegralMembro !== undefined &&
+      quantidadeIntegralMembro !== "" &&
+      quantidadeParcialMembro !== undefined &&
+      quantidadeParcialMembro !== "" &&
+      Number.isInteger(integralMembroNumero) &&
+      integralMembroNumero >= 0 &&
+      (parcialMembroNumero === 0 || parcialMembroNumero === 1) &&
+      integralMembroNumero + parcialMembroNumero >= 1);
+
   return (
     <div className={`${SUPERFICIE_BASE} p-6`}>
       <h3 className={TIPOGRAFIA.subtitulo}>{titulo}</h3>
@@ -210,7 +245,39 @@ export default function FormularioHistorico({
           value={destino}
           onChange={(evento: ChangeEvent<HTMLInputElement>) => onMudarDestino(evento.target.value)}
         />
-        {onMudarParcialIsolada && (
+        {membroExigeQuantidades && onMudarQuantidadeIntegralMembro && onMudarQuantidadeParcialMembro && (
+          <div className="space-y-4">
+            <p className={TIPOGRAFIA.textoAuxiliar}>Diárias concedidas pelo GABPGJ</p>
+            <Campo
+              rotulo="Diárias Integrais"
+              type="number"
+              min={0}
+              step={1}
+              value={quantidadeIntegralMembro ?? ""}
+              onChange={(evento: ChangeEvent<HTMLInputElement>) =>
+                onMudarQuantidadeIntegralMembro(evento.target.value)
+              }
+            />
+            <Campo
+              rotulo="Diárias Parciais"
+              type="number"
+              min={0}
+              max={1}
+              step={1}
+              value={quantidadeParcialMembro ?? ""}
+              onChange={(evento: ChangeEvent<HTMLInputElement>) =>
+                onMudarQuantidadeParcialMembro(evento.target.value)
+              }
+            />
+          </div>
+        )}
+        {/* Histórico e-Fisco de Membro — o checkbox "parcial isolada" abaixo
+            é o mecanismo legado de informar manualmente a quantidade de
+            parcial no Complemento; para Membro, os campos acima passam a ser
+            a única fonte manual dessas quantidades, então ele fica oculto
+            para não criar dois controles conflitantes (Servidor continua
+            vendo exatamente o comportamento atual). */}
+        {onMudarParcialIsolada && !membroExigeQuantidades && (
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -226,7 +293,7 @@ export default function FormularioHistorico({
         <Botao
           variante="primaria"
           onClick={onGerar}
-          disabled={!sei.trim() || !destino.trim()}
+          disabled={!sei.trim() || !destino.trim() || !quantidadesMembroValidas}
           carregando={carregando}
         >
           {!carregando && <FileText aria-hidden="true" className="h-4 w-4" />}
