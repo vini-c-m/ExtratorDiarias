@@ -67,6 +67,14 @@ def test_post_planilha_preencher_grava_na_copia_de_teste(monkeypatch, tmp_path, 
             "categoria": "inserido",
             "linha": 4,
             "sei_ja_existente_em_linha": None,
+            # Organização Automática de PDFs — item INSERIDO sem
+            # `caminho_absoluto` informado nesta requisição: organização
+            # tentada e reportada como não encontrada, nunca silenciosa.
+            "organizacao": {
+                "sucesso": False,
+                "status": "arquivo_nao_encontrado",
+                "detalhe": "Caminho de origem não informado.",
+            },
         }
     ]
     assert os.path.isdir(corpo["pasta_resultados"])
@@ -138,6 +146,10 @@ def test_post_planilha_preencher_bug2_duplicidade_na_planilha_informa_linha(
             "categoria": "duplicado_na_planilha",
             "linha": 2,
             "sei_ja_existente_em_linha": None,
+            # Organização Automática de PDFs — nunca tentada para
+            # duplicidade (duplicidade não prova que a linha existente
+            # esteja correta/completa).
+            "organizacao": None,
         }
     ]
 
@@ -289,3 +301,105 @@ def test_post_planilha_preencher_ignora_qualquer_caminho_enviado_pelo_cliente(
     assert resposta.status_code == 200
     planilha = load_workbook(caminho_oficial)["Controle de Diárias"]
     assert planilha["B4"].value == _DIARIA["sei"]
+
+
+# --- Organização Automática de PDFs -----------------------------------------
+
+
+def test_post_planilha_preencher_move_pdf_inserido_para_processados(
+    monkeypatch, tmp_path, caminho_planilha_teste
+):
+    caminho_oficial = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho_oficial)
+
+    pasta_a_processar = tmp_path / "a_processar"
+    pasta_processados = tmp_path / "processados"
+    pasta_a_processar.mkdir()
+    pasta_processados.mkdir()
+    client.post(
+        "/api/v1/configuracao/pastas",
+        json={
+            "caminho_pdfs_a_processar": str(pasta_a_processar),
+            "caminho_pdfs_processados": str(pasta_processados),
+        },
+    )
+
+    pdf_origem = pasta_a_processar / "arquivo.pdf"
+    pdf_origem.write_bytes(b"conteudo do pdf de teste")
+
+    resposta = client.post(
+        "/api/v1/planilha/preencher",
+        json={
+            "itens": [
+                {
+                    "arquivo_origem": "arquivo.pdf",
+                    "diaria": _DIARIA,
+                    "caminho_absoluto": str(pdf_origem),
+                }
+            ]
+        },
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["itens"][0]["organizacao"] == {
+        "sucesso": True,
+        "status": "movido",
+        "detalhe": None,
+    }
+    assert not pdf_origem.exists()
+    assert (pasta_processados / "arquivo.pdf").read_bytes() == b"conteudo do pdf de teste"
+
+
+def test_post_planilha_preencher_nao_move_pdf_duplicado_no_lote(
+    monkeypatch, tmp_path, caminho_planilha_teste
+):
+    caminho_oficial = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho_oficial)
+
+    pasta_a_processar = tmp_path / "a_processar"
+    pasta_processados = tmp_path / "processados"
+    pasta_a_processar.mkdir()
+    pasta_processados.mkdir()
+    client.post(
+        "/api/v1/configuracao/pastas",
+        json={
+            "caminho_pdfs_a_processar": str(pasta_a_processar),
+            "caminho_pdfs_processados": str(pasta_processados),
+        },
+    )
+
+    sei_repetido = "19.20.0000.0000099/2025-00"
+    pdf_a = pasta_a_processar / "a.pdf"
+    pdf_b = pasta_a_processar / "b.pdf"
+    pdf_a.write_bytes(b"a")
+    pdf_b.write_bytes(b"b")
+
+    resposta = client.post(
+        "/api/v1/planilha/preencher",
+        json={
+            "itens": [
+                {
+                    "arquivo_origem": "a.pdf",
+                    "diaria": {**_DIARIA, "sei": sei_repetido},
+                    "caminho_absoluto": str(pdf_a),
+                },
+                {
+                    "arquivo_origem": "b.pdf",
+                    "diaria": {**_DIARIA, "sei": sei_repetido},
+                    "caminho_absoluto": str(pdf_b),
+                },
+            ]
+        },
+    )
+
+    assert resposta.status_code == 200
+    corpo = resposta.json()
+    assert corpo["itens"][0]["categoria"] == "inserido"
+    assert corpo["itens"][0]["organizacao"]["status"] == "movido"
+    assert corpo["itens"][1]["categoria"] == "duplicado_no_lote"
+    # Duplicidade nunca prova que a linha existente esteja correta/completa
+    # — o PDF duplicado nunca é organizado (movido/excluído).
+    assert corpo["itens"][1]["organizacao"] is None
+    assert not pdf_a.exists()
+    assert pdf_b.exists()

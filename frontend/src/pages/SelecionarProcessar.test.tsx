@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SelecionarProcessar from "./SelecionarProcessar";
 import { ProcessamentoCanceladoError } from "../services/api";
+import type { EstadoConfiguracao } from "../types/configuracao";
 import type { LoteProcessamento, ResultadoPreenchimento } from "../types/processamento";
 
 // Sprint 05.3 — cobre o fluxo de cancelamento seguro do processamento a
@@ -27,12 +28,14 @@ vi.mock("../services/api", async (importarOriginal) => {
     preencherPlanilha: vi.fn(),
     buscarConfiguracao: vi.fn(),
     definirConfiguracao: vi.fn(),
+    definirPastasOperacionais: vi.fn(),
   };
 });
 
 import {
   buscarConfiguracao,
   definirConfiguracao,
+  definirPastasOperacionais,
   preencherPlanilha,
   processarLoteComProgresso,
 } from "../services/api";
@@ -41,18 +44,35 @@ const processarMock = vi.mocked(processarLoteComProgresso);
 const preencherMock = vi.mocked(preencherPlanilha);
 const buscarConfiguracaoMock = vi.mocked(buscarConfiguracao);
 const definirConfiguracaoMock = vi.mocked(definirConfiguracao);
+const definirPastasOperacionaisMock = vi.mocked(definirPastasOperacionais);
 
 // Sprint 15 — Configuração Inicial da Planilha Oficial: substitui o antigo
 // seletor manual de arquivo `.xlsx`. Por padrão, os testes assumem uma
 // planilha oficial já configurada e acessível — cada teste que precisar de
 // um estado diferente (inacessível, requer revalidação) sobrescreve com
 // `buscarConfiguracaoMock.mockResolvedValueOnce(...)`.
+// Organização Automática de PDFs — campos aditivos só para satisfazer o
+// tipo de `buscarConfiguracao()` (usado aqui só para a checagem de
+// "Preencher Planilha", pré-existente); a guarda/bloqueio de UX desta
+// melhoria lê da prop `configuracaoAtiva` (não passada por estes testes,
+// então nunca ativa aqui — foco desta suíte é processamento).
+const PRONTIDAO_PASTAS_VAZIA = {
+  processamento_padrao: { liberado: false, pastas_faltando: [] },
+  complemento: { liberado: false, pastas_faltando: [] },
+  finalizacao: { liberado: false, pastas_faltando: [] },
+};
+
 const CONFIGURACAO_ATIVA_PADRAO = {
   configurado: true as const,
   planilha_acessivel: true as const,
   requer_revalidacao: false,
   caminho_planilha_oficial: "G:\\Meu Drive\\DIMCAC\\Controle de Diárias.xlsx",
   configurado_em: "2026-07-30T14:32:10",
+  caminho_pdfs_a_processar: null,
+  caminho_pdfs_complemento_a_processar: null,
+  caminho_pdfs_processados: null,
+  caminho_pdfs_diarias_a_confirmar: null,
+  prontidao_pastas: PRONTIDAO_PASTAS_VAZIA,
 };
 
 function criarPdf(nome: string): File {
@@ -72,6 +92,7 @@ beforeEach(() => {
     salvarRelatorio: vi.fn(),
     copiarHistorico: vi.fn(),
     selecionarPlanilhaOficial: vi.fn(),
+    selecionarPastaOperacional: vi.fn(),
   };
   buscarConfiguracaoMock.mockResolvedValue(CONFIGURACAO_ATIVA_PADRAO);
 });
@@ -497,7 +518,15 @@ describe("SelecionarProcessar — planilha oficial inacessível ou desatualizada
 
   it("planilha_acessivel:false não impede selecionar/processar PDFs, só bloqueia 'Preencher planilha'", async () => {
     const usuario = userEvent.setup();
-    buscarConfiguracaoMock.mockResolvedValue({ configurado: true, planilha_acessivel: false });
+    buscarConfiguracaoMock.mockResolvedValue({
+      configurado: true,
+      planilha_acessivel: false,
+      caminho_pdfs_a_processar: null,
+      caminho_pdfs_complemento_a_processar: null,
+      caminho_pdfs_processados: null,
+      caminho_pdfs_diarias_a_confirmar: null,
+      prontidao_pastas: PRONTIDAO_PASTAS_VAZIA,
+    });
 
     await chegarNaEtapaDePreenchimento(usuario);
 
@@ -525,7 +554,15 @@ describe("SelecionarProcessar — planilha oficial inacessível ou desatualizada
 
   it("'Alterar Planilha Oficial' abre o modal e, após configurar, libera 'Preencher planilha'", async () => {
     const usuario = userEvent.setup();
-    buscarConfiguracaoMock.mockResolvedValue({ configurado: true, planilha_acessivel: false });
+    buscarConfiguracaoMock.mockResolvedValue({
+      configurado: true,
+      planilha_acessivel: false,
+      caminho_pdfs_a_processar: null,
+      caminho_pdfs_complemento_a_processar: null,
+      caminho_pdfs_processados: null,
+      caminho_pdfs_diarias_a_confirmar: null,
+      prontidao_pastas: PRONTIDAO_PASTAS_VAZIA,
+    });
 
     await chegarNaEtapaDePreenchimento(usuario);
     await usuario.click(screen.getByRole("button", { name: "Alterar Planilha Oficial" }));
@@ -541,6 +578,45 @@ describe("SelecionarProcessar — planilha oficial inacessível ou desatualizada
 
     expect(await screen.findByRole("button", { name: "Preencher planilha" })).toBeEnabled();
     expect(screen.queryByRole("dialog", { name: "Alterar Planilha Oficial" })).not.toBeInTheDocument();
+  });
+
+  // Organização Automática de PDFs — regressão: esta instância de
+  // "Alterar Planilha Oficial" (aberta pelo link dentro do resumo pós-
+  // processamento) não passava `configuracaoAtual`/`aoAtualizarPastas` para
+  // o modal, então a seção de Pastas Operacionais nem aparecia sem
+  // reselecionar a planilha, e uma pasta salva com sucesso nunca refletia
+  // na tela (`aoAtualizar` virava um no-op). Cobre os dois pontos: a seção
+  // aparece com a planilha já configurada (sem revalidar) e o caminho
+  // aparece imediatamente após salvar, sem fechar/reabrir o modal.
+  it("'Alterar Planilha Oficial' mostra Pastas Operacionais sem revalidar a planilha, e o caminho salvo aparece imediatamente", async () => {
+    const usuario = userEvent.setup();
+
+    await chegarNaEtapaDePreenchimento(usuario);
+    await usuario.click(screen.getByRole("button", { name: "Alterar Planilha Oficial" }));
+
+    expect(screen.getByRole("dialog", { name: "Alterar Planilha Oficial" })).toBeInTheDocument();
+    // A seção de Pastas Operacionais já aparece com a planilha já
+    // configurada, sem precisar reselecionar/revalidar o arquivo .xlsx.
+    expect(screen.getByText("Pastas Operacionais")).toBeInTheDocument();
+    expect(screen.getAllByText("Não configurado")).toHaveLength(4);
+
+    const caminhoSalvo = "D:\\pasta 1";
+    vi.mocked(window.api.selecionarPastaOperacional!).mockResolvedValueOnce(caminhoSalvo);
+    definirPastasOperacionaisMock.mockResolvedValueOnce({ configurado: false });
+    buscarConfiguracaoMock.mockResolvedValueOnce({
+      ...CONFIGURACAO_ATIVA_PADRAO,
+      caminho_pdfs_a_processar: caminhoSalvo,
+    });
+
+    const [botaoSelecionarPasta] = screen.getAllByRole("button", { name: "Selecionar pasta" });
+    await usuario.click(botaoSelecionarPasta);
+
+    expect(definirPastasOperacionaisMock).toHaveBeenCalledWith({
+      caminho_pdfs_a_processar: caminhoSalvo,
+    });
+    // Caminho aparece na mesma tela, sem fechar/reabrir o modal.
+    expect(await screen.findByText(caminhoSalvo)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Alterar Planilha Oficial" })).toBeInTheDocument();
   });
 });
 
@@ -629,5 +705,177 @@ describe("SelecionarProcessar — Modo Complemento de Diárias (RN-14)", () => {
 
     expect(processarMock.mock.calls[0][3]).toBe("PADRAO");
     expect(preencherMock.mock.calls[0][2]).toBe("PADRAO");
+  });
+});
+
+// Organização Automática de PDFs — guarda de pasta (decisão confirmada:
+// seleção de PDF continua via <input type="file"> + webUtils.
+// getPathForFile; a guarda só valida pertencimento antes do processamento,
+// nunca troca o mecanismo de seleção) e bloqueio de UX por funcionalidade.
+describe("SelecionarProcessar — Organização Automática de PDFs", () => {
+  function configuracaoComPastas(
+    prontidao: Partial<Record<"processamento_padrao" | "complemento" | "finalizacao", boolean>>,
+  ): EstadoConfiguracao {
+    return {
+      ...CONFIGURACAO_ATIVA_PADRAO,
+      caminho_pdfs_a_processar: "C:/pdfs",
+      caminho_pdfs_complemento_a_processar: "C:/pdfs-complemento",
+      caminho_pdfs_processados: "C:/processados",
+      caminho_pdfs_diarias_a_confirmar: "C:/a-confirmar",
+      prontidao_pastas: {
+        processamento_padrao: {
+          liberado: prontidao.processamento_padrao ?? true,
+          pastas_faltando: prontidao.processamento_padrao === false ? ["PDFs a Processar"] : [],
+        },
+        complemento: {
+          liberado: prontidao.complemento ?? true,
+          pastas_faltando:
+            prontidao.complemento === false ? ["PDFs de Complemento a Processar"] : [],
+        },
+        finalizacao: { liberado: prontidao.finalizacao ?? true, pastas_faltando: [] },
+      },
+    };
+  }
+
+  it("PDF fora da pasta configurada não entra na fila — mostra o aviso", async () => {
+    const usuario = userEvent.setup();
+    window.api.getPathForFile = (arquivo: File) => `C:/outra-pasta/${arquivo.name}`;
+    window.api.caminhoDentroDaPasta = async (caminho: string, pasta: string) => caminho.startsWith(pasta);
+
+    render(
+      <SelecionarProcessar
+        backendOnline
+        configuracaoAtiva={configuracaoComPastas({})}
+      />,
+    );
+
+    const input = document.querySelector('input[type="file"][accept=".pdf"]') as HTMLInputElement;
+    await usuario.upload(input, criarPdf("fora-da-pasta.pdf"));
+
+    expect(screen.getByText("Selecione os PDFs na pasta configurada para esta função.")).toBeInTheDocument();
+    expect(screen.queryByText("fora-da-pasta.pdf")).not.toBeInTheDocument();
+  });
+
+  it("PDF dentro da pasta configurada entra normalmente na fila", async () => {
+    const usuario = userEvent.setup();
+    window.api.getPathForFile = (arquivo: File) => `C:/pdfs/${arquivo.name}`;
+    window.api.caminhoDentroDaPasta = async (caminho: string, pasta: string) => caminho.startsWith(pasta);
+
+    render(<SelecionarProcessar backendOnline configuracaoAtiva={configuracaoComPastas({})} />);
+
+    const input = document.querySelector('input[type="file"][accept=".pdf"]') as HTMLInputElement;
+    await usuario.upload(input, criarPdf("dentro-da-pasta.pdf"));
+
+    expect(screen.getByText("dentro-da-pasta.pdf")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Selecione os PDFs na pasta configurada para esta função."),
+    ).not.toBeInTheDocument();
+  });
+
+  it("modo Complemento ativo: guarda usa caminho_pdfs_complemento_a_processar, não a pasta do Padrão", async () => {
+    const usuario = userEvent.setup();
+    // Dentro da pasta do Padrão, mas fora da pasta de Complemento.
+    window.api.getPathForFile = (arquivo: File) => `C:/pdfs/${arquivo.name}`;
+    window.api.caminhoDentroDaPasta = async (caminho: string, pasta: string) => caminho.startsWith(pasta);
+
+    render(<SelecionarProcessar backendOnline configuracaoAtiva={configuracaoComPastas({})} />);
+    await usuario.click(screen.getByRole("button", { name: "Modo Complemento de Diárias" }));
+
+    const input = document.querySelector('input[type="file"][accept=".pdf"]') as HTMLInputElement;
+    await usuario.upload(input, criarPdf("fora-do-complemento.pdf"));
+
+    expect(screen.getByText("Selecione os PDFs na pasta configurada para esta função.")).toBeInTheDocument();
+    expect(screen.queryByText("fora-do-complemento.pdf")).not.toBeInTheDocument();
+  });
+
+  it("processamento_padrao não liberado: bloqueia a área de seleção com a lista de pastas faltando", () => {
+    render(
+      <SelecionarProcessar
+        backendOnline
+        configuracaoAtiva={configuracaoComPastas({ processamento_padrao: false })}
+      />,
+    );
+
+    expect(
+      screen.getByText("Antes de utilizar esta função, configure as pastas necessárias."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("PDFs a Processar")).toBeInTheDocument();
+    expect(screen.queryByText("Selecionar PDFs")).not.toBeInTheDocument();
+  });
+
+  it("'Configurar agora' no bloqueio aciona aoAbrirConfiguracoes", async () => {
+    const usuario = userEvent.setup();
+    const aoAbrirConfiguracoes = vi.fn();
+
+    render(
+      <SelecionarProcessar
+        backendOnline
+        configuracaoAtiva={configuracaoComPastas({ processamento_padrao: false })}
+        aoAbrirConfiguracoes={aoAbrirConfiguracoes}
+      />,
+    );
+
+    await usuario.click(screen.getByRole("button", { name: "Configurar agora" }));
+
+    expect(aoAbrirConfiguracoes).toHaveBeenCalledTimes(1);
+  });
+
+  it("complemento não liberado: o botão de alternar o modo fica desabilitado", () => {
+    render(
+      <SelecionarProcessar
+        backendOnline
+        configuracaoAtiva={configuracaoComPastas({ complemento: false })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Modo Complemento de Diárias" })).toBeDisabled();
+  });
+
+  it("configuracaoAtiva ausente (prop não passada): nunca bloqueia — mesmo comportamento de antes desta melhoria", () => {
+    render(<SelecionarProcessar backendOnline />);
+
+    expect(screen.getByText("Selecionar PDFs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Modo Complemento de Diárias" })).toBeEnabled();
+  });
+
+  it("preencherPlanilha recebe o mapa de caminhos absolutos capturado no momento de processar()", async () => {
+    const usuario = userEvent.setup();
+    window.api.getPathForFile = (arquivo: File) => `C:/pdfs/${arquivo.name}`;
+    processarMock.mockResolvedValueOnce({
+      id: "lote-1",
+      total: 1,
+      sucesso: 1,
+      erro: 0,
+      processos: [
+        {
+          id: "p1",
+          arquivo_origem: "processo-a.pdf",
+          status: "sucesso",
+          diaria: null,
+          erro: null,
+          avisos: [],
+        },
+      ],
+    });
+    preencherMock.mockResolvedValueOnce({
+      total_gravado: 1,
+      duplicadas_ignoradas: 0,
+      linha_inicial: 4,
+      linha_final: 4,
+      itens: [],
+      pasta_resultados: "C:/res",
+      caminho_planilha_gerada: "C:/res/planilha.xlsx",
+      caminho_relatorio: "C:/res/relatorio.html",
+      caminho_log: "C:/res/log.txt",
+    });
+
+    render(<SelecionarProcessar backendOnline />);
+    await selecionarPdf(usuario, "processo-a.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Processar" }));
+    const botaoPreencher = await screen.findByRole("button", { name: "Preencher planilha" });
+    await usuario.click(botaoPreencher);
+    await screen.findByRole("button", { name: "Salvar Relatório" });
+
+    expect(preencherMock.mock.calls[0][3]).toEqual({ "processo-a.pdf": "C:/pdfs/processo-a.pdf" });
   });
 });

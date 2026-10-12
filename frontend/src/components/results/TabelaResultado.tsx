@@ -1,4 +1,10 @@
-import type { ItemResultado, LoteProcessamento, ResultadoPreenchimento } from "../../types/processamento";
+import type {
+  ItemResultado,
+  LoteProcessamento,
+  OrganizacaoItem,
+  ResultadoPreenchimento,
+  StatusOrganizacao,
+} from "../../types/processamento";
 import Badge from "../ui/Badge";
 import { ALTURA_LISTA_ROLAVEL, SCROLL_FINO, SUPERFICIE_BASE } from "../../theme/estilos";
 import type { VarianteStatus } from "../../theme/cores";
@@ -16,6 +22,29 @@ interface LinhaTabela {
     | "Erro";
   motivo: string;
   linha: string;
+  // Organização Automática de PDFs — `null` para categorias nunca
+  // organizadas (duplicidade/erro/sem fórmulas) ou sem caminho absoluto
+  // disponível; nunca um erro nem bloqueia a leitura da tabela.
+  organizacao: OrganizacaoItem | null;
+}
+
+// Organização Automática de PDFs — espelha `StatusOrganizacao`
+// (`app.planilha.organizador_arquivos.StatusOrganizacao`).
+const _ROTULO_STATUS_ORGANIZACAO: Record<StatusOrganizacao, string> = {
+  movido: "Movido para Processados",
+  excluido: "Excluído da pasta de origem",
+  ja_existia_removido_da_origem: "Já existia no destino — origem removida",
+  ja_existia_origem_mantida: "Já existia no destino — origem mantida",
+  pasta_nao_configurada: "Pasta operacional não configurada",
+  arquivo_fora_da_pasta: "Arquivo fora da pasta configurada",
+  arquivo_nao_encontrado: "Arquivo não encontrado na origem",
+  falha_permissao: "Falha de permissão ao organizar",
+  falha_filesystem: "Falha ao organizar o arquivo",
+};
+
+function textoOrganizacao(organizacao: OrganizacaoItem | null): string {
+  if (!organizacao) return "—";
+  return _ROTULO_STATUS_ORGANIZACAO[organizacao.status];
 }
 
 // Sprint 05.2 — os dois status de duplicidade compartilham a mesma cor
@@ -63,6 +92,7 @@ function construirLinhasTabela(
         status: "Erro",
         motivo: processo.erro?.motivos.join("; ") ?? "—",
         linha: "—",
+        organizacao: null,
       };
     }
 
@@ -77,6 +107,7 @@ function construirLinhasTabela(
         status: "Erro",
         motivo: "Não retornado pelo preenchimento",
         linha: "—",
+        organizacao: null,
       };
     }
 
@@ -89,6 +120,7 @@ function construirLinhasTabela(
           status: "Inserido (SEI já existente)",
           motivo: `SEI já existe na linha ${item.sei_ja_existente_em_linha} — gravado mesmo assim (modo Complemento)`,
           linha: String(item.linha),
+          organizacao: item.organizacao,
         };
       }
       return {
@@ -98,6 +130,7 @@ function construirLinhasTabela(
         status: "Inserido",
         motivo: "—",
         linha: String(item.linha),
+        organizacao: item.organizacao,
       };
     }
 
@@ -109,6 +142,7 @@ function construirLinhasTabela(
         status: "Duplicado no lote",
         motivo: "SEI repetido neste envio",
         linha: "—",
+        organizacao: null,
       };
     }
 
@@ -120,6 +154,7 @@ function construirLinhasTabela(
         status: "Sem fórmulas necessárias",
         motivo: "A linha livre da planilha não tem as fórmulas de cálculo pré-copiadas",
         linha: item.linha != null ? String(item.linha) : "—",
+        organizacao: null,
       };
     }
 
@@ -128,6 +163,7 @@ function construirLinhasTabela(
       arquivo: item.arquivo_origem,
       sei: item.sei,
       status: "Já existe na planilha",
+      organizacao: null,
       motivo: `SEI já cadastrado na linha ${item.linha}`,
       linha: String(item.linha),
     };
@@ -157,6 +193,7 @@ export default function TabelaResultado({ lote, preenchimento }: Props) {
               <th className="px-5 py-3.5">Status</th>
               <th className="px-5 py-3.5">Motivo</th>
               <th className="px-5 py-3.5">Linha</th>
+              <th className="px-5 py-3.5">Organização</th>
             </tr>
           </thead>
           <tbody>
@@ -176,6 +213,7 @@ export default function TabelaResultado({ lote, preenchimento }: Props) {
                 </td>
                 <td className="px-5 py-3.5 text-slate-400">{linha.motivo}</td>
                 <td className="px-5 py-3.5">{linha.linha}</td>
+                <td className="px-5 py-3.5 text-slate-400">{textoOrganizacao(linha.organizacao)}</td>
               </tr>
             ))}
           </tbody>

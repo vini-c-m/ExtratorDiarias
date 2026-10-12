@@ -10,6 +10,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import AvisoConfiguracaoPendente from "../components/configuracao/AvisoConfiguracaoPendente";
 import ModalAlterarPlanilhaOficial from "../components/configuracao/ModalAlterarPlanilhaOficial";
 import ResumoConfiguracao from "../components/configuracao/ResumoConfiguracao";
 import Alerta from "../components/ui/Alerta";
@@ -54,6 +55,14 @@ function podePreencherPlanilha(estado: EstadoConfiguracao | null): boolean {
 // Sprint 15 — normaliza `EstadoConfiguracao` para as props de
 // `ResumoConfiguracao`: quando inacessível, o contrato do backend (§4) não
 // devolve nome/local/data, então nem tenta.
+// Organização Automática de PDFs — mesmo critério de `os.path.basename`
+// usado pelo backend (`processamento_service.processar_lote`) para gerar
+// `arquivo_origem`, replicado aqui só para montar o mapa nome-base ->
+// caminho absoluto (nunca enviado como parte da regra de negócio em si).
+function nomeDoArquivoNaFila(caminho: string): string {
+  return caminho.split(/[\\/]/).pop() ?? caminho;
+}
+
 function propsResumoConfiguracao(estado: EstadoConfiguracao) {
   if (estado.configurado && estado.planilha_acessivel) {
     return {
@@ -86,9 +95,23 @@ interface Props {
    * interrupção terminar"). Se o usuário cancelar, `aoConcluir` nunca é
    * chamado — nem depois, quando o processamento terminar sozinho. */
   aoMudarSolicitarSaidaSegura?: (funcao: ((aoConcluir: () => void) => void) | null) => void;
+  /** Organização Automática de PDFs — estado de configuração já conhecido
+   * por `App.tsx` (mesma fonte compartilhada com o Hub/Conferência), usado
+   * só para a guarda de pasta e o bloqueio de UX desta melhoria. Opcional
+   * para não quebrar testes existentes que montam este componente
+   * isoladamente; `null`/ausente nunca bloqueia nada (mesmo critério de
+   * "ainda não sabemos" usado no resto do app). */
+  configuracaoAtiva?: EstadoConfiguracao | null;
+  aoAbrirConfiguracoes?: () => void;
 }
 
-export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMudarSolicitarSaidaSegura }: Props) {
+export default function SelecionarProcessar({
+  backendOnline,
+  aoMudarEstado,
+  aoMudarSolicitarSaidaSegura,
+  configuracaoAtiva = null,
+  aoAbrirConfiguracoes,
+}: Props) {
   const [fila, setFila] = useState<ItemFila[]>([]);
   const [avisoFila, setAvisoFila] = useState<string | null>(null);
 
@@ -104,6 +127,10 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
   const [tempoDecorridoMs, setTempoDecorridoMs] = useState(0);
   const [resultado, setResultado] = useState<LoteProcessamento | null>(null);
   const [erroGeral, setErroGeral] = useState<string | null>(null);
+  // Organização Automática de PDFs — mapa nome-base -> caminho absoluto,
+  // capturado no início de `processar()` (ver comentário lá). Repassado
+  // a `preencherPlanilha` para o backend conseguir mover o PDF gravado.
+  const [caminhosAbsolutos, setCaminhosAbsolutos] = useState<Record<string, string>>({});
 
   // Sprint 05.3 — cancelamento seguro do processamento em andamento.
   // `abortControllerRef` aborta a requisição em voo; nada além do laço de
@@ -192,9 +219,57 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
     };
   }, [resultado]);
 
-  function adicionarNaFila(novosArquivos: File[]) {
+  // Organização Automática de PDFs — usado como `aoAtualizarPastas` do modal
+  // "Alterar Planilha Oficial" desta tela: rebusca a configuração completa
+  // depois que uma pasta operacional é salva, para o caminho recém-salvo
+  // aparecer imediatamente (mesmo padrão de `atualizar`, `useConfiguracao.ts`).
+  // Sem isso, `SecaoPastasOperacionais` continuava exibindo "Não configurado"
+  // mesmo após o backend persistir a pasta com sucesso.
+  async function atualizarConfiguracaoPastas() {
+    try {
+      setConfiguracao(await buscarConfiguracao());
+    } catch {
+      // Backend momentaneamente indisponível — mantém o último estado
+      // conhecido.
+    }
+  }
+
+  // Organização Automática de PDFs — pasta configurada para o fluxo ativo
+  // no momento da seleção (Padrão ou Complemento, conforme `modoComplemento`).
+  // `null` quando ainda não configurada/carregada — nesse caso a guarda
+  // abaixo simplesmente não filtra nada (mesmo critério de "ainda não
+  // sabemos" do resto do app).
+  function pastaGuardaAtiva(): string | null {
+    if (!configuracaoAtiva || !configuracaoAtiva.configurado) return null;
+    return modoComplemento
+      ? configuracaoAtiva.caminho_pdfs_complemento_a_processar
+      : configuracaoAtiva.caminho_pdfs_a_processar;
+  }
+
+  async function adicionarNaFila(novosArquivos: File[]) {
     const { validos, invalidos } = filtrarSomentePdf(novosArquivos);
-    const resultadoAdicao = adicionarArquivos(fila, validos, (arquivo) =>
+
+    // Guarda de pasta (decisão confirmada): seleção de PDF continua via
+    // <input type="file"> + webUtils.getPathForFile — só valida
+    // pertencimento à pasta configurada antes do processamento, nunca
+    // troca o mecanismo de seleção. `caminhoDentroDaPasta` é assíncrona
+    // (round-trip por IPC até o processo main — o preload roda sandboxado
+    // neste app e não tem acesso direto ao módulo `path` do Node).
+    const pastaGuarda = pastaGuardaAtiva();
+    let aceitos = validos;
+    let rejeitadosPelaPasta = 0;
+    if (pastaGuarda && window.api.caminhoDentroDaPasta) {
+      const verificacoes = await Promise.all(
+        validos.map(async (arquivo) => {
+          const caminho = window.api.getPathForFile(arquivo);
+          return { arquivo, dentro: await window.api.caminhoDentroDaPasta!(caminho, pastaGuarda) };
+        }),
+      );
+      aceitos = verificacoes.filter((v) => v.dentro).map((v) => v.arquivo);
+      rejeitadosPelaPasta = verificacoes.length - aceitos.length;
+    }
+
+    const resultadoAdicao = adicionarArquivos(fila, aceitos, (arquivo) =>
       window.api.getPathForFile(arquivo),
     );
 
@@ -211,6 +286,8 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
           ? `"${invalidos[0].name}" não é um PDF e foi ignorado.`
           : `${invalidos.length} arquivos não são PDF e foram ignorados.`,
       );
+    } else if (rejeitadosPelaPasta > 0) {
+      setAvisoFila(MENSAGENS.pdfForaDaPastaConfigurada);
     } else if (resultadoAdicao.duplicados > 0) {
       setAvisoFila(
         resultadoAdicao.duplicados === 1
@@ -242,6 +319,14 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
     processandoRef.current = true;
 
     const caminhos = fila.map((item) => item.chave);
+    // Organização Automática de PDFs — capturado agora, no momento em que a
+    // ordem de `fila` ainda corresponde garantidamente à de `resultado.
+    // processos` (a fila continua editável depois do processamento; usar
+    // `fila` diretamente em `preencherPlanilhaClique` arriscaria mapear o
+    // caminho errado se algum item fosse removido nesse meio-tempo).
+    setCaminhosAbsolutos(
+      Object.fromEntries(caminhos.map((caminho) => [nomeDoArquivoNaFila(caminho), caminho])),
+    );
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -352,6 +437,7 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
         resultado.processos,
         duracaoMs,
         modoComplemento ? "COMPLEMENTO" : "PADRAO",
+        caminhosAbsolutos,
       );
       setResultadoPreenchimento(resultadoGravacao);
     } catch (erro) {
@@ -456,6 +542,7 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
     setProgresso(null);
     setTempoDecorridoMs(0);
     setMensagemCancelamento(null);
+    setCaminhosAbsolutos({});
   }
 
   // --- Tela final: processamento + preenchimento concluídos -----------------
@@ -548,6 +635,23 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
 
   // --- Tela de seleção / progresso / pré-visualização ------------------------
 
+  // Organização Automática de PDFs — bloqueio de UX por funcionalidade
+  // (nunca o app inteiro). `configuracaoAtiva` ausente/ainda não
+  // configurado nunca bloqueia (mesmo critério de "ainda não sabemos").
+  const prontidaoProcessamento = configuracaoAtiva?.configurado
+    ? configuracaoAtiva.prontidao_pastas.processamento_padrao
+    : null;
+  const prontidaoComplemento = configuracaoAtiva?.configurado
+    ? configuracaoAtiva.prontidao_pastas.complemento
+    : null;
+  const processamentoBloqueado = prontidaoProcessamento !== null && !prontidaoProcessamento.liberado;
+  const complementoBloqueado = prontidaoComplemento !== null && !prontidaoComplemento.liberado;
+  // A área de seleção/processamento bloqueia conforme o modo ativo no
+  // momento — Padrão ou Complemento (o toggle acima já impede ativar
+  // Complemento enquanto suas próprias pastas não estiverem prontas).
+  const prontidaoDoModoAtivo = modoComplemento ? prontidaoComplemento : prontidaoProcessamento;
+  const areaDeSelecaoBloqueada = modoComplemento ? complementoBloqueado : processamentoBloqueado;
+
   return (
     <div className="mx-auto max-w-4xl animate-entrada-conteudo px-6 py-14 md:px-10">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -563,7 +667,10 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
             do "Modo Complemento de Diárias" da Central de Conferência. */}
         <Botao
           variante={modoComplemento ? "primaria" : "secundaria"}
-          disabled={algumaOperacaoEmAndamento || resultado !== null}
+          disabled={algumaOperacaoEmAndamento || resultado !== null || complementoBloqueado}
+          title={
+            complementoBloqueado ? MENSAGENS.avisoPastasIncompletas : undefined
+          }
           onClick={() => setModoComplemento((atual) => !atual)}
         >
           {modoComplemento ? "Modo Complemento de Diárias (ativo)" : "Modo Complemento de Diárias"}
@@ -581,32 +688,41 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
         </div>
       )}
 
-      <div className="mt-8">
-        <ZonaArrastar onArquivosSoltos={adicionarNaFila} desabilitado={algumaOperacaoEmAndamento}>
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <BotaoArquivo
-                accept=".pdf"
-                multiplo
-                desabilitado={algumaOperacaoEmAndamento}
-                titulo={algumaOperacaoEmAndamento ? MENSAGENS.processandoAguarde : undefined}
-                onChange={selecionarArquivos}
-              >
-                <Upload aria-hidden="true" className="h-4 w-4" />
-                Selecionar PDFs
-              </BotaoArquivo>
-              <span className="text-xs text-slate-500">ou arraste os arquivos aqui</span>
-            </div>
+      {areaDeSelecaoBloqueada ? (
+        <div className="mt-8">
+          <AvisoConfiguracaoPendente
+            pastasFaltando={prontidaoDoModoAtivo?.pastas_faltando ?? []}
+            aoConfigurar={() => aoAbrirConfiguracoes?.()}
+          />
+        </div>
+      ) : (
+        <div className="mt-8">
+          <ZonaArrastar onArquivosSoltos={adicionarNaFila} desabilitado={algumaOperacaoEmAndamento}>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <BotaoArquivo
+                  accept=".pdf"
+                  multiplo
+                  desabilitado={algumaOperacaoEmAndamento}
+                  titulo={algumaOperacaoEmAndamento ? MENSAGENS.processandoAguarde : undefined}
+                  onChange={selecionarArquivos}
+                >
+                  <Upload aria-hidden="true" className="h-4 w-4" />
+                  Selecionar PDFs
+                </BotaoArquivo>
+                <span className="text-xs text-slate-500">ou arraste os arquivos aqui</span>
+              </div>
 
-            <FilaArquivos
-              itens={fila}
-              onRemover={removerDaFila}
-              onLimpar={limparTudo}
-              desabilitado={algumaOperacaoEmAndamento}
-            />
-          </div>
-        </ZonaArrastar>
-      </div>
+              <FilaArquivos
+                itens={fila}
+                onRemover={removerDaFila}
+                onLimpar={limparTudo}
+                desabilitado={algumaOperacaoEmAndamento}
+              />
+            </div>
+          </ZonaArrastar>
+        </div>
+      )}
 
       {avisoFila && (
         <div className="mt-4">
@@ -732,6 +848,8 @@ export default function SelecionarProcessar({ backendOnline, aoMudarEstado, aoMu
             setConfiguracao(novaConfiguracao);
             setModalAlterarAberto(false);
           }}
+          configuracaoAtual={configuracao}
+          aoAtualizarPastas={atualizarConfiguracaoPastas}
         />
       )}
     </div>

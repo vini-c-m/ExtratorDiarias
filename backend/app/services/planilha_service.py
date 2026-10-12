@@ -7,12 +7,15 @@ from app.consulta import base_local
 from app.domain.entities.fonte_doc_origem import FonteDocOrigem
 from app.domain.entities.modo_processamento import ModoProcessamento
 from app.domain.entities.processo import Processo
+from app.planilha import organizador_arquivos
 from app.planilha.escritor_planilha import (
     NOME_ABA,
+    CategoriaResultado,
     EstruturaFuturaIndisponivel,
     ResultadoPreenchimento,
     preencher,
 )
+from app.planilha.organizador_arquivos import ResultadoOrganizacao
 from app.planilha.pasta_resultados import ArquivosGerados, montar
 from app.planilha.relatorio import ItemAviso, ItemErro
 
@@ -54,7 +57,16 @@ def preencher_planilha(
     *,
     tempo_processamento_ms: int | None = None,
     modo: ModoProcessamento = ModoProcessamento.PADRAO,
-) -> tuple[ResultadoPreenchimento, ArquivosGerados]:
+    # Organização Automática de PDFs — todos opcionais e aditivos: ausentes
+    # (chamador antigo/teste que não passa nada), o comportamento de
+    # gravação acima continua 100% idêntico; só o dicionário de organização
+    # devolvido fica vazio. `caminhos_absolutos` mapeia `arquivo_origem`
+    # (nome-base) -> caminho absoluto, resolvido pela camada de API a
+    # partir de `ItemParaPreencher.caminho_absoluto`.
+    caminhos_absolutos: dict[str, str] | None = None,
+    pasta_origem: str | None = None,
+    pasta_destino: str | None = None,
+) -> tuple[ResultadoPreenchimento, ArquivosGerados, dict[str, ResultadoOrganizacao]]:
     if not os.path.isfile(caminho_planilha):
         raise ErroPreenchimentoPlanilha(f"Planilha não encontrada: {caminho_planilha}")
 
@@ -114,4 +126,24 @@ def preencher_planilha(
     if sincronizacao_analitica_falhou:
         resultado = replace(resultado, sincronizacao_analitica_falhou=True)
 
-    return resultado, arquivos_gerados
+    # Organização Automática de PDFs — só itens de fato INSERIDOS (nunca
+    # DUPLICADO_*/LINHA_SEM_FORMULAS_NECESSARIAS: duplicidade não prova que
+    # a linha existente esteja correta/completa). Roda depois da gravação/
+    # sincronização já concluídas, no mesmo nível arquitetural de efeito
+    # colateral aditivo — uma falha de filesystem aqui nunca torna a
+    # gravação já concluída em "não gravada" (ver `organizador_arquivos`,
+    # que nunca propaga exceção).
+    organizacoes: dict[str, ResultadoOrganizacao] = {}
+    for item in resultado.itens:
+        if item.categoria is not CategoriaResultado.INSERIDO:
+            continue
+        caminho_absoluto = (caminhos_absolutos or {}).get(item.arquivo_origem)
+        try:
+            with diag.etapa("planilha_service_organizacao", arquivo=item.arquivo_origem):
+                organizacoes[item.arquivo_origem] = organizador_arquivos.organizar_processamento(
+                    caminho_absoluto, pasta_origem, pasta_destino
+                )
+        except Exception:
+            _logger.exception("Falha inesperada ao organizar PDF processado: %s", item.arquivo_origem)
+
+    return resultado, arquivos_gerados, organizacoes

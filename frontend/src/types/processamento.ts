@@ -40,6 +40,26 @@ export interface Processo {
   avisos: string[];
 }
 
+// Organização Automática de PDFs — resultado aditivo, paralelo à
+// `categoria`/`linha` de `ItemResultado` (nunca os substitui). Espelha
+// `app.planilha.organizador_arquivos.StatusOrganizacao`.
+export type StatusOrganizacao =
+  | "movido"
+  | "excluido"
+  | "ja_existia_removido_da_origem"
+  | "ja_existia_origem_mantida"
+  | "pasta_nao_configurada"
+  | "arquivo_fora_da_pasta"
+  | "arquivo_nao_encontrado"
+  | "falha_permissao"
+  | "falha_filesystem";
+
+export interface OrganizacaoItem {
+  sucesso: boolean;
+  status: StatusOrganizacao;
+  detalhe: string | null;
+}
+
 export interface LoteProcessamento {
   id: string;
   total: number;
@@ -62,6 +82,9 @@ export interface ItemResultado {
   // Só populado no modo Complemento, quando este SEI já existia (não
   // bloqueia a gravação nesse modo — só fica visível para revisão).
   sei_ja_existente_em_linha: number | null;
+  // Organização Automática de PDFs — só populado para itens INSERIDO cujo
+  // caminho absoluto foi enviado; `null` para os demais (nunca tentado).
+  organizacao: OrganizacaoItem | null;
 }
 
 export interface ResultadoPreenchimento {

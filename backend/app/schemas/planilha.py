@@ -6,6 +6,13 @@ from app.schemas.processamento import DiariaResposta, ModoProcessamentoRequisica
 class ItemParaPreencher(BaseModel):
     arquivo_origem: str
     diaria: DiariaResposta
+    # Organização Automática de PDFs — caminho absoluto de origem, para o
+    # organizador conseguir mover o PDF depois de gravado com sucesso
+    # (INSERIDO). `arquivo_origem` continua sendo só o nome-base, usado em
+    # toda exibição/matching já homologados — este campo é aditivo e nunca
+    # os substitui. `None` quando o cliente não tem o caminho absoluto
+    # disponível (nunca bloqueia o preenchimento em si).
+    caminho_absoluto: str | None = None
 
 
 class ItemErroResposta(BaseModel):
@@ -36,6 +43,17 @@ class RequisicaoPreenchimento(BaseModel):
     modo: ModoProcessamentoRequisicao = "PADRAO"
 
 
+class OrganizacaoItemResposta(BaseModel):
+    """Organização Automática de PDFs — resultado aditivo, paralelo ao
+    resultado administrativo (`categoria`/`linha` acima): uma falha aqui
+    nunca torna um item já gravado em "não gravado". `status` é o valor de
+    `app.planilha.organizador_arquivos.StatusOrganizacao`."""
+
+    sucesso: bool
+    status: str
+    detalhe: str | None = None
+
+
 class ItemResultadoResposta(BaseModel):
     arquivo_origem: str
     sei: str
@@ -44,6 +62,10 @@ class ItemResultadoResposta(BaseModel):
     # RN-14 — só populado no modo Complemento, quando este SEI já existia
     # (na planilha ou mais cedo no lote); ver `ItemResultado.sei_ja_existente_em_linha`.
     sei_ja_existente_em_linha: int | None = None
+    # Organização Automática de PDFs — só populado para itens INSERIDO cujo
+    # `caminho_absoluto` foi informado; `None` para os demais (nunca
+    # tentado), nunca substitui `categoria`.
+    organizacao: OrganizacaoItemResposta | None = None
 
 
 class ResultadoPreenchimentoResposta(BaseModel):
