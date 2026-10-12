@@ -50,6 +50,11 @@ export const MENSAGENS = {
     "Antes de continuar, verifique se o Google Drive concluiu a sincronização da versão atualizada.",
   cadastroServidorContinuar: "Já sincronizei / Continuar",
   cadastroServidorTentarSincronizarNovamente: "Tentar sincronizar novamente",
+  // Organização Automática de PDFs — guarda de pasta (SelecionarProcessar/
+  // FinalizarDiarias): PDF selecionado fora da pasta operacional
+  // configurada para aquela função nunca é adicionado à fila.
+  pdfForaDaPastaConfigurada: "Selecione os PDFs na pasta configurada para esta função.",
+  avisoPastasIncompletas: "Antes de utilizar esta função, configure as pastas necessárias.",
 } as const;
 
 interface PadraoMensagem {

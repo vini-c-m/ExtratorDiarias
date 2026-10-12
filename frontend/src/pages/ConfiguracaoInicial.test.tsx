@@ -49,6 +49,15 @@ describe("ConfiguracaoInicial (Sprint 15)", () => {
       requer_revalidacao: false,
       caminho_planilha_oficial: caminho,
       configurado_em: "2026-07-30T14:32:10",
+      caminho_pdfs_a_processar: null,
+      caminho_pdfs_complemento_a_processar: null,
+      caminho_pdfs_processados: null,
+      caminho_pdfs_diarias_a_confirmar: null,
+      prontidao_pastas: {
+        processamento_padrao: { liberado: false, pastas_faltando: [] },
+        complemento: { liberado: false, pastas_faltando: [] },
+        finalizacao: { liberado: false, pastas_faltando: [] },
+      },
     });
 
     render(<ConfiguracaoInicial aoConcluir={vi.fn()} />);
@@ -69,6 +78,15 @@ describe("ConfiguracaoInicial (Sprint 15)", () => {
       requer_revalidacao: false,
       caminho_planilha_oficial: caminho,
       configurado_em: "2026-07-30T14:32:10",
+      caminho_pdfs_a_processar: null,
+      caminho_pdfs_complemento_a_processar: null,
+      caminho_pdfs_processados: null,
+      caminho_pdfs_diarias_a_confirmar: null,
+      prontidao_pastas: {
+        processamento_padrao: { liberado: false, pastas_faltando: [] },
+        complemento: { liberado: false, pastas_faltando: [] },
+        finalizacao: { liberado: false, pastas_faltando: [] },
+      },
     });
     const aoConcluir = vi.fn();
 

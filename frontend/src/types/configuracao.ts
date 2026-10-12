@@ -7,17 +7,41 @@ export interface ConfiguracaoNaoDefinida {
   configurado: false;
 }
 
-export interface ConfiguracaoInacessivel {
-  configurado: true;
-  planilha_acessivel: false;
+// Organização Automática de PDFs — quatro pastas operacionais,
+// independentes da planilha oficial (por isso presentes tanto em
+// `ConfiguracaoInacessivel` quanto em `ConfiguracaoAtiva`: a planilha estar
+// inacessível não impede consultar/editar as pastas já configuradas).
+export interface PastasOperacionais {
+  caminho_pdfs_a_processar: string | null;
+  caminho_pdfs_complemento_a_processar: string | null;
+  caminho_pdfs_processados: string | null;
+  caminho_pdfs_diarias_a_confirmar: string | null;
 }
 
-export interface ConfiguracaoAtiva {
+export interface ProntidaoPastas {
+  liberado: boolean;
+  pastas_faltando: string[];
+}
+
+export interface ProntidaoFuncionalidade {
+  processamento_padrao: ProntidaoPastas;
+  complemento: ProntidaoPastas;
+  finalizacao: ProntidaoPastas;
+}
+
+export interface ConfiguracaoInacessivel extends PastasOperacionais {
+  configurado: true;
+  planilha_acessivel: false;
+  prontidao_pastas: ProntidaoFuncionalidade;
+}
+
+export interface ConfiguracaoAtiva extends PastasOperacionais {
   configurado: true;
   planilha_acessivel: true;
   requer_revalidacao: boolean;
   caminho_planilha_oficial: string;
   configurado_em: string;
+  prontidao_pastas: ProntidaoFuncionalidade;
 }
 
 export type EstadoConfiguracao = ConfiguracaoNaoDefinida | ConfiguracaoInacessivel | ConfiguracaoAtiva;

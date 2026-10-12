@@ -24,11 +24,19 @@ export default function FormularioConfiguracao({
   const [erro, setErro] = useState<string | null>(null);
 
   async function selecionarEValidar() {
-    const caminho = await window.api.selecionarPlanilhaOficial();
+    setErro(null);
+    let caminho: string | null;
+    try {
+      caminho = await window.api.selecionarPlanilhaOficial();
+    } catch (erroSeletor) {
+      setErro(
+        mensagemAmigavel(erroSeletor, "Não foi possível abrir o seletor de arquivo. Tente novamente."),
+      );
+      return;
+    }
     if (!caminho) return; // diálogo cancelado
 
     setValidando(true);
-    setErro(null);
     try {
       const configuracao = await definirConfiguracao(caminho);
       aoConfigurar(configuracao);
