@@ -6,6 +6,34 @@ O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/), e e
 
 Para o histórico de desenvolvimento sprint a sprint, veja [`docs/roadmap/`](docs/roadmap/).
 
+## [2.3.1] - 2026-08-20
+
+### Corrigido
+
+- Corrige responsividade e scroll do modal de Configuração.
+- Mantém o botão Fechar acessível em telas menores.
+- Corrige atualização imediata das Pastas Operacionais.
+- Mantém nomes físicos de pasta livres.
+- Adiciona feedback amigável para falhas de seleção de pasta/planilha.
+
+## [2.3.0] - 2026-08-19
+
+### Adicionado
+
+- **Organização Automática de PDFs**: após um Processamento ou Complemento com gravação confirmada (categoria `INSERIDO`), o PDF de origem é movido automaticamente para a pasta "PDFs Processados"; após uma Finalização confirmada (`FINALIZADO`/`JA_CONFIRMADO`), o PDF é excluído da pasta "PDFs de Diárias a Confirmar". Duplicidade, erro ou qualquer estado sem gravação comprovada nunca é movido/excluído. Conflito de nome no destino é resolvido por hash SHA-256 (conteúdo diferente ganha sufixo numérico seguro, nunca sobrescreve; conteúdo idêntico remove só a cópia redundante da origem). Uma falha de organização nunca desfaz um resultado administrativo já gravado — é sempre reportada como um resultado paralelo, por item.
+- **Configuração das Pastas Operacionais**: quatro novos caminhos configuráveis (PDFs a Processar, PDFs de Complemento a Processar, PDFs Processados, PDFs de Diárias a Confirmar), persistidos na mesma configuração local já usada pela Planilha Oficial — sem nova tela de Configurações. Cada funcionalidade fica bloqueada individualmente (nunca o app inteiro) enquanto suas pastas obrigatórias não estiverem configuradas e acessíveis.
+- **Validação de pertencimento à pasta operacional**: um PDF selecionado fora da pasta configurada para a função em uso (Processamento, Complemento ou Finalização) é rejeitado antes do processamento, com aviso explícito. Seleção de PDF continua via `<input type="file">` + `webUtils.getPathForFile` — nenhuma mudança no mecanismo de seleção.
+
+### Corrigido
+
+- **Preload do Electron**: removida uma referência ao módulo `node:path` que, executando dentro do processo de preload sandboxado (padrão do Electron desde a v20), impedia `window.api` de ser exposto por inteiro — afetando também funcionalidades já existentes e sem relação com a mudança (seletor de Planilha Oficial, fechamento seguro pelo X, entre outras). A validação de pertencimento a pastas passou a rodar no processo principal, via IPC.
+
+## [2.2.0] - 2026-08-13
+
+### Adicionado
+
+- **Histórico e-Fisco para Membro na Central de Conferência**: ao gerar o Histórico e-Fisco para uma diária de Membro (Promotor/Procurador de Justiça), a Central de Conferência passa a pedir a quantidade de diárias integrais e parcial efetivamente concedidas pelo GABPGJ, já que esse dado — determinado pelo despacho do processo — não pode ser inferido apenas pela duração do período consultado. As quantidades informadas são usadas exclusivamente para compor o texto do Histórico; período consultado, valor da diária e Planilha Oficial não são afetados. Disponível tanto no fluxo Padrão quanto no modo Complemento de Diárias. Para Servidor, nenhuma alteração de comportamento.
+
 ## [2.1.0] - 2026-08-12
 
 ### Adicionado
