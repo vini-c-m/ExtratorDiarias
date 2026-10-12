@@ -9,6 +9,7 @@ from app.consulta import base_local
 from app.domain.rules.finalizacao_diarias import AvaliacaoElegibilidade, avaliar
 from app.extraction import pdf_reader
 from app.extraction.parsers.parser_factory import obter_parser
+from app.planilha import organizador_arquivos
 from app.planilha.escritor_planilha import (
     NOME_ABA,
     _capturar_cache_formulas,  # noqa: PLC2701 — mesmo reuso já praticado em repositorio_analitico.py
@@ -20,6 +21,7 @@ from app.planilha.finalizador_planilha import (
     gravar_finalizacao,
     localizar_candidatos,
 )
+from app.planilha.organizador_arquivos import ResultadoOrganizacao
 
 _logger = logging.getLogger(__name__)
 
@@ -173,6 +175,11 @@ class ItemConfirmacao:
 
     arquivo_origem: str
     sei: str
+    # Organização Automática de PDFs — caminho absoluto de origem, para o
+    # organizador conseguir excluir o PDF depois de finalizado/já
+    # confirmado. `None` quando o cliente não tem o caminho absoluto
+    # disponível (nunca bloqueia a confirmação em si).
+    caminho_absoluto: str | None = None
 
 
 class CategoriaConfirmacao(str, Enum):
@@ -196,6 +203,10 @@ class ItemResultadoConfirmacao:
     # estão, nunca regravadas).
     linhas_mantidas: list[int]
     motivo: str | None = None
+    # Organização Automática de PDFs — só populado para FINALIZADO/
+    # JA_CONFIRMADO cujo `caminho_absoluto` foi informado; `None` para
+    # IGNORADO (nunca tentado). Uma falha aqui nunca muda `categoria`.
+    organizacao: ResultadoOrganizacao | None = None
 
 
 @dataclass(frozen=True)
@@ -215,7 +226,26 @@ class ResultadoConfirmacao:
     sincronizacao_analitica_falhou: bool = False
 
 
-def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoConfirmacao:
+def _organizar_pdf_finalizado(
+    item: ItemConfirmacao, pasta_origem: str | None
+) -> ResultadoOrganizacao | None:
+    """Organização Automática de PDFs — só chamada para FINALIZADO/
+    JA_CONFIRMADO (nunca IGNORADO). Uma falha de filesystem aqui nunca
+    torna a confirmação já gravada em "não confirmada" (ver
+    `organizador_arquivos`, que nunca propaga exceção)."""
+    try:
+        return organizador_arquivos.organizar_finalizacao(item.caminho_absoluto, pasta_origem)
+    except Exception:
+        _logger.exception("Falha inesperada ao organizar PDF finalizado: %s", item.arquivo_origem)
+        return None
+
+
+def confirmar(
+    itens: list[ItemConfirmacao],
+    caminho_planilha: str,
+    *,
+    pasta_origem: str | None = None,
+) -> ResultadoConfirmacao:
     """Grava X/Y em TODAS as linhas de cada SEI confirmado pelo usuário —
     nunca uma linha isolada. Resolve as linhas do SEI de novo, no momento
     da gravação (nunca confia só na análise anterior, que pode estar
@@ -298,6 +328,7 @@ def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoC
                     linhas_atualizadas=[],
                     linhas_mantidas=linhas_ja_finalizadas,
                     motivo="Já confirmado na Planilha Oficial.",
+                    organizacao=_organizar_pdf_finalizado(item, pasta_origem),
                 )
             )
             continue
@@ -310,6 +341,7 @@ def confirmar(itens: list[ItemConfirmacao], caminho_planilha: str) -> ResultadoC
                 arquivo_origem=item.arquivo_origem,
                 sei=item.sei,
                 categoria=CategoriaConfirmacao.FINALIZADO,
+                organizacao=_organizar_pdf_finalizado(item, pasta_origem),
                 linhas_atualizadas=linhas_a_gravar,
                 linhas_mantidas=linhas_ja_finalizadas,
             )

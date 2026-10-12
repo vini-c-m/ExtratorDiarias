@@ -1,5 +1,6 @@
 import { CheckCircle2, ClipboardCheck, RotateCcw } from "lucide-react";
 import { Fragment, useState } from "react";
+import AvisoConfiguracaoPendente from "../components/configuracao/AvisoConfiguracaoPendente";
 import Alerta from "../components/ui/Alerta";
 import Badge from "../components/ui/Badge";
 import Botao from "../components/ui/Botao";
@@ -9,7 +10,7 @@ import FilaArquivos from "../components/upload/FilaArquivos";
 import ZonaArrastar from "../components/upload/ZonaArrastar";
 import { filtrarSomentePdf } from "../lib/arquivos";
 import { adicionarArquivos, limparFila, removerArquivo, type ItemFila } from "../lib/fila";
-import { mensagemAmigavel } from "../lib/mensagens";
+import { MENSAGENS, mensagemAmigavel } from "../lib/mensagens";
 import { analisarFinalizacao, confirmarFinalizacao } from "../services/api";
 import { SUPERFICIE_BASE } from "../theme/estilos";
 import { TIPOGRAFIA } from "../theme/tipografia";
@@ -21,9 +22,24 @@ import type {
 } from "../types/finalizacao";
 import type { VarianteStatus } from "../theme/cores";
 import type { ChangeEvent } from "react";
+import type { EstadoConfiguracao } from "../types/configuracao";
+import type { OrganizacaoItem, StatusOrganizacao } from "../types/processamento";
 
 interface Props {
   backendOnline: boolean;
+  /** Organização Automática de PDFs — mesma fonte compartilhada de
+   * `App.tsx` (Hub/Conferência/SelecionarProcessar). Opcional para não
+   * quebrar testes existentes que montam este componente isoladamente;
+   * `null`/ausente nunca bloqueia nada. */
+  configuracaoAtiva?: EstadoConfiguracao | null;
+  aoAbrirConfiguracoes?: () => void;
+}
+
+// Organização Automática de PDFs — mesmo critério de `os.path.basename`
+// usado pelo backend, replicado aqui só para montar o mapa nome-base ->
+// caminho absoluto (nunca enviado como parte da regra de negócio em si).
+function nomeDoArquivoNaFila(caminho: string): string {
+  return caminho.split(/[\\/]/).pop() ?? caminho;
 }
 
 // Regra de negócio definitiva (Sprint pré-build, 2026-08-11) — só SEI não
@@ -47,6 +63,27 @@ const _VARIANTE_STATUS: Record<StatusFinalizacao, VarianteStatus> = {
   estado_parcial: "erro",
   erro_leitura: "erro",
 };
+
+// Organização Automática de PDFs — texto exibido na coluna "Organização"
+// do relatório de execução; espelha `StatusOrganizacao`
+// (`types/processamento.ts`). `null`/ausente (IGNORADO, ou caminho
+// absoluto não disponível) mostra só "—", nunca um erro.
+const _ROTULO_STATUS_ORGANIZACAO: Record<StatusOrganizacao, string> = {
+  movido: "Movido para Processados",
+  excluido: "Excluído da pasta de origem",
+  ja_existia_removido_da_origem: "Já existia no destino — origem removida",
+  ja_existia_origem_mantida: "Já existia no destino — origem mantida",
+  pasta_nao_configurada: "Pasta operacional não configurada",
+  arquivo_fora_da_pasta: "Arquivo fora da pasta configurada",
+  arquivo_nao_encontrado: "Arquivo não encontrado na origem",
+  falha_permissao: "Falha de permissão ao organizar",
+  falha_filesystem: "Falha ao organizar o arquivo",
+};
+
+function textoOrganizacao(organizacao: OrganizacaoItem | null | undefined): string {
+  if (!organizacao) return "—";
+  return _ROTULO_STATUS_ORGANIZACAO[organizacao.status];
+}
 
 const _MENSAGEM_ALERTAS_INFORMATIVOS =
   "Os alertas abaixo são informativos. A decisão de finalizar os processos pertence ao servidor responsável.";
@@ -90,11 +127,21 @@ const _VARIANTE_CLASSIFICACAO: Record<ClassificacaoFinal, VarianteStatus> = {
   nao_finalizado: "erro",
 };
 
-export default function FinalizarDiarias({ backendOnline }: Props) {
+export default function FinalizarDiarias({
+  backendOnline,
+  configuracaoAtiva = null,
+  aoAbrirConfiguracoes,
+}: Props) {
   const [fila, setFila] = useState<ItemFila[]>([]);
+  const [avisoFila, setAvisoFila] = useState<string | null>(null);
   const [analisando, setAnalisando] = useState(false);
   const [itens, setItens] = useState<ItemAnaliseFinalizacao[] | null>(null);
   const [erroAnalise, setErroAnalise] = useState<string | null>(null);
+  // Organização Automática de PDFs — mapa nome-base -> caminho absoluto,
+  // capturado no início de `analisar()` (a fila continua editável depois
+  // da análise; usar `fila` diretamente na confirmação arriscaria mapear o
+  // caminho errado se algum item fosse removido nesse meio-tempo).
+  const [caminhosAbsolutos, setCaminhosAbsolutos] = useState<Record<string, string>>({});
 
   const [confirmando, setConfirmando] = useState(false);
   const [resultadoConfirmacao, setResultadoConfirmacao] =
@@ -107,12 +154,43 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
 
   const algumaOperacaoEmAndamento = analisando || confirmando;
 
-  function adicionarNaFila(novosArquivos: File[]) {
+  // Organização Automática de PDFs — pasta configurada para esta função.
+  // `null` quando ainda não configurada/carregada — nesse caso a guarda
+  // abaixo simplesmente não filtra nada.
+  const prontidaoFinalizacao = configuracaoAtiva?.configurado
+    ? configuracaoAtiva.prontidao_pastas.finalizacao
+    : null;
+  const finalizacaoBloqueada = prontidaoFinalizacao !== null && !prontidaoFinalizacao.liberado;
+  const pastaGuarda =
+    configuracaoAtiva?.configurado ? configuracaoAtiva.caminho_pdfs_diarias_a_confirmar : null;
+
+  async function adicionarNaFila(novosArquivos: File[]) {
     const { validos } = filtrarSomentePdf(novosArquivos);
-    const resultadoAdicao = adicionarArquivos(fila, validos, (arquivo) =>
+
+    // Guarda de pasta (decisão confirmada): seleção de PDF continua via
+    // <input type="file"> + webUtils.getPathForFile — só valida
+    // pertencimento à pasta configurada antes do processamento.
+    // `caminhoDentroDaPasta` é assíncrona (round-trip por IPC até o
+    // processo main — o preload roda sandboxado neste app e não tem
+    // acesso direto ao módulo `path` do Node).
+    let aceitos = validos;
+    let rejeitadosPelaPasta = 0;
+    if (pastaGuarda && window.api.caminhoDentroDaPasta) {
+      const verificacoes = await Promise.all(
+        validos.map(async (arquivo) => {
+          const caminho = window.api.getPathForFile(arquivo);
+          return { arquivo, dentro: await window.api.caminhoDentroDaPasta!(caminho, pastaGuarda) };
+        }),
+      );
+      aceitos = verificacoes.filter((v) => v.dentro).map((v) => v.arquivo);
+      rejeitadosPelaPasta = verificacoes.length - aceitos.length;
+    }
+
+    const resultadoAdicao = adicionarArquivos(fila, aceitos, (arquivo) =>
       window.api.getPathForFile(arquivo),
     );
     setFila(resultadoAdicao.fila);
+    setAvisoFila(rejeitadosPelaPasta > 0 ? MENSAGENS.pdfForaDaPastaConfigurada : null);
     setItens(null);
     setErroAnalise(null);
     setResultadoConfirmacao(null);
@@ -129,19 +207,28 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
 
   function novaAnalise() {
     setFila(limparFila());
+    setAvisoFila(null);
     setItens(null);
     setErroAnalise(null);
     setResultadoConfirmacao(null);
     setErroConfirmacao(null);
     setDialogoConfirmacaoAberto(false);
+    setCaminhosAbsolutos({});
   }
 
   async function analisar() {
     if (fila.length === 0 || !backendOnline) return;
     setAnalisando(true);
     setErroAnalise(null);
+    const caminhos = fila.map((item) => item.chave);
+    // Organização Automática de PDFs — capturado agora, no momento em que
+    // a ordem de `fila` ainda corresponde garantidamente à de `resposta.
+    // itens` (ver comentário na declaração do estado, acima).
+    setCaminhosAbsolutos(
+      Object.fromEntries(caminhos.map((caminho) => [nomeDoArquivoNaFila(caminho), caminho])),
+    );
     try {
-      const resposta = await analisarFinalizacao(fila.map((item) => item.chave));
+      const resposta = await analisarFinalizacao(caminhos);
       setItens(resposta.itens);
     } catch (erro) {
       setErroAnalise(mensagemAmigavel(erro, "Não foi possível analisar os processos selecionados."));
@@ -170,6 +257,13 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
     const alvo = itensRestantes().map((item) => ({
       arquivo_origem: item.arquivo_origem,
       sei: item.sei as string,
+      // Organização Automática de PDFs — ausente (`undefined`) quando o
+      // nome-base não bate com nenhuma chave do mapa (nunca deveria
+      // acontecer em uso normal); o backend trata como "não informado",
+      // nunca bloqueia a confirmação em si.
+      ...(caminhosAbsolutos[item.arquivo_origem]
+        ? { caminho_absoluto: caminhosAbsolutos[item.arquivo_origem] }
+        : {}),
     }));
     if (alvo.length === 0) return;
     setConfirmando(true);
@@ -247,6 +341,7 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
                 <th className="px-4 py-2.5 font-medium">Linhas mantidas</th>
                 <th className="px-4 py-2.5 font-medium">Resultado</th>
                 <th className="px-4 py-2.5 font-medium">Motivo</th>
+                <th className="px-4 py-2.5 font-medium">Organização</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -271,6 +366,9 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
                   </td>
                   <td className="px-4 py-2.5 text-slate-400">
                     {confirmado?.motivo ?? item.motivo ?? "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-400">
+                    {textoOrganizacao(confirmado?.organizacao)}
                   </td>
                 </tr>
               ))}
@@ -306,47 +404,64 @@ export default function FinalizarDiarias({ backendOnline }: Props) {
         Confirmar comprovantes e confirmação de diárias na Planilha Oficial.
       </p>
 
-      <div className="mt-8">
-        <ZonaArrastar onArquivosSoltos={adicionarNaFila} desabilitado={algumaOperacaoEmAndamento}>
-          <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <BotaoArquivo
-                accept=".pdf"
-                multiplo
-                desabilitado={algumaOperacaoEmAndamento}
-                onChange={selecionarArquivos}
-              >
-                Selecionar PDFs
-              </BotaoArquivo>
-              <span className="text-xs text-slate-500">ou arraste os arquivos aqui</span>
-            </div>
-            <FilaArquivos
-              itens={fila}
-              onRemover={removerDaFila}
-              onLimpar={() => setFila(limparFila())}
-              desabilitado={algumaOperacaoEmAndamento}
-            />
-          </div>
-        </ZonaArrastar>
-      </div>
-
-      {!backendOnline && (
-        <div className="mt-4">
-          <Alerta variante="aviso">Aguardando o aplicativo terminar de iniciar...</Alerta>
+      {finalizacaoBloqueada ? (
+        <div className="mt-8">
+          <AvisoConfiguracaoPendente
+            pastasFaltando={prontidaoFinalizacao?.pastas_faltando ?? []}
+            aoConfigurar={() => aoAbrirConfiguracoes?.()}
+          />
         </div>
-      )}
+      ) : (
+        <>
+          <div className="mt-8">
+            <ZonaArrastar onArquivosSoltos={adicionarNaFila} desabilitado={algumaOperacaoEmAndamento}>
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <BotaoArquivo
+                    accept=".pdf"
+                    multiplo
+                    desabilitado={algumaOperacaoEmAndamento}
+                    onChange={selecionarArquivos}
+                  >
+                    Selecionar PDFs
+                  </BotaoArquivo>
+                  <span className="text-xs text-slate-500">ou arraste os arquivos aqui</span>
+                </div>
+                <FilaArquivos
+                  itens={fila}
+                  onRemover={removerDaFila}
+                  onLimpar={() => setFila(limparFila())}
+                  desabilitado={algumaOperacaoEmAndamento}
+                />
+              </div>
+            </ZonaArrastar>
+          </div>
 
-      <div className="mt-6">
-        <Botao
-          variante="primaria"
-          onClick={analisar}
-          disabled={fila.length === 0 || !backendOnline || algumaOperacaoEmAndamento}
-          carregando={analisando}
-        >
-          {!analisando && <ClipboardCheck aria-hidden="true" className="h-4 w-4" />}
-          {analisando ? "Analisando..." : "Analisar"}
-        </Botao>
-      </div>
+          {avisoFila && (
+            <div className="mt-4">
+              <Alerta variante="aviso">{avisoFila}</Alerta>
+            </div>
+          )}
+
+          {!backendOnline && (
+            <div className="mt-4">
+              <Alerta variante="aviso">Aguardando o aplicativo terminar de iniciar...</Alerta>
+            </div>
+          )}
+
+          <div className="mt-6">
+            <Botao
+              variante="primaria"
+              onClick={analisar}
+              disabled={fila.length === 0 || !backendOnline || algumaOperacaoEmAndamento}
+              carregando={analisando}
+            >
+              {!analisando && <ClipboardCheck aria-hidden="true" className="h-4 w-4" />}
+              {analisando ? "Analisando..." : "Analisar"}
+            </Botao>
+          </div>
+        </>
+      )}
 
       {erroAnalise && (
         <div className="mt-6">

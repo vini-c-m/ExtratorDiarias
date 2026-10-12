@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FinalizarDiarias from "./FinalizarDiarias";
+import type { EstadoConfiguracao } from "../types/configuracao";
 import type { ItemAnaliseFinalizacao, RespostaConfirmacaoFinalizacao } from "../types/finalizacao";
 
 afterEach(() => {
@@ -314,6 +315,7 @@ describe("FinalizarDiarias", () => {
           linhas_atualizadas: [4],
           linhas_mantidas: [],
           motivo: null,
+          organizacao: null,
         },
       ],
     };
@@ -329,7 +331,13 @@ describe("FinalizarDiarias", () => {
     expect(screen.getByText("1 processo(s) analisado(s)")).toBeInTheDocument();
     expect(screen.getByText(/1 confirmado\(s\) nesta operação/)).toBeInTheDocument();
     expect(confirmarMock).toHaveBeenCalledWith([
-      { arquivo_origem: "processo.pdf", sei: "19.20.0000.0000001/2026-01" },
+      {
+        arquivo_origem: "processo.pdf",
+        sei: "19.20.0000.0000001/2026-01",
+        // Organização Automática de PDFs — caminho absoluto capturado a
+        // partir de `window.api.getPathForFile` no momento da análise.
+        caminho_absoluto: "C:/pdfs/processo.pdf",
+      },
     ]);
   });
 
@@ -404,6 +412,7 @@ describe("FinalizarDiarias", () => {
           linhas_atualizadas: [4],
           linhas_mantidas: [],
           motivo: null,
+          organizacao: null,
         },
       ],
     });
@@ -439,6 +448,7 @@ describe("FinalizarDiarias", () => {
           linhas_atualizadas: [],
           linhas_mantidas: [4],
           motivo: "Já confirmado na Planilha Oficial.",
+          organizacao: null,
         },
       ],
     });
@@ -471,6 +481,7 @@ describe("FinalizarDiarias", () => {
           linhas_atualizadas: [4],
           linhas_mantidas: [],
           motivo: null,
+          organizacao: null,
         },
       ],
     });
@@ -489,5 +500,127 @@ describe("FinalizarDiarias", () => {
     expect(screen.getByText(/1 confirmado\(s\) nesta operação/)).toBeInTheDocument();
     expect(screen.getByText(/1 já estava\(m\) confirmado\(s\)/)).toBeInTheDocument();
     expect(screen.getByText(/1 não finalizado\(s\)/)).toBeInTheDocument();
+  });
+});
+
+// Organização Automática de PDFs — guarda de pasta (decisão confirmada:
+// seleção de PDF continua via <input type="file"> + webUtils.
+// getPathForFile) e bloqueio de UX quando a pasta "Diárias a Confirmar"
+// não está configurada.
+describe("FinalizarDiarias — Organização Automática de PDFs", () => {
+  function configuracaoComPasta(liberado: boolean): EstadoConfiguracao {
+    return {
+      configurado: true,
+      planilha_acessivel: true,
+      requer_revalidacao: false,
+      caminho_planilha_oficial: "C:/planilha.xlsx",
+      configurado_em: "2026-08-01T10:00:00",
+      caminho_pdfs_a_processar: null,
+      caminho_pdfs_complemento_a_processar: null,
+      caminho_pdfs_processados: null,
+      caminho_pdfs_diarias_a_confirmar: liberado ? "C:/a-confirmar" : null,
+      prontidao_pastas: {
+        processamento_padrao: { liberado: true, pastas_faltando: [] },
+        complemento: { liberado: true, pastas_faltando: [] },
+        finalizacao: {
+          liberado,
+          pastas_faltando: liberado ? [] : ["PDFs de Diárias a Confirmar"],
+        },
+      },
+    };
+  }
+
+  it("PDF fora da pasta configurada não entra na fila — mostra o aviso", async () => {
+    const usuario = userEvent.setup();
+    window.api.getPathForFile = (arquivo: File) => `C:/outra-pasta/${arquivo.name}`;
+    window.api.caminhoDentroDaPasta = async (caminho: string, pasta: string) => caminho.startsWith(pasta);
+
+    render(<FinalizarDiarias backendOnline configuracaoAtiva={configuracaoComPasta(true)} />);
+    await selecionarPdf(usuario, "fora-da-pasta.pdf");
+
+    expect(screen.getByText("Selecione os PDFs na pasta configurada para esta função.")).toBeInTheDocument();
+    expect(screen.queryByText("fora-da-pasta.pdf")).not.toBeInTheDocument();
+  });
+
+  it("PDF dentro da pasta configurada entra normalmente na fila", async () => {
+    const usuario = userEvent.setup();
+    window.api.getPathForFile = (arquivo: File) => `C:/a-confirmar/${arquivo.name}`;
+    window.api.caminhoDentroDaPasta = async (caminho: string, pasta: string) => caminho.startsWith(pasta);
+
+    render(<FinalizarDiarias backendOnline configuracaoAtiva={configuracaoComPasta(true)} />);
+    await selecionarPdf(usuario, "dentro-da-pasta.pdf");
+
+    expect(screen.getByText("dentro-da-pasta.pdf")).toBeInTheDocument();
+  });
+
+  it("pasta não configurada: bloqueia a tela operacional com a lista de pastas faltando", () => {
+    render(<FinalizarDiarias backendOnline configuracaoAtiva={configuracaoComPasta(false)} />);
+
+    expect(
+      screen.getByText("Antes de utilizar esta função, configure as pastas necessárias."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("PDFs de Diárias a Confirmar")).toBeInTheDocument();
+    expect(screen.queryByText("Selecionar PDFs")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Analisar" })).not.toBeInTheDocument();
+  });
+
+  it("'Configurar agora' no bloqueio aciona aoAbrirConfiguracoes", async () => {
+    const usuario = userEvent.setup();
+    const aoAbrirConfiguracoes = vi.fn();
+
+    render(
+      <FinalizarDiarias
+        backendOnline
+        configuracaoAtiva={configuracaoComPasta(false)}
+        aoAbrirConfiguracoes={aoAbrirConfiguracoes}
+      />,
+    );
+    await usuario.click(screen.getByRole("button", { name: "Configurar agora" }));
+
+    expect(aoAbrirConfiguracoes).toHaveBeenCalledTimes(1);
+  });
+
+  it("configuracaoAtiva ausente (prop não passada): nunca bloqueia — mesmo comportamento de antes desta melhoria", () => {
+    render(<FinalizarDiarias backendOnline />);
+
+    expect(screen.getByText("Selecionar PDFs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Analisar" })).toBeInTheDocument();
+  });
+
+  it("confirmarFinalizacao recebe o caminho absoluto capturado no momento de analisar()", async () => {
+    const usuario = userEvent.setup();
+    analisarMock.mockResolvedValue({ itens: [itemPronto()] });
+    confirmarMock.mockResolvedValue({
+      total_finalizado: 1,
+      total_ja_confirmado: 0,
+      total_ignorado: 0,
+      itens: [
+        {
+          arquivo_origem: "processo.pdf",
+          sei: "19.20.0000.0000001/2026-01",
+          categoria: "finalizado",
+          linhas_atualizadas: [4],
+          linhas_mantidas: [],
+          motivo: null,
+          organizacao: { sucesso: true, status: "excluido", detalhe: null },
+        },
+      ],
+    });
+
+    render(<FinalizarDiarias backendOnline />);
+    await selecionarPdf(usuario, "processo.pdf");
+    await usuario.click(screen.getByRole("button", { name: "Analisar" }));
+    await usuario.click(await screen.findByRole("button", { name: "Finalizar 1 processo(s) restante(s)" }));
+    await usuario.click(await screen.findByRole("button", { name: "Confirmar finalização" }));
+
+    await screen.findByRole("heading", { name: "Finalização concluída" });
+    expect(confirmarMock).toHaveBeenCalledWith([
+      {
+        arquivo_origem: "processo.pdf",
+        sei: "19.20.0000.0000001/2026-01",
+        caminho_absoluto: "C:/pdfs/processo.pdf",
+      },
+    ]);
+    expect(screen.getByText("Excluído da pasta de origem")).toBeInTheDocument();
   });
 });

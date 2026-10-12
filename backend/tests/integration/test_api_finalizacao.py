@@ -95,3 +95,92 @@ def test_post_finalizacao_analisar_sem_configuracao_retorna_422(monkeypatch, tmp
 
     assert resposta.status_code == 422
     assert "Nenhuma planilha oficial configurada" in resposta.json()["detail"]
+
+
+# --- Organização Automática de PDFs -----------------------------------------
+
+
+def test_post_finalizacao_confirmar_exclui_pdf_finalizado_da_pasta_de_origem(
+    monkeypatch, tmp_path, caminho_planilha_teste
+):
+    caminho_planilha = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho_planilha)
+
+    sei = "19.20.0003.0000001/2026-01"
+    workbook = load_workbook(caminho_planilha)
+    workbook["Controle de Diárias"]["B4"] = sei
+    workbook.save(caminho_planilha)
+
+    pasta_a_confirmar = tmp_path / "a_confirmar"
+    pasta_a_confirmar.mkdir()
+    client.post(
+        "/api/v1/configuracao/pastas",
+        json={"caminho_pdfs_diarias_a_confirmar": str(pasta_a_confirmar)},
+    )
+
+    pdf = pasta_a_confirmar / "processo.pdf"
+    _gerar_pdf(
+        str(pdf),
+        [
+            [
+                "CMFC - Confirmação dos Serviços - Diária -Servidor - 1000001",
+                "Confirmação dos serviços:",
+                "Sim",
+                f"CMFC - Confirmação dos Serviços - Diária -Servidor 1000001 SEI {sei} / pg. 1",
+            ],
+            [f"Recibo (1000002) SEI {sei} / pg. 2"],
+        ],
+    )
+
+    resposta_confirmar = client.post(
+        "/api/v1/finalizacao/confirmar",
+        json={"itens": [{"arquivo_origem": "processo.pdf", "sei": sei, "caminho_absoluto": str(pdf)}]},
+    )
+
+    assert resposta_confirmar.status_code == 200
+    corpo = resposta_confirmar.json()
+    assert corpo["itens"][0]["categoria"] == "finalizado"
+    assert corpo["itens"][0]["organizacao"] == {
+        "sucesso": True,
+        "status": "excluido",
+        "detalhe": None,
+    }
+    assert not pdf.exists()
+
+
+def test_post_finalizacao_confirmar_nao_exclui_pdf_ignorado(
+    monkeypatch, tmp_path, caminho_planilha_teste
+):
+    """SEI não localizado na Planilha Oficial — categoria IGNORADO nunca
+    exclui o PDF da pasta de origem."""
+    caminho_planilha = caminho_planilha_teste()
+    _configurar_planilha_oficial(monkeypatch, tmp_path, caminho_planilha)
+
+    pasta_a_confirmar = tmp_path / "a_confirmar"
+    pasta_a_confirmar.mkdir()
+    client.post(
+        "/api/v1/configuracao/pastas",
+        json={"caminho_pdfs_diarias_a_confirmar": str(pasta_a_confirmar)},
+    )
+
+    pdf = pasta_a_confirmar / "processo.pdf"
+    pdf.write_bytes(b"conteudo")
+
+    resposta_confirmar = client.post(
+        "/api/v1/finalizacao/confirmar",
+        json={
+            "itens": [
+                {
+                    "arquivo_origem": "processo.pdf",
+                    "sei": "19.20.9999.9999999/2026-99",
+                    "caminho_absoluto": str(pdf),
+                }
+            ]
+        },
+    )
+
+    assert resposta_confirmar.status_code == 200
+    corpo = resposta_confirmar.json()
+    assert corpo["itens"][0]["categoria"] == "ignorado"
+    assert corpo["itens"][0]["organizacao"] is None
+    assert pdf.exists()

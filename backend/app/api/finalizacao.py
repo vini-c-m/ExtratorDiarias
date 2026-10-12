@@ -1,11 +1,13 @@
 from fastapi import APIRouter, HTTPException
 
 from app.infra.config import configuracao_app
+from app.planilha.organizador_arquivos import ResultadoOrganizacao
 from app.schemas.finalizacao import (
     AvaliacaoElegibilidadeResposta,
     CandidatoLinhaResposta,
     ItemAnaliseFinalizacaoResposta,
     ItemResultadoConfirmacaoResposta,
+    OrganizacaoItemResposta,
     RequisicaoAnaliseFinalizacao,
     RequisicaoConfirmacaoFinalizacao,
     RespostaAnaliseFinalizacao,
@@ -26,6 +28,14 @@ def _resolver_caminho_planilha() -> str:
         return configuracao_app.resolver_caminho_para_preenchimento()
     except configuracao_app.PlanilhaOficialIndisponivel as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
+
+
+def _organizacao_resposta(resultado: ResultadoOrganizacao | None) -> OrganizacaoItemResposta | None:
+    if resultado is None:
+        return None
+    return OrganizacaoItemResposta(
+        sucesso=resultado.sucesso, status=resultado.status.value, detalhe=resultado.detalhe
+    )
 
 
 @router.post("/finalizacao/analisar", response_model=RespostaAnaliseFinalizacao)
@@ -81,13 +91,26 @@ def analisar(requisicao: RequisicaoAnaliseFinalizacao) -> RespostaAnaliseFinaliz
 @router.post("/finalizacao/confirmar", response_model=RespostaConfirmacaoFinalizacao)
 def confirmar_rota(requisicao: RequisicaoConfirmacaoFinalizacao) -> RespostaConfirmacaoFinalizacao:
     caminho_planilha = _resolver_caminho_planilha()
+
+    # Organização Automática de PDFs — a pasta de "Diárias a Confirmar" é
+    # independente da planilha oficial (pode nunca ter sido configurada);
+    # ausente, `confirmar` só devolve `organizacao=None` em cada item, sem
+    # afetar a confirmação em si.
+    configuracao_pastas = configuracao_app.carregar()
+    pasta_origem = configuracao_pastas.caminho_pdfs_diarias_a_confirmar if configuracao_pastas else None
+
     try:
         resultado = confirmar(
             [
-                ItemConfirmacao(arquivo_origem=item.arquivo_origem, sei=item.sei)
+                ItemConfirmacao(
+                    arquivo_origem=item.arquivo_origem,
+                    sei=item.sei,
+                    caminho_absoluto=item.caminho_absoluto,
+                )
                 for item in requisicao.itens
             ],
             caminho_planilha,
+            pasta_origem=pasta_origem,
         )
     except ErroFinalizacaoDiarias as erro:
         raise HTTPException(status_code=422, detail=str(erro)) from erro
@@ -105,6 +128,7 @@ def confirmar_rota(requisicao: RequisicaoConfirmacaoFinalizacao) -> RespostaConf
                 linhas_atualizadas=item.linhas_atualizadas,
                 linhas_mantidas=item.linhas_mantidas,
                 motivo=item.motivo,
+                organizacao=_organizacao_resposta(item.organizacao),
             )
             for item in resultado.itens
         ],

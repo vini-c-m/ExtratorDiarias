@@ -7,6 +7,8 @@
 // Oficial. Pendências documentais nunca mais aparecem como `status` — elas
 // viram só `AvaliacaoElegibilidade.alertas`, informativo, nunca bloqueante.
 
+import type { OrganizacaoItem } from "./processamento";
+
 export type StatusFinalizacao =
   | "pronto"
   | "ja_finalizado"
@@ -64,6 +66,10 @@ export interface RespostaAnaliseFinalizacao {
 export interface ItemParaConfirmar {
   arquivo_origem: string;
   sei: string;
+  // Organização Automática de PDFs — caminho absoluto de origem, para o
+  // backend conseguir excluir o PDF depois de finalizado/já confirmado.
+  // Opcional para não quebrar nenhum chamador existente.
+  caminho_absoluto?: string;
 }
 
 export type CategoriaConfirmacao = "finalizado" | "ja_confirmado" | "ignorado";
@@ -75,6 +81,10 @@ export interface ItemResultadoConfirmacao {
   linhas_atualizadas: number[];
   linhas_mantidas: number[];
   motivo: string | null;
+  // Organização Automática de PDFs — só populado para FINALIZADO/
+  // JA_CONFIRMADO com `caminho_absoluto` informado; `null` para IGNORADO
+  // (nunca tentado).
+  organizacao: OrganizacaoItem | null;
 }
 
 export interface RespostaConfirmacaoFinalizacao {
