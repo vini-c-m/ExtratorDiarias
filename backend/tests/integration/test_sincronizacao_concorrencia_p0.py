@@ -251,7 +251,7 @@ def test_falha_de_sincronizacao_automatica_nao_desfaz_gravacao_da_planilha(
     )
     processo = Processo(arquivo_origem="arquivo.pdf", status=StatusProcesso.SUCESSO, diaria=diaria)
 
-    resultado, _ = planilha_service.preencher_planilha(caminho, [processo], erros=[])
+    resultado, _, _ = planilha_service.preencher_planilha(caminho, [processo], erros=[])
 
     assert resultado.total_gravado == 1
     assert resultado.sincronizacao_analitica_falhou is True

@@ -27,7 +27,7 @@ def _processo(arquivo: str = "arquivo.pdf", sei: str = "19.20.0000.0000001/2025-
 def test_preencher_planilha_com_sucesso_monta_pasta_de_resultados(caminho_planilha_teste):
     caminho = caminho_planilha_teste()
 
-    resultado, arquivos_gerados = preencher_planilha(caminho, [_processo()], [])
+    resultado, arquivos_gerados, _ = preencher_planilha(caminho, [_processo()], [])
 
     assert resultado.total_gravado == 1
     assert resultado.linha_inicial == 4
@@ -60,7 +60,7 @@ def test_preencher_planilha_relatorio_distingue_duplicidade_no_lote_e_na_planilh
     caminho = caminho_planilha_teste()
     erros = [ItemErro(arquivo_origem="quebrado.pdf", motivos=["Falha ao ler o PDF"])]
 
-    resultado, arquivos_gerados = preencher_planilha(
+    resultado, arquivos_gerados, _ = preencher_planilha(
         caminho,
         [
             _processo("novo.pdf", "19.20.0000.0000005/2025-99"),
@@ -105,7 +105,7 @@ def test_doc_origem_sem_historico_gera_aviso_no_relatorio_e_no_log(caminho_plani
     aviso automaticamente, mesmo sem nenhum aviso vindo da extração."""
     caminho = caminho_planilha_teste()
 
-    resultado, arquivos_gerados = preencher_planilha(caminho, [_processo()], [])
+    resultado, arquivos_gerados, _ = preencher_planilha(caminho, [_processo()], [])
 
     assert resultado.total_gravado == 1
 
@@ -137,7 +137,7 @@ def test_doc_origem_com_historico_dimcac_nao_gera_aviso(caminho_planilha_teste):
     )
     processo = Processo(arquivo_origem="com_historico.pdf", status=StatusProcesso.SUCESSO, diaria=diaria)
 
-    resultado, arquivos_gerados = preencher_planilha(caminho, [processo], [])
+    resultado, arquivos_gerados, _ = preencher_planilha(caminho, [processo], [])
 
     assert resultado.total_gravado == 1
 

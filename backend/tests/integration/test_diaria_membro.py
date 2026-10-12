@@ -127,7 +127,7 @@ def test_coluna_p_e_preenchida_somente_para_diaria_de_membro(
     lote_padrao = processar_lote(pdfs_exemplo[:1])
     processos = [*lote_membro.processos, *lote_padrao.processos]
 
-    resultado, arquivos_gerados = preencher_planilha(caminho_planilha, processos, [])
+    resultado, arquivos_gerados, _ = preencher_planilha(caminho_planilha, processos, [])
     assert resultado.total_gravado == 2
 
     workbook = load_workbook(arquivos_gerados.caminho_planilha_gerada)

@@ -34,7 +34,7 @@ def test_fluxo_completo_pdf_ate_central_em_execucoes_consecutivas(
     # verdade de quantos viram linha nova, nunca a contagem de arquivos.
     lote1 = processar_lote(pdfs_exemplo)
     assert lote1.erro == 0
-    resultado1, _ = preencher_planilha(caminho_planilha, lote1.processos, [])
+    resultado1, _, _ = preencher_planilha(caminho_planilha, lote1.processos, [])
     assert 0 < resultado1.total_gravado <= len(lote1.processos)
     assert resultado1.sincronizacao_analitica_falhou is False
 
@@ -48,7 +48,7 @@ def test_fluxo_completo_pdf_ate_central_em_execucoes_consecutivas(
     # --- Execução 2: lote Padrão (MEMBRO), distinto do anterior -------------
     lote2 = processar_lote(pdfs_diaria_membro)
     assert lote2.erro == 0
-    resultado2, _ = preencher_planilha(caminho_planilha, lote2.processos, [])
+    resultado2, _, _ = preencher_planilha(caminho_planilha, lote2.processos, [])
     assert resultado2.total_gravado == len(pdfs_diaria_membro)
 
     registros2 = repositorio_analitico.agregar_indicadores(caminho_sqlite, filtros)
@@ -70,7 +70,7 @@ def test_fluxo_completo_pdf_ate_central_em_execucoes_consecutivas(
             quantidade_diaria_parcial_complementar=0,
             fonte_quantidade_complementar="Padrão institucional do modo Complemento de Diárias.",
         )
-    resultado3, _ = preencher_planilha(
+    resultado3, _, _ = preencher_planilha(
         caminho_planilha, lote3.processos, [], modo=ModoProcessamento.COMPLEMENTO
     )
     assert resultado3.total_gravado == len(lote3.processos)
