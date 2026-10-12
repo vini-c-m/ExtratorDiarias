@@ -206,11 +206,15 @@ npm run dev
 ### Gerar o instalador Windows
 
 ```bash
-cd frontend
+# uma vez por máquina: dependências de empacotamento do backend (PyInstaller)
+cd backend
+.venv\Scripts\pip install -r requirements-build.txt
+
+cd ../frontend
 npm run release
 ```
 
-Empacota o backend com PyInstaller, compila o frontend e gera o instalador NSIS em `frontend/release/`.
+Empacota o backend com PyInstaller, compila o frontend e gera o instalador NSIS em `frontend/release/`. Sem certificado de assinatura configurado, o electron-builder só informa que a assinatura foi ignorada — o instalador é gerado normalmente.
 
 ### Testes
 

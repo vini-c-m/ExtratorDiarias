@@ -20,12 +20,17 @@ git clone https://github.com/vini-c-m/ExtratorDiarias.git
 cd ExtratorDiarias
 ```
 
+- O repositório é **privado**: na primeira operação o Git for Windows abre o Git Credential Manager para você entrar na conta GitHub com acesso ao repositório.
+- Os finais de linha são tratados pelo `.gitattributes`; o padrão do Git for Windows (`core.autocrlf=true`) funciona — a suíte de testes completa foi validada num clone com esse padrão.
+
 ## C. Backend
 
 ```bash
 cd backend
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+# só para gerar o instalador (npm run release): dependências de empacotamento
+.venv\Scripts\pip install -r requirements-build.txt
 ```
 
 - Python: **3.12** (ver acima).
@@ -40,8 +45,10 @@ python -m venv .venv
 
 ```bash
 cd frontend
-npm install
+npm ci
 ```
+
+- Use `npm ci` (instala exatamente o `package-lock.json`). Versões novas do npm (11.x) podem avisar `allow-scripts` para `electron` e `esbuild`; é só um aviso — os binários são instalados normalmente.
 
 - **Rodar em desenvolvimento** (Vite + build do Electron em watch + app, que já sobe o backend automaticamente):
   ```bash
