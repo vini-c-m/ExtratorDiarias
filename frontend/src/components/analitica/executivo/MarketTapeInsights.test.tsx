@@ -153,7 +153,8 @@ describe("MarketTapeInsights", () => {
 
   it("C) o CSS de reduced-motion zera transform/box-shadow do card ativo (sem deslocamento espacial)", () => {
     const caminhoCss = resolve(process.cwd(), "src/components/analitica/executivo/modoExecutivo.css");
-    const css = readFileSync(caminhoCss, "utf-8");
+    // Aceita checkout com LF ou CRLF (core.autocrlf=true no Windows).
+    const css = readFileSync(caminhoCss, "utf-8").replace(/\r\n/g, "\n");
     const indiceMedia = css.indexOf("@media (prefers-reduced-motion: reduce)");
     expect(indiceMedia).toBeGreaterThan(-1);
     const blocoReduzido = css.slice(indiceMedia, css.indexOf("\n}\n", css.indexOf("market-tape-item-spotlight", indiceMedia)) + 3);
